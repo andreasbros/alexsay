@@ -5,5 +5,5 @@ export default defineConfig({
   plugins: [react()],
   server: { port: 5173, proxy: { "/api": "http://localhost:8787" } },
   build: { chunkSizeWarningLimit: 1000 },
-  test: { environment: "jsdom" },
+  test: { environment: "jsdom", setupFiles: ["./src/test-setup.ts"] },
 });

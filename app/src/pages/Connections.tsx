@@ -22,6 +22,7 @@ import {
   type Provider,
   type ProviderTest,
 } from "../api";
+import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP } from "../components/HelpDialog";
 
 const VOICES = ["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"];
 const DEFAULTS: OpenAiSettings = { model: "gpt-live-1", backend_model: "gpt-5.5", voice: "marin", instructions: "" };
@@ -191,6 +192,7 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
                 </Text>
               )}
               <Flex gap="2" justify="end">
+                <HelpDialog {...OPENAI_HELP} />
                 {connection && (
                   <Button type="button" variant="soft" color="gray" onClick={() => setEditing(false)}>
                     Cancel
@@ -267,6 +269,7 @@ function LightwaveCard({ connection }: { connection: Connection | undefined }) {
                 </Text>
               )}
               <Flex gap="2" justify="end">
+                <HelpDialog {...LIGHTWAVE_HELP} />
                 {connection && (
                   <Button type="button" variant="soft" color="gray" onClick={() => setEditing(false)}>
                     Cancel

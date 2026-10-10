@@ -87,4 +87,17 @@ describe("App", () => {
     expect(screen.getAllByRole("link", { name: /Assistant/ }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("link", { name: /Connections/ }).length).toBeGreaterThan(0);
   });
+
+  it("explains how to get each provider's keys", async () => {
+    mockApi({
+      "/api/session/me": json({ username: "maria", role: "user" }),
+      "/api/connections": json([]),
+    });
+    renderApp("/connections");
+    const help = await screen.findAllByRole("button", { name: "Help" });
+    expect(help).toHaveLength(2);
+    fireEvent.click(help[0] as HTMLElement);
+    expect(await screen.findByRole("heading", { name: "Get an OpenAI API key" })).toBeDefined();
+    expect(screen.getByText(/Create new secret key/)).toBeDefined();
+  });
 });

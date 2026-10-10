@@ -27,3 +27,15 @@ test("a bad Lightwave token is reported when tested", async ({ page, account }) 
   await expect(page.getByText("connected").last()).toBeVisible();
   await expect(page.getByText(/Could not load lights/)).toBeVisible();
 });
+
+test("each connection has a Help dialog with the steps to get its keys", async ({ page, account }) => {
+  await login(page, account);
+  await page.getByRole("link", { name: /Connections/ }).click();
+  await page.getByRole("button", { name: "Help" }).first().click();
+  await expect(page.getByRole("heading", { name: "Get an OpenAI API key" })).toBeVisible();
+  await expect(page.getByText(/Create new secret key/)).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Help" }).last().click();
+  await expect(page.getByRole("heading", { name: "Get your Lightwave API tokens" })).toBeVisible();
+  await expect(page.getByText(/API Integration/)).toBeVisible();
+});

@@ -108,10 +108,19 @@ GPT-Live events the daemon uses (WebSocket guide, Oct 2026; confirm against the 
 | in | `response.done` | usage (tokens) for the cost log |
 | in | `error` | log, earcon, close |
 
-Session rules:
-- Close after 10 s with no user speech following the last response, on `end_conversation`, or at a 10 min hard cap.
-- A short wake earcon (< 150 ms) plays through the Flex, so the AEC removes it from the mic stream.
-- Daily budget of session minutes in config; log token usage per session.
+Ending a session. GPT-Live has no idle timeout of its own and bills open voice time (`session.usage.updated` → `usage.seconds`), so the daemon decides when to hang up:
+
+| Trigger | How | Notes |
+|---|---|---|
+| User says goodbye ("thanks, that's all", "bye", "stop") | backend model calls `end_conversation`; the daemon sends `session.close` once the current reply has played | model judgement, so "stop talking" mid-answer is a barge-in, not a hang-up |
+| Silence | no user speech (local VAD on the ASR beam) **and** no assistant audio for 10 s | timer paused while a tool call is pending or audio is playing; "hold on" / "wait" extends it to 60 s via `extend_listening` |
+| Hard cap | 10 min per session | stops a TV or radio keeping a session alive |
+| Daily budget | session minutes per day in config | refuse new sessions with an earcon once spent |
+
+- Close sequence: `session.close` → wait for `session.closed` (reasons: `close_requested`, `expired`, `content`, `remote_hangup`, `connection_lost`) → closing earcon → wake word armed again.
+- `session.close` cancels queued backend work, so never close while a function result is outstanding.
+- Earcons: wake (< 150 ms), closing, error, muted. They play through the Flex, so the AEC removes them from the mic stream.
+- Log `usage.seconds` and backend tokens per session.
 
 ## Wake word: "Alex"
 
@@ -133,6 +142,7 @@ Session rules:
 | `ha_call_service` | `domain`, `service`, `entity_id`, `data?` | `POST /api/services/{domain}/{service}` | allow-listed domains (`light`, `switch`, `climate`, `cover`, `media_player`, `scene`, `script`); `lock` and `alarm_control_panel` need a spoken confirmation turn |
 | `get_time` | none | local clock, Europe/London | |
 | `end_conversation` | none | closes after the current response | |
+| `extend_listening` | `seconds?` (max 120) | stretches the silence timeout once | |
 
 - Home Assistant at `http://127.0.0.1:8123` with a long-lived access token.
 - Tool arguments are validated in `core` before any HTTP call; the model never gets raw HA errors with tokens or URLs in them.

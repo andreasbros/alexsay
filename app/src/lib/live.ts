@@ -279,15 +279,33 @@ async function readLevels(
     if (report.kind !== "audio" || typeof report.audioLevel !== "number") {
       return;
     }
-    const level = Math.min(1, report.audioLevel * 4);
     if (report.type === "inbound-rtp") {
-      levels.voice = level;
+      levels.voice = gates.voice.pass(report.audioLevel);
       seen.voice = true;
     } else if (report.type === "media-source") {
-      levels.mic = level;
+      levels.mic = gates.mic.pass(report.audioLevel);
       seen.mic = true;
     }
   });
+}
+
+/**
+ * Turns a raw audio level into bar energy: everything up to the room's noise floor is silence.
+ * The floor follows the quietest recent level, so a fan or a fridge never moves the bars, and
+ * automatic gain control cannot inflate silence into speech.
+ */
+export class NoiseGate {
+  private floor = 0.02;
+
+  pass(raw: number): number {
+    // The floor drops at once to a quieter reading and creeps up slowly, so speech never raises it
+    this.floor = raw < this.floor ? raw : Math.min(raw, this.floor + 0.0005);
+    const threshold = this.floor * 1.8 + 0.025;
+    if (raw <= threshold) {
+      return 0;
+    }
+    return Math.min(1, ((raw - threshold) / (0.35 - threshold)) * 1.1);
+  }
 }
 
 /** Buffers transcript fragments into whole turns and ships them to the history in small batches. */

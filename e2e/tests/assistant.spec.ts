@@ -12,5 +12,5 @@ test("starting a conversation with a bad key surfaces GPT-Live's refusal on the 
   await expect(page.getByRole("img", { name: /Assistant/ })).toBeVisible();
   await page.getByRole("button", { name: "Start talking" }).click();
   await expect(page.getByText("Error")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText(/provider: .+/)).toBeVisible();
+  await expect(page.getByText(/provider: .+/).first()).toBeVisible();
 });

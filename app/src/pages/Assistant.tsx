@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { ApiError, api } from "../api";
-import { Sphere } from "../components/Sphere";
+import { Bars } from "../components/Bars";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
 
 const LABELS: Record<LiveStatus | "idle", string> = {
@@ -79,7 +79,7 @@ export function Assistant() {
         </Callout.Root>
       )}
       <div className="stage">
-        <Sphere status={status} level={level} />
+        <Bars status={status} level={level} />
       </div>
       <Flex direction="column" align="center" gap="1" className="transcript">
         {said.user && (

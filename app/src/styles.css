@@ -36,17 +36,18 @@ body {
   }
 }
 
-/* The assistant stage: the sphere canvas fills a square that never exceeds the viewport */
+/* The assistant stage: the bars fill a square that never exceeds the viewport */
 .stage {
   display: grid;
   place-items: center;
   width: 100%;
 }
 
-.sphere {
+.bars {
   width: min(70vw, 52vh, 420px);
   height: min(70vw, 52vh, 420px);
   display: block;
+  transition: stroke 0.3s;
 }
 
 .transcript {

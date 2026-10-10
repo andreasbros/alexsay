@@ -29,17 +29,20 @@ export const heartbeat = z.object({
 const voice = z.enum(["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"]);
 export const openaiSettings = z.object({
   model: z.string().trim().min(1).max(64).default("gpt-live-1"),
-  backend_model: z.string().trim().min(1).max(64).default("gpt-5.5"),
+  backend_model: z.string().trim().min(1).max(64).default("gpt-6-luna"),
   voice: voice.default("marin"),
   instructions: z.string().max(4000).default(""),
 });
 export type OpenAiSettings = z.infer<typeof openaiSettings>;
 
+/** An empty or missing key keeps the stored one, so settings can change on their own. */
 export const openaiConnection = z.object({
   api_key: z
     .string()
     .trim()
-    .regex(/^sk-[A-Za-z0-9_-]{20,}$/, "an OpenAI API key starts with sk-"),
+    .regex(/^sk-[A-Za-z0-9_-]{20,}$/, "an OpenAI API key starts with sk-")
+    .or(z.literal(""))
+    .optional(),
   settings: openaiSettings.prefault({}),
 });
 

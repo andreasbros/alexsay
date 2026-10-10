@@ -30,8 +30,16 @@ export const connectionRoutes = new Hono<AppEnv>()
   })
   .put("/openai", async (c) => {
     const { api_key, settings } = await jsonBody(c, schemas.openaiConnection);
-    const sealed = await seal(c.env.SECRETS_KEY, { api_key });
-    await connections.put(c.env.DB, c.get("user").username, "openai", sealed, JSON.stringify(settings));
+    const username = c.get("user").username;
+    const existing = await connections.get(c.env.DB, username, "openai");
+    if (!api_key && !existing) {
+      return c.json({ error: "key_required" }, 400);
+    }
+    const sealed = api_key ? await seal(c.env.SECRETS_KEY, { api_key }) : existing?.secret;
+    if (!sealed) {
+      return c.json({ error: "key_required" }, 400);
+    }
+    await connections.put(c.env.DB, username, "openai", sealed, JSON.stringify(settings));
     return c.json({ provider: "openai", settings });
   })
   .put("/lightwave", async (c) => {

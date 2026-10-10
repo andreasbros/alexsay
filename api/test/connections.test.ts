@@ -36,6 +36,21 @@ describe("connections", () => {
     expect(row?.secret).not.toContain(OPENAI_KEY);
   });
 
+  it("changes settings without re-entering the key, but needs a key the first time", async () => {
+    const first = await json(`${APP}/api/connections/openai`, "PUT", { settings: { voice: "cedar" } }, maria);
+    expect(first.status).toBe(400);
+    await connectOpenai(maria, { voice: "cedar" });
+    const before = await env.DB.prepare("SELECT secret FROM connections").first<{ secret: string }>();
+    const res = await json(`${APP}/api/connections/openai`, "PUT", { api_key: "", settings: { voice: "sage" } }, maria);
+    expect(res.status).toBe(200);
+    const after = await env.DB.prepare("SELECT secret, settings FROM connections").first<{
+      secret: string;
+      settings: string;
+    }>();
+    expect(after?.secret).toBe(before?.secret);
+    expect(JSON.parse(after?.settings ?? "{}")).toMatchObject({ voice: "sage" });
+  });
+
   it("rejects keys that do not look like OpenAI keys", async () => {
     const res = await json(`${APP}/api/connections/openai`, "PUT", { api_key: "hello" }, maria);
     expect(res.status).toBe(400);

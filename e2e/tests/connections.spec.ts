@@ -16,6 +16,13 @@ test("stores an OpenAI key, tests it, and the assistant becomes available", asyn
 
   await page.getByRole("link", { name: /Assistant/ }).click();
   await expect(page.getByRole("button", { name: "Start talking" })).toBeEnabled();
+
+  // Settings change without typing the key again
+  await page.getByRole("link", { name: /Connections/ }).click();
+  await page.getByRole("button", { name: "Change" }).click();
+  await page.getByLabel("Backend model").fill("gpt-6.1-sol");
+  await page.getByRole("button", { name: "Save" }).first().click();
+  await expect(page.getByText(/via gpt-6\.1-sol/)).toBeVisible();
 });
 
 test("a bad Lightwave token is reported when tested", async ({ page, account }) => {

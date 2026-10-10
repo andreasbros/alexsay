@@ -25,7 +25,7 @@ import {
 import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP } from "../components/HelpDialog";
 
 const VOICES = ["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"];
-const DEFAULTS: OpenAiSettings = { model: "gpt-live-1", backend_model: "gpt-5.5", voice: "marin", instructions: "" };
+const DEFAULTS: OpenAiSettings = { model: "gpt-live-1", backend_model: "gpt-6-luna", voice: "marin", instructions: "" };
 
 export function Connections() {
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });
@@ -146,13 +146,13 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
           <form onSubmit={submit}>
             <Flex direction="column" gap="3">
               <TextField.Root
-                placeholder="sk-..."
+                placeholder={connection ? "Leave empty to keep the current key" : "sk-..."}
                 aria-label="OpenAI API key"
                 type="password"
                 autoComplete="off"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                required
+                required={!connection}
               />
               <Flex gap="3" wrap="wrap">
                 <TextField.Root

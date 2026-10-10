@@ -91,8 +91,9 @@ export const api = {
   removeDevice: (id: string) => request<void>("DELETE", `/api/devices/${encodeURIComponent(id)}`),
 
   connections: () => request<Connection[]>("GET", "/api/connections"),
+  /** An empty key keeps the one already stored and only updates the settings. */
   connectOpenai: (api_key: string, settings: OpenAiSettings) =>
-    request<Connection>("PUT", "/api/connections/openai", { api_key, settings }),
+    request<Connection>("PUT", "/api/connections/openai", { api_key: api_key || undefined, settings }),
   connectLightwave: (basic_token: string, refresh_token: string) =>
     request<Connection>("PUT", "/api/connections/lightwave", { basic_token, refresh_token }),
   testConnection: (provider: Provider) => request<ProviderTest>("POST", `/api/connections/${provider}/test`),

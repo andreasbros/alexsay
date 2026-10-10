@@ -1,6 +1,6 @@
 # alexsay
 
-A self-built smart speaker that replaces an Amazon Echo Dot. Say **"Alex"** and it opens a full-duplex OpenAI voice conversation (GPT-Live, `gpt-live-1`), with Home Assistant on the same box for home control.
+A self-built smart speaker that replaces an Amazon Echo Dot. Say **"Alexsay"** and it opens a full-duplex OpenAI voice conversation (GPT-Live, `gpt-live-1`), with Home Assistant on the same box for home control.
 
 - **Hardware:** Raspberry Pi 5 8GB, Seeed reSpeaker Flex XVF3800 (circular 4-mic array, hardware echo cancellation, on-board amp), Visaton R 10 S 4" driver, one 3D-printed cylinder
 - **Target:** voice quality at least an Echo Dot 3; barge-in (interrupt the assistant mid-sentence) works; wake word ignores "Alexa"

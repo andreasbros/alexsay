@@ -19,6 +19,7 @@ A condensed history of the design conversation, so a new session understands the
 - **Corrected 10 Oct:** `gpt-live-1` has been in the API since 10 Sep 2026 (`wss://api.openai.com/v1/live/sessions`, $0.05/min plus the backend model, any paid tier). It became the primary backend; `gpt-realtime` stays behind the same trait as a fallback.
 - Full duplex means the mic hears the speaker constantly, so **hardware AEC is essential**.
 - "Alex" is a substring of "Alexa": the wake-word model needs negatives. openWakeWord or microWakeWord.
+- **10 Oct:** wake word changed to **"Alexsay"** (three syllables, matches the project name, fewer false wakes than "Alex"). Its nearest confusion is "Alexa, say...".
 
 ## First hardware design (superseded)
 

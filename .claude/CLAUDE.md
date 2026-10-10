@@ -5,7 +5,7 @@ You are picking up a hardware + software project with a context window that neve
 ## What we're building
 
 - A free-standing cylinder speaker (≈150 mm Ø × 210 mm, set by the driver's square frame; measure it on arrival) that replaces an Amazon Echo Dot.
-- Wake word **"Alex"** opens a full-duplex OpenAI voice session (`gpt-live-1`, with `gpt-realtime` as a fallback backend). The user can interrupt the assistant mid-sentence (barge-in).
+- Wake word **"Alexsay"** opens a full-duplex OpenAI voice session (`gpt-live-1`, with `gpt-realtime` as a fallback backend). The user can interrupt the assistant mid-sentence (barge-in).
 - Home Assistant runs on the same Pi; the assistant controls the home through it via function calls.
 - Voice only. Music playback was dropped on 10 Oct 2026 (it may come back cheaply if the Flex 48 kHz firmware turns out full-band; see docs/device-design.md).
 
@@ -63,7 +63,7 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 - Never drive the R 10 S hard while unbaffled on the bench: no box means no air load and the cone over-excurses at low frequencies.
 - The SanDisk High Endurance card came from a marketplace seller (Electrolyx UK): verify capacity with `f3write`/`f3read` before trusting it.
 - Raspberry Pi SSD (all capacities), the SSD Kit and the Pimoroni NVMe Base were **out of stock or discontinued in the UK on 10 Oct 2026**. NAND prices made other NVMe drives £60 to £90+. Start on the SD card.
-- "Alex" is a substring of "Alexa": the wake-word model needs "Alexa", "Alexander", "Alexis" and TV speech as negatives.
+- Wake word is **"Alexsay"** (changed from "Alexsay" on 10 Oct 2026). "Alexa, say..." sounds almost the same, so it is the most important negative, with "Alexa", "Alexsay", "Alex says", "Alexei" and TV speech.
 
 ## Open tasks
 
@@ -73,7 +73,7 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 - [ ] Inspect the Flex speaker connector against the JST cables; otherwise solder to the pad.
 - [ ] Bench test: playback, AEC residual (ch1 vs raw), io48 vs io16 playback bandwidth (10 kHz tone).
 - [ ] Measure: XVF3800 + amp current at 5 V, XIAO idle draw, Pi temperature under HA + daemon with the fan held off.
-- [ ] Record wake-word positives/negatives on the device; train an openWakeWord "Alex" model.
+- [ ] Record wake-word positives/negatives on the device; train an openWakeWord "Alexsay" model.
 - [ ] Scaffold the repo: Nix flake, justfile, Rust workspace (`core` host-tested, `daemon`), systemd unit, HA compose file.
 - [ ] Enclosure CAD from Seeed's STEP files (circular mic board, core board) + Pi 5 mechanical drawing; get a PETG print quote.
 - [ ] Buy the Phase 2 bits in `docs/procurement.md` "Still to buy" once the bench works.

@@ -33,7 +33,7 @@ stateDiagram-v2
     Error --> Idle: error earcon, backoff
 ```
 
-- Wake-word detection runs only in `Idle`. In a session "Alex" is an ordinary word.
+- Wake-word detection runs only in `Idle`. In a session "Alexsay" is an ordinary word.
 - Mic audio streams to the backend for the whole session; GPT-Live decides turns (native full-duplex turn-taking).
 - `Connecting` never drops audio: capture keeps filling the ring buffer and the whole backlog is sent once the socket is ready.
 
@@ -52,7 +52,7 @@ stateDiagram-v2
 - Resampling with `rubato` only where rates differ: io48 firmware (48 to 16 kHz) or the `gpt-realtime` fallback (16 to 24 kHz).
 - Playback chain: 16 kHz deltas → EQ (high-pass ~150 Hz, peaking cut at the box's fc, see [device-design.md](device-design.md#acoustics)) → limiter at −3 dBFS → ALSA. All of it before the XVF3800, so its AEC reference matches what the speaker plays.
 - Keep the playback queue short (≤ 100 ms ahead of the DAC) so a barge-in stops the voice quickly. Playback position = frames written minus `snd_pcm_delay`; the `gpt-realtime` fallback needs it for `conversation.item.truncate`.
-- Ring buffer: 2 s of ASR-beam audio, always running, so "Alex, turn the lights off" spoken in one breath arrives whole.
+- Ring buffer: 2 s of ASR-beam audio, always running, so "Alexsay, turn the lights off" spoken in one breath arrives whole.
 
 ## Voice backend
 
@@ -122,13 +122,13 @@ Ending a session. GPT-Live has no idle timeout of its own and bills open voice t
 - Earcons: wake (< 150 ms), closing, error, muted. They play through the Flex, so the AEC removes them from the mic stream.
 - Log `usage.seconds` and backend tokens per session.
 
-## Wake word: "Alex"
+## Wake word: "Alexsay"
 
-- **openWakeWord** pipeline in-process: 16 kHz, 80 ms frames → melspectrogram model → embedding model → custom "alex" classifier, all ONNX through `ort`.
+- **openWakeWord** pipeline in-process: 16 kHz, 80 ms frames → melspectrogram model → embedding model → custom "alexsay" classifier, all ONNX through `ort`.
 - Fires on score ≥ threshold for 2 consecutive frames; 2 s refractory period.
 - **Training:**
   - Positives: openWakeWord's synthetic set (Piper TTS voices) plus ~200 real takes from this device (ASR beam and raw channels, 6 ch image), several speakers and distances.
-  - Negatives: "Alexa", "Alexander", "Alexis", "a lexicon", "Alex's" in TV and podcast audio, and 24 h of household audio from the device.
+  - Negatives: "Alexa", **"Alexa, say..."** (near-identical sound), "Alexsay", "Alex says", "Alexei", "Alexander", "Alexis", "a lexicon", plus TV and podcast audio and 24 h of household audio from the device.
 - Targets: < 1 false accept per 24 h of household audio, > 90 % detection at 3 m (see [measurements.md](measurements.md)).
 - Phase 1 shortcut if the ONNX port takes time: the `wyoming-openwakeword` container plus a Wyoming client in the daemon.
 - Alternative: microWakeWord (TFLite, smaller), if openWakeWord's false-accept rate on "Alexa" can't be trained down.
@@ -188,7 +188,7 @@ exposed = ["light.kitchen", "light.hallway"]
 
 | Step | Target |
 |---|---|
-| End of "Alex" → detection | ≤ 200 ms |
+| End of "Alexsay" → detection | ≤ 200 ms |
 | WebSocket connect + `session.update` | 300 to 600 ms, overlapped with the user still talking |
 | End of user speech → server end-of-turn | 200 to 500 ms (semantic VAD) |
 | End-of-turn → first output audio | 300 to 700 ms |

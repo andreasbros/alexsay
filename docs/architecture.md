@@ -39,7 +39,7 @@ One USB device does both capture and playback. That single fact carries the desi
 | Component | Runs as | Job |
 |---|---|---|
 | `alexsay` daemon | systemd service, Rust | ALSA capture/playback, wake word, session state machine, resampling, playback EQ, OpenAI WebSocket client, tool calls |
-| Wake word | in the daemon (openWakeWord ONNX models via ONNX Runtime) | Spots "Alex" on the ASR beam; Phase 1 may use the `wyoming-openwakeword` container instead |
+| Wake word | in the daemon (openWakeWord ONNX models via ONNX Runtime) | Spots "Alexsay" on the ASR beam; Phase 1 may use the `wyoming-openwakeword` container instead |
 | Home Assistant | Docker, host network | Device integrations; the daemon calls its API |
 | OpenAI GPT-Live | cloud | Speech in, speech out, turn-taking; delegates reasoning and tool calls to a backend text model (Responses delegation) |
 
@@ -55,7 +55,7 @@ sequenceDiagram
     participant O as OpenAI GPT-Live
     participant H as Home Assistant
 
-    U->>X: "Alex, turn off the kitchen lights"
+    U->>X: "Alexsay, turn off the kitchen lights"
     X->>D: ASR beam, 16 kHz (continuous)
     D->>D: wake word fires; 2 s ring buffer already holds the request
     D->>O: WSS connect, session.start (pcm 16 kHz, voice, delegation + tools)
@@ -75,7 +75,7 @@ sequenceDiagram
 ```
 
 - The daemon streams mic audio for the whole session. The **XVF3800's AEC** keeps the assistant's own voice out of that stream, and **GPT-Live's native turn-taking** decides who speaks. Both are needed: without AEC the model hears itself and interrupts itself.
-- The wake word only runs while idle. In a session, "Alex" is just a word.
+- The wake word only runs while idle. In a session, "Alexsay" is just a word.
 - Event names follow the GPT-Live WebSocket guide (Oct 2026); check them against the API reference when writing the client.
 
 ## Key constraints

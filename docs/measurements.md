@@ -29,18 +29,19 @@ Nothing measured yet. Each row is an estimate or target from [device-design.md](
 
 | Test | How | Target | Result | Date |
 |---|---|---|---|---|
-| Detection at 1 m | 50 "Alex" utterances, two speakers | > 95 % | | |
+| Detection at 1 m | 50 "Alexsay" utterances, two speakers | > 95 % | | |
 | Detection at 3 m | same, TV off | > 90 % | | |
 | Detection at 3 m, TV on | same, TV at normal level | > 80 % | | |
-| Detection during playback | "Alex" spoken while the device talks (should not trigger; session already open) | n/a in session | | |
+| Detection during playback | "Alexsay" spoken while the device talks (should not trigger; session already open) | n/a in session | | |
 | False accepts, household audio | 24 h of normal household audio, wake events logged | < 1 per 24 h | | |
 | False accepts on "Alexa" | 50 "Alexa" utterances and TV ads | 0 | | |
+| False accepts on "Alexa, say..." | 50 utterances, two speakers | 0 | | |
 
 ## Latency
 
 | Test | How | Target | Result | Date |
 |---|---|---|---|---|
-| End of "Alex" → detection | daemon log timestamps vs ch1 recording | ≤ 200 ms | | |
+| End of "Alexsay" → detection | daemon log timestamps vs ch1 recording | ≤ 200 ms | | |
 | End of user speech → first sound | record room with a second mic, measure gap | ≤ 1.2 s | | |
 | Barge-in → playback stops | same | ≤ 300 ms | | |
 

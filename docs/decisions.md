@@ -73,3 +73,10 @@ Newest last. Each entry: what was decided, why, what was rejected.
 - **Decision:** Build on `gpt-live-1` (Live API, WebSocket, PCM 16 kHz, Responses delegation for tools). `gpt-realtime` stays behind the `VoiceBackend` trait as a fallback.
 - **Why:** GPT-Live-1 has been GA in the API since 10 Sep 2026; the 9 Oct entry wrongly assumed a waitlist alpha. It is the model the project was conceived for (true full duplex), costs $0.05/min plus the backend model, and accepts 16 kHz audio, so the io16 firmware needs no resampling.
 - **Rejected:** `gpt-realtime` as the primary backend.
+
+## 2026-10-10: Wake word "Alexsay"
+
+- **Decision:** The wake word is "Alexsay", not "Alex".
+- **Why:** Three syllables carry more acoustic evidence than two, so fewer false wakes from everyday speech and TV; it matches the project name.
+- **Watch:** "Alexa, say..." is nearly the same sound. It goes in the negative set and gets its own false-accept test.
+- **Rejected:** "Alex" (substring of "Alexa", common name on TV).

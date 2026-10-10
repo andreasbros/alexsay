@@ -16,7 +16,7 @@ Reference: [prior-art.md](prior-art.md).
 
 | Phase | Goal | Hardware |
 |---|---|---|
-| **1: Bench** | Answer four questions on the desk: does the Flex reflash and capture cleanly, how much echo survives the AEC at speaking volume, does "Alex" wake without "Alexa" false accepts, what is the wake-to-first-audio latency | Pi 5, Flex boards on standoffs, R 10 S in a temporary box, SD card |
+| **1: Bench** | Answer four questions on the desk: does the Flex reflash and capture cleanly, how much echo survives the AEC at speaking volume, does "Alexsay" wake without "Alexa" false accepts, what is the wake-to-first-audio latency | Pi 5, Flex boards on standoffs, R 10 S in a temporary box, SD card |
 | **2: Cylinder** | The finished speaker: printed enclosure, tuned acoustics, NVMe, runs unattended | PETG cylinder, gaskets, wadding, M.2 HAT+ and SSD |
 
 Phase 2 waits for Phase 1 because the enclosure layout depends on the answers: how far the driver must sit from the mics, how much the fan matters, which firmware (16 or 48 kHz) and therefore how much the box tuning matters.

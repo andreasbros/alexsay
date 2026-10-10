@@ -102,7 +102,7 @@ export function Assistant() {
   };
 
   return (
-    <Flex direction="column" gap="5" align="center">
+    <Flex direction="column" gap="4" align="center">
       <Flex align="center" justify="between" width="100%">
         <Heading size="7">Assistant</Heading>
         <Badge color={COLOURS[status]} size="2">
@@ -119,12 +119,6 @@ export function Assistant() {
       <div className="stage">
         <Bars status={status} level={level} />
       </div>
-      <Transcript turns={turns} thinking={status === "thinking"} />
-      {detail && (
-        <Text size="2" color={status === "error" ? "red" : "gray"} align="center">
-          {detail}
-        </Text>
-      )}
       <Flex gap="3" align="center" wrap="wrap" justify="center">
         {active ? (
           <Button size="3" color="red" variant="soft" onClick={stop}>
@@ -145,7 +139,12 @@ export function Assistant() {
           {muted ? <SpeakerOffIcon /> : <SpeakerLoudIcon />}
           {muted ? "Unmute" : "Mute"}
         </Button>
-        <Select.Root value={settings.voice} onValueChange={(voice) => changeVoice.mutate(voice)} disabled={!openai}>
+        <Select.Root
+          size="3"
+          value={settings.voice}
+          onValueChange={(voice) => changeVoice.mutate(voice)}
+          disabled={!openai}
+        >
           <Select.Trigger aria-label="Voice" variant="soft" />
           <Select.Content>
             <Select.Group>
@@ -167,6 +166,12 @@ export function Assistant() {
           </Select.Content>
         </Select.Root>
       </Flex>
+      <Transcript turns={turns} thinking={status === "thinking"} />
+      {detail && (
+        <Text size="2" color={status === "error" ? "red" : "gray"} align="center">
+          {detail}
+        </Text>
+      )}
       <Activity entries={activity} />
     </Flex>
   );

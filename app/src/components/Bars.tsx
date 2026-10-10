@@ -91,8 +91,9 @@ export function Bars({ status, level }: Props) {
     >
       <defs>
         <linearGradient id="bars-mood" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor={from} />
-          <stop offset="1" stopColor={to} />
+          {/* CSS variables only resolve through style, never through SVG presentation attributes */}
+          <stop offset="0" style={{ stopColor: from }} />
+          <stop offset="1" style={{ stopColor: to }} />
         </linearGradient>
       </defs>
       {REST_HEIGHTS.map((height, i) => {

@@ -35,13 +35,20 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   });
   const pc = new RTCPeerConnection();
-  const speaker = new Audio();
+  // In the document, so the browser never garbage-collects a playing element it cannot see
+  const speaker = document.createElement("audio");
   speaker.autoplay = true;
+  speaker.hidden = true;
+  document.body.append(speaker);
   const levels = { mic: 0, voice: 0 };
   let ticker = 0;
 
   pc.ontrack = (event) => {
     speaker.srcObject = new MediaStream([event.track]);
+    speaker.play().catch((err: unknown) => {
+      const reason = err instanceof Error ? err.message : "playback blocked";
+      handlers.onActivity("error", `Speaker playback refused: ${reason}`);
+    });
   };
   for (const track of mic.getTracks()) {
     pc.addTrack(track, mic);
@@ -120,6 +127,7 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
     }
     pc.close();
     speaker.srcObject = null;
+    speaker.remove();
   }
 
   return {

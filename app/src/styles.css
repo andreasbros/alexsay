@@ -44,8 +44,8 @@ body {
 }
 
 .bars {
-  width: min(70vw, 48vh, 400px);
-  height: min(70vw, 48vh, 400px);
+  width: min(60vw, 30vh, 280px);
+  height: min(60vw, 30vh, 280px);
   display: block;
   will-change: transform, filter;
 }
@@ -103,7 +103,7 @@ body {
 .transcript {
   width: 100%;
   max-width: 560px;
-  height: 11rem;
+  height: 9rem;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;

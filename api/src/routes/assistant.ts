@@ -1,68 +1,14 @@
 import { Hono } from "hono";
 import { lightwaveToken, lightwaveUrls, openaiConnection } from "../connections";
 import { connections } from "../db";
+import { contextInstructions, loadContext } from "../memory";
 import { providerFailure } from "../provider_errors";
 import { lights, writeFeature, writeFeatures } from "../providers/lightwave";
-import { createLiveSession, type LiveTool, ProviderError } from "../providers/openai";
+import { createLiveSession, ProviderError } from "../providers/openai";
 import * as schemas from "../schemas";
+import { toolDefinitions } from "../tools";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
-
-/** Always offered: the model hangs up when the user is done. */
-export const SESSION_TOOLS: LiveTool[] = [
-  {
-    type: "function",
-    name: "end_conversation",
-    description:
-      "Ends the conversation after the user said goodbye, thanks or that is all. Say a short goodbye first; the " +
-      "session closes once you finish speaking.",
-    parameters: { type: "object", properties: {}, additionalProperties: false },
-  },
-];
-
-/** Tools the backend model may call; the browser runs them against /api/lightwave. */
-export const LIGHT_TOOLS: LiveTool[] = [
-  {
-    type: "function",
-    name: "list_lights",
-    description: "Lists the user's lights with their current on/off state and dim level.",
-    parameters: { type: "object", properties: {}, additionalProperties: false },
-  },
-  {
-    type: "function",
-    name: "set_lights",
-    description:
-      'Switches or dims every light whose name or room matches the given words in one go, e.g. match "kitchen" for all ' +
-      'kitchen lights. Use match "all" for every light in the home only after the user confirmed.',
-    parameters: {
-      type: "object",
-      properties: {
-        match: { type: "string", description: 'Room or name words to match, or "all"' },
-        on: { type: "boolean", description: "True to switch on, false to switch off" },
-        dim_level: { type: "integer", minimum: 0, maximum: 100, description: "Brightness in percent, if dimmable" },
-      },
-      required: ["match"],
-      additionalProperties: false,
-    },
-  },
-  {
-    type: "function",
-    name: "set_light",
-    description:
-      "Switches a light on or off, or sets its brightness. Prefer the id from list_lights; the name the user said also works.",
-    parameters: {
-      type: "object",
-      properties: {
-        id: { type: "string", description: "The light id from list_lights" },
-        name: { type: "string", description: "The light's name as the user said it, when the id is unknown" },
-        on: { type: "boolean", description: "True to switch on, false to switch off" },
-        dim_level: { type: "integer", minimum: 0, maximum: 100, description: "Brightness in percent, if dimmable" },
-      },
-      required: [],
-      additionalProperties: false,
-    },
-  },
-];
 
 /** The browser hands over its WebRTC offer; GPT-Live answers through the owner's own API key. */
 export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) => {
@@ -74,11 +20,8 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
   }
   const hasLights = (await connections.get(c.env.DB, me.username, "lightwave")) !== null;
   try {
-    const input = {
-      settings: connection.settings,
-      tools: hasLights ? [...SESSION_TOOLS, ...LIGHT_TOOLS] : SESSION_TOOLS,
-      sdp,
-    };
+    const context = contextInstructions(await loadContext(c.env.DB, me.username));
+    const input = { settings: connection.settings, tools: toolDefinitions(hasLights), context, sdp };
     const session = await createLiveSession(c.env.OPENAI_BASE_URL, connection.apiKey, {
       ...input,
       resumeFrom: resume_from,

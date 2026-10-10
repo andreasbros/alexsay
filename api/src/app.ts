@@ -2,9 +2,11 @@ import { Hono } from "hono";
 import { requireAdmin, requireUser } from "./auth";
 import { assistantRoutes, lightwaveRoutes } from "./routes/assistant";
 import { connectionRoutes } from "./routes/connections";
+import { conversationRoutes, memoryRoutes } from "./routes/conversations";
 import { deviceApiRoutes } from "./routes/device_api";
 import { deviceRoutes } from "./routes/devices";
 import { sessionRoutes } from "./routes/session";
+import { toolRoutes } from "./routes/tools";
 import { userRoutes } from "./routes/users";
 import type { AppEnv } from "./types";
 import { BadRequest } from "./validate";
@@ -22,6 +24,14 @@ export const app = new Hono<AppEnv>()
   .route("/api/assistant", assistantRoutes)
   .use("/api/lightwave/*", requireUser)
   .route("/api/lightwave", lightwaveRoutes)
+  .use("/api/conversations/*", requireUser)
+  .use("/api/conversations", requireUser)
+  .route("/api/conversations", conversationRoutes)
+  .use("/api/memories/*", requireUser)
+  .use("/api/memories", requireUser)
+  .route("/api/memories", memoryRoutes)
+  .use("/api/tools/*", requireUser)
+  .route("/api/tools", toolRoutes)
   .use("/api/users/*", requireUser, requireAdmin)
   .use("/api/users", requireUser, requireAdmin)
   .route("/api/users", userRoutes)

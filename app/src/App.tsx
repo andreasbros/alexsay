@@ -5,6 +5,7 @@ import { Assistant } from "./pages/Assistant";
 import { Connections } from "./pages/Connections";
 import { Devices } from "./pages/Devices";
 import { Login } from "./pages/Login";
+import { MemoryPage } from "./pages/Memory";
 import { Register } from "./pages/Register";
 import { Users } from "./pages/Users";
 import { useSession } from "./session";
@@ -35,6 +36,7 @@ export function App() {
         <Route index element={<Devices user={user} />} />
         <Route path="assistant" element={<Assistant />} />
         <Route path="connections" element={<Connections />} />
+        <Route path="memory" element={<MemoryPage />} />
         {user.role === "admin" && <Route path="users" element={<Users user={user} />} />}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

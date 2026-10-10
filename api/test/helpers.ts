@@ -7,7 +7,16 @@ export const DEVICE_ID = "7d1d6e2e-7c7b-4f6a-9d0a-1d2e3f4a5b6c";
 
 export async function resetDb(): Promise<void> {
   await env.DB.batch(
-    ["connections", "devices", "sessions", "login_failures", "users"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)),
+    [
+      "conversation_turns",
+      "conversations",
+      "memories",
+      "connections",
+      "devices",
+      "sessions",
+      "login_failures",
+      "users",
+    ].map((t) => env.DB.prepare(`DELETE FROM ${t}`)),
   );
 }
 

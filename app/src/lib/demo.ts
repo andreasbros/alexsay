@@ -54,6 +54,7 @@ export function startDemo(handlers: LiveHandlers): LiveSession {
   }, 50);
   return {
     id: "demo",
+    conversationId: null,
     micLevel: () => level,
     voiceLevel: () => level,
     setMuted: (muted) => handlers.onActivity("info", muted ? "Microphone muted" : "Microphone live"),

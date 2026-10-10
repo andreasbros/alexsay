@@ -26,3 +26,7 @@ e2e/test-results/
 .idea/
 .DS_Store
 __pycache__/
+
+# Generated per build
+app/public/version.json
+app/src/build.ts

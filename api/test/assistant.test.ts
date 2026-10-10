@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sessionConfig } from "../src/providers/openai";
-import { LIGHT_TOOLS, SESSION_TOOLS } from "../src/routes/assistant";
 import { openaiSettings } from "../src/schemas";
+import { toolDefinitions } from "../src/tools";
 import {
   APP,
   addUser,
@@ -69,11 +69,9 @@ describe("assistant sessions", () => {
     const res = await json(`${APP}/api/assistant/sessions`, "POST", { sdp: OFFER }, maria);
     upstream.done();
     expect(await res.json()).toMatchObject({ tools: ["lights"] });
-    expect(sent?.session.delegation.responses.tools).toEqual([
-      { type: "web_search" },
-      ...SESSION_TOOLS,
-      ...LIGHT_TOOLS,
-    ]);
+    expect(sent?.session.delegation.responses.tools).toEqual([{ type: "web_search" }, ...toolDefinitions(true)]);
+    expect(toolDefinitions(true).map((t) => t.name)).toContain("set_lights");
+    expect(toolDefinitions(false).map((t) => t.name)).not.toContain("set_lights");
   });
 
   it("forks the previous session on resume and falls back to a fresh one when it is gone", async () => {
@@ -118,7 +116,14 @@ describe("assistant sessions", () => {
       instructions: string;
     };
     expect(config.delegation.responses.tools).toEqual([]);
-    expect(SESSION_TOOLS.map((t) => (t.type === "function" ? t.name : t.type))).toEqual(["end_conversation"]);
+    expect(toolDefinitions(false).map((t) => t.name)).toEqual([
+      "end_conversation",
+      "remember",
+      "forget",
+      "list_memories",
+      "recall_conversations",
+      "read_conversation",
+    ]);
     expect(config.instructions).not.toMatch(/search the web/);
   });
 
@@ -130,7 +135,12 @@ describe("assistant sessions", () => {
   });
 
   it("builds a Responses delegation with the user's instructions appended", () => {
-    const config = sessionConfig(openaiSettings.parse({ instructions: "Call me Andreas." }), LIGHT_TOOLS);
+    const tools = toolDefinitions(true);
+    const config = sessionConfig(
+      openaiSettings.parse({ instructions: "Call me Andreas." }),
+      tools,
+      "Today is 2026-10-11.",
+    );
     expect(config).toMatchObject({
       model: "gpt-live-1",
       delegation: {
@@ -138,13 +148,13 @@ describe("assistant sessions", () => {
         responses: {
           model: "gpt-6-luna",
           tool_choice: "auto",
-          tools: [{ type: "web_search" }, ...LIGHT_TOOLS],
+          tools: [{ type: "web_search" }, ...tools],
           reasoning: { effort: "low" },
           text: { verbosity: "low" },
         },
       },
     });
-    expect(String(config.instructions)).toMatch(/Call me Andreas\.$/);
+    expect(String(config.instructions)).toMatch(/Call me Andreas\.\n\nToday is 2026-10-11\.$/);
     expect(String(config.instructions)).toMatch(/pronounced "Aleksey"/);
   });
 });

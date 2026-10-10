@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "dev": "node scripts/version.mjs && vite",
+    "build": "node scripts/version.mjs && tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "version": "node scripts/version.mjs"
   },
   "dependencies": {
     "@radix-ui/react-icons": "^1.3.2",

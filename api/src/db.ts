@@ -1,4 +1,17 @@
-import type { ConnectionRow, DeviceRow, Provider, Role, User, UserRow } from "./types";
+import type {
+  ConnectionRow,
+  ConversationRow,
+  ConversationSource,
+  DeviceRow,
+  MemoryCategory,
+  MemoryRow,
+  Provider,
+  Role,
+  TurnRole,
+  TurnRow,
+  User,
+  UserRow,
+} from "./types";
 
 const DAY_MS = 86_400_000;
 /** Caps how many unclaimed devices can call home, so random traffic cannot grow the table. */
@@ -181,3 +194,106 @@ export async function purgeExpired(db: D1Database, now: number): Promise<void> {
     db.prepare("DELETE FROM login_failures WHERE at <= ?").bind(now - DAY_MS),
   ]);
 }
+
+export interface NewTurn {
+  at: number;
+  role: TurnRole;
+  text: string;
+}
+
+export const conversations = {
+  create: (
+    db: D1Database,
+    row: { id: string; username: string; source: ConversationSource; device_id: string | null },
+  ) =>
+    db
+      .prepare("INSERT INTO conversations (id, username, source, device_id, started_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(row.id, row.username, row.source, row.device_id, Date.now())
+      .run(),
+
+  get: (db: D1Database, username: string, id: string) =>
+    db.prepare("SELECT * FROM conversations WHERE id = ? AND username = ?").bind(id, username).first<ConversationRow>(),
+
+  /** Newest first; `query` matches the summary and the turns' text. */
+  list: async (db: D1Database, username: string, limit: number, query?: string) => {
+    const statement = query
+      ? db
+          .prepare(
+            `SELECT DISTINCT c.* FROM conversations c LEFT JOIN conversation_turns t ON t.conversation_id = c.id
+             WHERE c.username = ? AND (c.summary LIKE ? OR t.text LIKE ?)
+             ORDER BY c.started_at DESC LIMIT ?`,
+          )
+          .bind(username, `%${query}%`, `%${query}%`, limit)
+      : db
+          .prepare("SELECT * FROM conversations WHERE username = ? ORDER BY started_at DESC LIMIT ?")
+          .bind(username, limit);
+    return (await statement.all<ConversationRow>()).results;
+  },
+
+  addTurns: (db: D1Database, id: string, turns: NewTurn[]) =>
+    db.batch([
+      ...turns.map((t) =>
+        db
+          .prepare("INSERT INTO conversation_turns (conversation_id, at, role, text) VALUES (?, ?, ?, ?)")
+          .bind(id, t.at, t.role, t.text),
+      ),
+      db.prepare("UPDATE conversations SET turn_count = turn_count + ? WHERE id = ?").bind(turns.length, id),
+    ]),
+
+  turns: async (db: D1Database, id: string, limit = 500) =>
+    (
+      await db
+        .prepare("SELECT * FROM conversation_turns WHERE conversation_id = ? ORDER BY at, id LIMIT ?")
+        .bind(id, limit)
+        .all<TurnRow>()
+    ).results,
+
+  end: (db: D1Database, id: string, endedAt: number) =>
+    db.prepare("UPDATE conversations SET ended_at = COALESCE(ended_at, ?) WHERE id = ?").bind(endedAt, id).run(),
+
+  setSummary: (db: D1Database, id: string, summary: string) =>
+    db.prepare("UPDATE conversations SET summary = ? WHERE id = ?").bind(summary, id).run(),
+
+  remove: (db: D1Database, username: string, id: string) =>
+    db.prepare("DELETE FROM conversations WHERE id = ? AND username = ?").bind(id, username).run(),
+};
+
+export const memories = {
+  list: async (db: D1Database, username: string, category?: MemoryCategory) =>
+    (
+      await db
+        .prepare(
+          `SELECT * FROM memories WHERE username = ? AND (? IS NULL OR category = ?)
+           ORDER BY CASE category WHEN 'important' THEN 0 ELSE 1 END, updated_at DESC`,
+        )
+        .bind(username, category ?? null, category ?? null)
+        .all<MemoryRow>()
+    ).results,
+
+  get: (db: D1Database, username: string, id: string) =>
+    db.prepare("SELECT * FROM memories WHERE id = ? AND username = ?").bind(id, username).first<MemoryRow>(),
+
+  create: (
+    db: D1Database,
+    row: { id: string; username: string; category: MemoryCategory; content: string; source: string | null },
+  ) =>
+    db
+      .prepare(
+        `INSERT INTO memories (id, username, category, content, source_conversation_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(row.id, row.username, row.category, row.content, row.source, Date.now(), Date.now())
+      .run(),
+
+  update: (db: D1Database, username: string, id: string, changes: { category?: MemoryCategory; content?: string }) =>
+    db
+      .prepare(
+        `UPDATE memories SET category = COALESCE(?, category), content = COALESCE(?, content), updated_at = ?
+         WHERE id = ? AND username = ?`,
+      )
+      .bind(changes.category ?? null, changes.content ?? null, Date.now(), id, username)
+      .run(),
+
+  remove: (db: D1Database, username: string, id: string) =>
+    db.prepare("DELETE FROM memories WHERE id = ? AND username = ?").bind(id, username).run(),
+};

@@ -55,6 +55,40 @@ export interface ProviderTest {
   detail?: string;
 }
 
+export type MemoryCategory = "important" | "preferences" | "people" | "home" | "routines" | "reminders" | "facts";
+export const MEMORY_CATEGORIES: MemoryCategory[] = [
+  "important",
+  "preferences",
+  "people",
+  "home",
+  "routines",
+  "reminders",
+  "facts",
+];
+
+export interface Memory {
+  id: string;
+  category: MemoryCategory;
+  content: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Conversation {
+  id: string;
+  source: "app" | "device";
+  started_at: number;
+  ended_at: number | null;
+  summary: string | null;
+  turn_count: number;
+}
+
+export interface ConversationTurn {
+  at: number;
+  role: "user" | "assistant" | "tool";
+  text: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -112,6 +146,30 @@ export const api = {
     request<void>("POST", `/api/lightwave/features/${encodeURIComponent(featureId)}`, { value }),
   setFeatures: (features: { featureId: string; value: number }[]) =>
     request<void>("POST", "/api/lightwave/features", { features }),
+
+  callTool: (name: string, args: Record<string, unknown>, conversationId: string | null) =>
+    request<{ output: unknown }>("POST", "/api/tools/call", {
+      name,
+      arguments: args,
+      conversation_id: conversationId ?? undefined,
+    }),
+
+  startConversation: () => request<{ id: string }>("POST", "/api/conversations", { source: "app" }),
+  addTurns: (id: string, turns: ConversationTurn[]) =>
+    request<void>("POST", `/api/conversations/${encodeURIComponent(id)}/turns`, { turns }),
+  endConversation: (id: string) => request<void>("POST", `/api/conversations/${encodeURIComponent(id)}/end`),
+  conversations: (q?: string) =>
+    request<Conversation[]>("GET", `/api/conversations?limit=50${q ? `&q=${encodeURIComponent(q)}` : ""}`),
+  conversation: (id: string) =>
+    request<Conversation & { turns: ConversationTurn[] }>("GET", `/api/conversations/${encodeURIComponent(id)}`),
+  removeConversation: (id: string) => request<void>("DELETE", `/api/conversations/${encodeURIComponent(id)}`),
+
+  memories: () => request<Memory[]>("GET", "/api/memories"),
+  addMemory: (category: MemoryCategory, content: string) =>
+    request<{ id: string }>("POST", "/api/memories", { category, content }),
+  updateMemory: (id: string, changes: { category?: MemoryCategory; content?: string }) =>
+    request<void>("PATCH", `/api/memories/${encodeURIComponent(id)}`, changes),
+  removeMemory: (id: string) => request<void>("DELETE", `/api/memories/${encodeURIComponent(id)}`),
 
   users: () => request<User[]>("GET", "/api/users"),
   setRole: (username: string, role: Role) =>

@@ -41,18 +41,21 @@ const ADDRESSED_INSTRUCTIONS =
 export interface SessionInput {
   settings: OpenAiSettings;
   tools: LiveTool[];
+  /** What the assistant remembers and how to use the memory tools, from memory.ts. */
+  context?: string;
   sdp: string;
   /** A session to continue from, so a dropped call picks up with its memory of the conversation. */
   resumeFrom?: string;
 }
 
 /** The session body GPT-Live expects: voice layer plus a Responses backend that owns the tools. */
-export function sessionConfig(settings: OpenAiSettings, functions: LiveTool[]): Record<string, unknown> {
+export function sessionConfig(settings: OpenAiSettings, functions: LiveTool[], context = ""): Record<string, unknown> {
   const instructions = [
     SPEAKER_INSTRUCTIONS,
     settings.respond_when_addressed ? ADDRESSED_INSTRUCTIONS : "",
     settings.web_search ? WEB_SEARCH_INSTRUCTIONS : "",
     settings.instructions,
+    context,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -87,7 +90,7 @@ export async function createLiveSession(
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
     body: JSON.stringify({
-      session: sessionConfig(input.settings, input.tools),
+      session: sessionConfig(input.settings, input.tools, input.context),
       transport: { type: "webrtc", sdp: input.sdp },
     }),
   });

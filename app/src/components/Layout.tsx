@@ -1,7 +1,9 @@
 import { ExitIcon, MoonIcon, PersonIcon, SunIcon } from "@radix-ui/react-icons";
-import { Box, Container, DropdownMenu, Flex, IconButton, Separator, TabNav, Text } from "@radix-ui/themes";
+import { Box, Button, Container, DropdownMenu, Flex, IconButton, Separator, TabNav, Text } from "@radix-ui/themes";
+import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import type { User } from "../api";
+import { BUILD } from "../build";
 import { useLogout } from "../session";
 import { useAppearance } from "../theme";
 import { Logo } from "./Logo";
@@ -9,11 +11,40 @@ import { Logo } from "./Logo";
 const TABS: [string, string][] = [
   ["Devices", "/"],
   ["Assistant", "/assistant"],
+  ["Memory", "/memory"],
   ["Connections", "/connections"],
 ];
 
+const UPDATE_CHECK_MS = 5 * 60_000;
+
+/** True once the server has a newer build than the one running here. */
+function useUpdateAvailable(): boolean {
+  const [stale, setStale] = useState(false);
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const res = await fetch("/version.json", { cache: "no-store" });
+        const { build } = (await res.json()) as { build?: string };
+        if (build && build !== BUILD && BUILD !== "dev") {
+          setStale(true);
+        }
+      } catch {}
+    };
+    void check();
+    const timer = window.setInterval(check, UPDATE_CHECK_MS);
+    const onVisible = () => document.visibilityState === "visible" && void check();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+  return stale;
+}
+
 export function Layout({ user }: { user: User }) {
   const { appearance, toggle } = useAppearance();
+  const updateAvailable = useUpdateAvailable();
   const logout = useLogout();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -55,6 +86,7 @@ export function Layout({ user }: { user: User }) {
                   <DropdownMenu.Label>
                     {user.username} · {user.role}
                   </DropdownMenu.Label>
+                  <DropdownMenu.Label>build {BUILD}</DropdownMenu.Label>
                   <DropdownMenu.Separator />
                   {user.role === "admin" && (
                     <DropdownMenu.Item onSelect={() => navigate("/users")}>
@@ -74,6 +106,18 @@ export function Layout({ user }: { user: User }) {
           </Box>
         </Container>
       </Box>
+      {updateAvailable && (
+        <Box style={{ background: "var(--accent-a3)", borderBottom: "1px solid var(--accent-a5)" }}>
+          <Container size="4" px="4">
+            <Flex align="center" justify="between" py="2" gap="3">
+              <Text size="2">A newer version of the app is available.</Text>
+              <Button size="1" onClick={() => window.location.reload()}>
+                Reload
+              </Button>
+            </Flex>
+          </Container>
+        </Box>
+      )}
       <Container size="4" px="4" className="page">
         <Outlet />
       </Container>

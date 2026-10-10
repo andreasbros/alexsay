@@ -14,6 +14,8 @@ export interface LiveHandlers {
 export interface LiveSession {
   /** GPT-Live's id for this session, the handle a later resume forks from. */
   readonly id: string;
+  /** The history record this call writes to. */
+  readonly conversationId: string | null;
   /** 0 to 1, how loud the microphone is right now. */
   micLevel: () => number;
   /** 0 to 1, how loud the assistant is right now. */
@@ -35,6 +37,11 @@ const HANGUP_QUIET_MS = 1500;
  */
 export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Promise<LiveSession> {
   handlers.onStatus("connecting");
+  const conversationId = await api
+    .startConversation()
+    .then((r) => r.id)
+    .catch(() => null);
+  const recorder = new Recorder(conversationId);
   const mic = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   });
@@ -45,10 +52,16 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
   speaker.hidden = true;
   document.body.append(speaker);
   const levels = { mic: 0, voice: 0 };
+  // Stats-based levels are preferred; where a browser reports none, Web Audio meters fill in
+  const statsSeen = { mic: false, voice: false };
+  const meters = new Meters();
+  meters.watch("mic", mic);
   let ticker = 0;
 
   pc.ontrack = (event) => {
-    speaker.srcObject = new MediaStream([event.track]);
+    const stream = new MediaStream([event.track]);
+    speaker.srcObject = stream;
+    meters.watch("voice", stream);
     speaker.play().catch((err: unknown) => {
       const reason = err instanceof Error ? err.message : "playback blocked";
       handlers.onActivity("error", `Speaker playback refused: ${reason}`);
@@ -62,9 +75,10 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
   const events = pc.createDataChannel("oai-events");
   // Set by the end_conversation tool: close once the goodbye has been spoken
   let hangingUp = false;
-  const tools = new ToolRunner(events, handlers, () => {
+  const tools = new ToolRunner(events, handlers, conversationId, () => {
     hangingUp = true;
   });
+  tools.recorder = recorder;
   let lastAssistantAudio = 0;
   // The backend model is working on an answer: between the user's turn and the first spoken word
   let thinking = false;
@@ -78,8 +92,10 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
       lastAssistantAudio = Date.now();
       thinking = false;
       handlers.onTranscript("assistant", String(event.delta ?? ""));
+      recorder.add("assistant", String(event.delta ?? ""));
     } else if (type === "session.input_transcript.delta") {
       handlers.onTranscript("user", String(event.delta ?? ""));
+      recorder.add("user", String(event.delta ?? ""));
     } else if (type === "session.closed") {
       const reason = String(event.reason ?? "no reason");
       handlers.onActivity("info", `Session closed (${reason})`);
@@ -132,11 +148,22 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
       handlers.onStatus("lost", "Connection lost. Tap Resume to carry on where you left off.");
       return;
     }
-    void readLevels(pc, levels);
+    void readLevels(pc, levels, statsSeen);
+    if (!statsSeen.mic) {
+      levels.mic = meters.level("mic");
+    }
+    if (!statsSeen.voice) {
+      levels.voice = meters.level("voice");
+    }
     if (events.readyState !== "open") {
       return;
     }
-    const speaking = levels.voice > 0.02 || Date.now() - lastAssistantAudio < SPEAKING_HOLD_MS;
+    const talkingByTranscript = Date.now() - lastAssistantAudio < SPEAKING_HOLD_MS;
+    // No measurable level at all: let the words themselves move the bars
+    if (talkingByTranscript && levels.voice < 0.02) {
+      levels.voice = 0.3 + 0.3 * Math.abs(Math.sin(Date.now() / 90));
+    }
+    const speaking = levels.voice > 0.02 || talkingByTranscript;
     if (speaking) {
       lastAssistantAudio = Math.max(lastAssistantAudio, levels.voice > 0.02 ? Date.now() : 0);
     }
@@ -156,10 +183,13 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
     pc.close();
     speaker.srcObject = null;
     speaker.remove();
+    meters.close();
+    void recorder.finish();
   }
 
   const session: LiveSession = {
     id: sessionId,
+    conversationId,
     micLevel: () => levels.mic,
     voiceLevel: () => levels.voice,
     setMuted: (muted) => {
@@ -191,10 +221,12 @@ class ToolRunner {
   private pending = 0;
   private answered = 0;
   private responseDone = false;
+  recorder: Recorder | null = null;
 
   constructor(
     private readonly channel: RTCDataChannel,
     private readonly handlers: LiveHandlers,
+    private readonly conversationId: string | null,
     private readonly onHangUp: () => void,
   ) {}
 
@@ -214,10 +246,11 @@ class ToolRunner {
     }
     this.pending += 1;
     this.handlers.onActivity("tool", `${call.name} ${call.arguments}`);
+    this.recorder?.tool(`${call.name} ${call.arguments}`);
     if (call.name === "end_conversation") {
       this.onHangUp();
     }
-    void runTool(call, api).then((output) => {
+    void runTool(call, api, this.conversationId).then((output) => {
       this.handlers.onActivity(
         output.includes('"error"') ? "error" : "result",
         `${call.name}: ${output.slice(0, 160)}`,
@@ -240,8 +273,12 @@ class ToolRunner {
   }
 }
 
-/** Microphone and assistant loudness from the peer connection's own statistics. */
-async function readLevels(pc: RTCPeerConnection, levels: { mic: number; voice: number }): Promise<void> {
+/** Microphone and assistant loudness from the peer connection's own statistics, where reported. */
+async function readLevels(
+  pc: RTCPeerConnection,
+  levels: { mic: number; voice: number },
+  seen: { mic: boolean; voice: boolean },
+): Promise<void> {
   const stats = await pc.getStats().catch(() => null);
   if (!stats) {
     return;
@@ -253,10 +290,106 @@ async function readLevels(pc: RTCPeerConnection, levels: { mic: number; voice: n
     const level = Math.min(1, report.audioLevel * 4);
     if (report.type === "inbound-rtp") {
       levels.voice = level;
+      seen.voice = true;
     } else if (report.type === "media-source") {
       levels.mic = level;
+      seen.mic = true;
     }
   });
+}
+
+/** Web Audio loudness meters, created lazily and only read when the stats carry no level. */
+class Meters {
+  private context: AudioContext | null = null;
+  private readonly analysers = new Map<string, AnalyserNode>();
+  private readonly samples = new Uint8Array(512);
+
+  watch(name: string, stream: MediaStream): void {
+    try {
+      this.context ??= new AudioContext();
+      const analyser = this.context.createAnalyser();
+      analyser.fftSize = 512;
+      this.context.createMediaStreamSource(stream).connect(analyser);
+      this.analysers.set(name, analyser);
+      if (this.context.state === "suspended") {
+        void this.context.resume();
+      }
+    } catch {}
+  }
+
+  level(name: string): number {
+    const analyser = this.analysers.get(name);
+    if (!analyser) {
+      return 0;
+    }
+    analyser.getByteTimeDomainData(this.samples);
+    let sum = 0;
+    for (const s of this.samples) {
+      const centred = (s - 128) / 128;
+      sum += centred * centred;
+    }
+    return Math.min(1, Math.sqrt(sum / this.samples.length) * 3);
+  }
+
+  close(): void {
+    void this.context?.close();
+    this.context = null;
+    this.analysers.clear();
+  }
+}
+
+/** Buffers transcript fragments into whole turns and ships them to the history in small batches. */
+class Recorder {
+  private current: { role: "user" | "assistant"; text: string; at: number } | null = null;
+  private pending: { at: number; role: "user" | "assistant" | "tool"; text: string }[] = [];
+  private timer = 0;
+
+  constructor(private readonly conversationId: string | null) {}
+
+  add(role: "user" | "assistant", delta: string): void {
+    if (this.current && this.current.role === role) {
+      this.current.text += delta;
+      return;
+    }
+    this.closeTurn();
+    this.current = { role, text: delta, at: Date.now() };
+  }
+
+  tool(text: string): void {
+    this.closeTurn();
+    this.pending.push({ at: Date.now(), role: "tool", text });
+    this.schedule();
+  }
+
+  async finish(): Promise<void> {
+    this.closeTurn();
+    window.clearTimeout(this.timer);
+    await this.flush();
+    if (this.conversationId) {
+      await api.endConversation(this.conversationId).catch(() => undefined);
+    }
+  }
+
+  private closeTurn(): void {
+    if (this.current?.text.trim()) {
+      this.pending.push({ at: this.current.at, role: this.current.role, text: this.current.text.trim() });
+      this.schedule();
+    }
+    this.current = null;
+  }
+
+  private schedule(): void {
+    window.clearTimeout(this.timer);
+    this.timer = window.setTimeout(() => void this.flush(), 4000);
+  }
+
+  private async flush(): Promise<void> {
+    if (!this.conversationId || this.pending.length === 0) {
+      return;
+    }
+    const batch = this.pending.splice(0, this.pending.length);
+    await api.addTurns(this.conversationId, batch).catch(() => this.pending.unshift(...batch));
+  }
 }
 
 function iceGathered(pc: RTCPeerConnection): Promise<void> {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MEMORY_CATEGORIES } from "./types";
 
 export const username = z
   .string()
@@ -69,4 +70,33 @@ export const featureWrites = z.object({
     .array(z.object({ featureId, value: z.number().int().min(0).max(100) }))
     .min(1)
     .max(50),
+});
+
+export const memoryId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+const id = memoryId;
+export const memoryCategory = z.enum(MEMORY_CATEGORIES);
+const turnRole = z.enum(["user", "assistant", "tool"]);
+
+export const startConversation = z.object({
+  source: z.enum(["app", "device"]).default("app"),
+  device_id: deviceId.optional(),
+});
+export const addTurns = z.object({
+  turns: z
+    .array(z.object({ at: z.number().int().min(0), role: turnRole, text: z.string().min(1).max(4000) }))
+    .min(1)
+    .max(200),
+});
+export const conversationList = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  q: z.string().trim().max(100).optional(),
+});
+export const createMemory = z.object({ category: memoryCategory, content: z.string().trim().min(1).max(500) });
+export const updateMemory = z
+  .object({ category: memoryCategory, content: z.string().trim().min(1).max(500) })
+  .partial();
+export const toolCall = z.object({
+  name: z.string().regex(/^[a-z_]{1,40}$/),
+  arguments: z.record(z.string(), z.unknown()).default({}),
+  conversation_id: id.optional(),
 });

@@ -17,6 +17,7 @@ const LABELS: Record<LiveStatus | "idle", string> = {
   listening: "Listening",
   thinking: "Thinking",
   speaking: "Speaking",
+  lost: "Connection lost",
   closed: "Ended",
   error: "Error",
 };
@@ -27,6 +28,7 @@ const COLOURS: Record<LiveStatus | "idle", "gray" | "grass" | "amber" | "red" | 
   listening: "grass",
   thinking: "amber",
   speaking: "indigo",
+  lost: "amber",
   closed: "gray",
   error: "red",
 };
@@ -43,6 +45,8 @@ export function Assistant() {
   const [muted, setMuted] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  // The last GPT-Live session, kept so a dropped call can be forked and carried on
+  const lastSessionId = useRef<string | null>(null);
   const log = (kind: ActivityEntry["kind"], text: string) =>
     setActivity((entries) => [...entries.slice(-49), { at: new Date(), kind, text }]);
 
@@ -60,9 +64,11 @@ export function Assistant() {
     };
   }, []);
 
-  const start = async () => {
+  const start = async (resume = false) => {
     setDetail(null);
-    setTurns([]);
+    if (!resume) {
+      setTurns([]);
+    }
     setMuted(false);
     const handlers = {
       onActivity: log,
@@ -71,14 +77,16 @@ export function Assistant() {
         if (info) {
           setDetail(info);
         }
-        if (next === "closed") {
+        if (next === "closed" || next === "lost") {
           session.current = null;
         }
       },
       onTranscript: (role: Turn["role"], delta: string) => setTurns((current) => appendTurn(current, role, delta)),
     };
     try {
-      session.current = demo ? startDemo(handlers) : await startLive(handlers);
+      const resumeFrom = resume ? (lastSessionId.current ?? undefined) : undefined;
+      session.current = demo ? startDemo(handlers) : await startLive(handlers, resumeFrom);
+      lastSessionId.current = session.current.id || lastSessionId.current;
     } catch (err) {
       setStatus("error");
       setDetail(describe(err));
@@ -91,6 +99,17 @@ export function Assistant() {
     setStatus("idle");
   };
   const active = status === "connecting" || status === "listening" || status === "thinking" || status === "speaking";
+
+  // Back from the lock screen or another app: pick the conversation up again by itself
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && status === "lost") {
+        void start(true);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  });
 
   const toggleMute = () => {
     const next = !muted;
@@ -106,7 +125,7 @@ export function Assistant() {
       log("info", `Voice changed to ${voice}`);
       if (active) {
         stop();
-        await start();
+        await start(true);
       }
     },
   });
@@ -189,8 +208,12 @@ export function Assistant() {
           <Button size="4" color="red" variant="soft" onClick={stop} style={{ minWidth: 220 }}>
             End conversation
           </Button>
+        ) : status === "lost" ? (
+          <Button size="4" color="amber" onClick={() => start(true)} style={{ minWidth: 220 }}>
+            Resume conversation
+          </Button>
         ) : (
-          <Button size="4" onClick={start} disabled={!ready} style={{ minWidth: 220 }}>
+          <Button size="4" onClick={() => start()} disabled={!ready} style={{ minWidth: 220 }}>
             Start talking
           </Button>
         )}

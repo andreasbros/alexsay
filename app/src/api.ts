@@ -100,8 +100,11 @@ export const api = {
   testConnection: (provider: Provider) => request<ProviderTest>("POST", `/api/connections/${provider}/test`),
   removeConnection: (provider: Provider) => request<void>("DELETE", `/api/connections/${provider}`),
 
-  assistantSession: (sdp: string) =>
-    request<{ session_id: string; sdp: string; tools: string[] }>("POST", "/api/assistant/sessions", { sdp }),
+  assistantSession: (sdp: string, resumeFrom?: string) =>
+    request<{ session_id: string; sdp: string; tools: string[]; resumed: boolean }>("POST", "/api/assistant/sessions", {
+      sdp,
+      resume_from: resumeFrom,
+    }),
 
   lights: () => request<Light[]>("GET", "/api/lightwave/lights"),
   setFeature: (featureId: string, value: number) =>

@@ -3,7 +3,7 @@ import { lightwaveToken, lightwaveUrls, openaiConnection } from "../connections"
 import { connections } from "../db";
 import { providerFailure } from "../provider_errors";
 import { lights, writeFeature, writeFeatures } from "../providers/lightwave";
-import { createLiveSession, type LiveTool } from "../providers/openai";
+import { createLiveSession, type LiveTool, ProviderError } from "../providers/openai";
 import * as schemas from "../schemas";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
@@ -66,7 +66,7 @@ export const LIGHT_TOOLS: LiveTool[] = [
 
 /** The browser hands over its WebRTC offer; GPT-Live answers through the owner's own API key. */
 export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) => {
-  const { sdp } = await jsonBody(c, schemas.assistantSession);
+  const { sdp, resume_from } = await jsonBody(c, schemas.assistantSession);
   const me = c.get("user");
   const connection = await openaiConnection(c, me.username);
   if (!connection) {
@@ -74,12 +74,27 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
   }
   const hasLights = (await connections.get(c.env.DB, me.username, "lightwave")) !== null;
   try {
-    const session = await createLiveSession(c.env.OPENAI_BASE_URL, connection.apiKey, {
+    const input = {
       settings: connection.settings,
       tools: hasLights ? [...SESSION_TOOLS, ...LIGHT_TOOLS] : SESSION_TOOLS,
       sdp,
+    };
+    const session = await createLiveSession(c.env.OPENAI_BASE_URL, connection.apiKey, {
+      ...input,
+      resumeFrom: resume_from,
+    }).catch(async (err: unknown) => {
+      // An expired or unknown source session falls back to a fresh conversation
+      if (resume_from && err instanceof ProviderError && err.status < 500) {
+        return { ...(await createLiveSession(c.env.OPENAI_BASE_URL, connection.apiKey, input)), fresh: true };
+      }
+      throw err;
     });
-    return c.json({ session_id: session.sessionId, sdp: session.sdp, tools: hasLights ? ["lights"] : [] });
+    return c.json({
+      session_id: session.sessionId,
+      sdp: session.sdp,
+      tools: hasLights ? ["lights"] : [],
+      resumed: !!resume_from && !("fresh" in session),
+    });
   } catch (err) {
     return providerFailure(c, "openai", err);
   }

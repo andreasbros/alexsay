@@ -53,6 +53,7 @@ export function startDemo(handlers: LiveHandlers): LiveSession {
     level += (target - level) * 0.6;
   }, 50);
   return {
+    id: "demo",
     micLevel: () => level,
     voiceLevel: () => level,
     setMuted: (muted) => handlers.onActivity("info", muted ? "Microphone muted" : "Microphone live"),

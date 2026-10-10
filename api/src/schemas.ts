@@ -52,7 +52,13 @@ export const lightwaveConnection = z.object({
   refresh_token: z.string().trim().min(16).max(512),
 });
 
-export const assistantSession = z.object({ sdp: z.string().min(16).max(65_536) });
+export const assistantSession = z.object({
+  sdp: z.string().min(16).max(65_536),
+  resume_from: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,128}$/)
+    .optional(),
+});
 
 const featureId = z.string().regex(/^[A-Za-z0-9_.+-]{1,160}$/);
 export const featureValue = z.object({ value: z.number().int().min(0).max(100) });

@@ -51,7 +51,7 @@ describe("assistant sessions", () => {
     const res = await json(`${APP}/api/assistant/sessions`, "POST", { sdp: OFFER }, maria);
     upstream.done();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ session_id: "sess_1", sdp: "v=0\r\nanswer", tools: [] });
+    expect(await res.json()).toEqual({ session_id: "sess_1", sdp: "v=0\r\nanswer", tools: [], resumed: false });
     expect(sent?.transport).toEqual({ type: "webrtc", sdp: OFFER });
     expect(sent?.session).toMatchObject({ model: "gpt-live-1", audio: { output: { voice: "cedar" } } });
   });
@@ -74,6 +74,33 @@ describe("assistant sessions", () => {
       ...SESSION_TOOLS,
       ...LIGHT_TOOLS,
     ]);
+  });
+
+  it("forks the previous session on resume and falls back to a fresh one when it is gone", async () => {
+    await connectOpenai(maria);
+    const forked = mockUpstream({
+      "POST https://api.openai.com/v1/live/sessions/sess_old/fork": (_req, body) => {
+        expect((JSON.parse(body) as LiveRequest).transport.sdp).toBe(OFFER);
+        return reply(200, { session: { id: "sess_new" }, transport: { type: "webrtc", sdp: "answer" } });
+      },
+    });
+    const res = await json(`${APP}/api/assistant/sessions`, "POST", { sdp: OFFER, resume_from: "sess_old" }, maria);
+    forked.done();
+    expect(await res.json()).toMatchObject({ session_id: "sess_new", resumed: true });
+
+    const gone = mockUpstream({
+      "POST https://api.openai.com/v1/live/sessions/sess_old/fork": () =>
+        reply(404, { error: { message: "No such session" } }),
+      [LIVE]: () => reply(200, { session: { id: "sess_fresh" }, transport: { type: "webrtc", sdp: "answer" } }),
+    });
+    const fallback = await json(
+      `${APP}/api/assistant/sessions`,
+      "POST",
+      { sdp: OFFER, resume_from: "sess_old" },
+      maria,
+    );
+    gone.done();
+    expect(await fallback.json()).toMatchObject({ session_id: "sess_fresh", resumed: false });
   });
 
   it("passes GPT-Live's refusal through", async () => {

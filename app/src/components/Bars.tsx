@@ -22,6 +22,7 @@ const MOODS: Record<string, Mood> = {
   listening: ["var(--cyan-9)", "var(--accent-9)"],
   thinking: ["var(--accent-8)", "var(--pink-8)"],
   speaking: ["var(--accent-9)", "var(--pink-9)"],
+  lost: ["var(--amber-8)", "var(--gray-7)"],
   closed: ["var(--gray-8)", "var(--gray-7)"],
   error: ["var(--red-9)", "var(--red-8)"],
 };

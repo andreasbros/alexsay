@@ -36,6 +36,8 @@ export interface SessionInput {
   settings: OpenAiSettings;
   tools: LiveTool[];
   sdp: string;
+  /** A session to continue from, so a dropped call picks up with its memory of the conversation. */
+  resumeFrom?: string;
 }
 
 /** The session body GPT-Live expects: voice layer plus a Responses backend that owns the tools. */
@@ -69,7 +71,8 @@ export async function createLiveSession(
   apiKey: string,
   input: SessionInput,
 ): Promise<{ sessionId: string; sdp: string }> {
-  const res = await fetch(`${baseUrl}/live/sessions`, {
+  const path = input.resumeFrom ? `/live/sessions/${encodeURIComponent(input.resumeFrom)}/fork` : "/live/sessions";
+  const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
     body: JSON.stringify({

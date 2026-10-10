@@ -1,7 +1,7 @@
 import { api } from "../api";
 import { functionCallOf, runTool } from "./tools";
 
-export type LiveStatus = "connecting" | "listening" | "thinking" | "speaking" | "closed" | "error";
+export type LiveStatus = "connecting" | "listening" | "thinking" | "speaking" | "lost" | "closed" | "error";
 export type ActivityKind = "info" | "tool" | "result" | "error";
 
 export interface LiveHandlers {
@@ -12,6 +12,8 @@ export interface LiveHandlers {
 }
 
 export interface LiveSession {
+  /** GPT-Live's id for this session, the handle a later resume forks from. */
+  readonly id: string;
   /** 0 to 1, how loud the microphone is right now. */
   micLevel: () => number;
   /** 0 to 1, how loud the assistant is right now. */
@@ -31,7 +33,7 @@ const HANGUP_QUIET_MS = 1500;
  * events over the `oai-events` data channel. The Worker only brokers the SDP exchange.
  * Levels for the sphere come from WebRTC stats, so nothing taps the audio path itself.
  */
-export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
+export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Promise<LiveSession> {
   handlers.onStatus("connecting");
   const mic = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -79,8 +81,14 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
     } else if (type === "session.input_transcript.delta") {
       handlers.onTranscript("user", String(event.delta ?? ""));
     } else if (type === "session.closed") {
-      handlers.onActivity("info", `Session closed (${String(event.reason ?? "no reason")})`);
-      handlers.onStatus("closed", String(event.reason ?? ""));
+      const reason = String(event.reason ?? "no reason");
+      handlers.onActivity("info", `Session closed (${reason})`);
+      if (reason === "connection_lost" || reason === "expired") {
+        cleanup();
+        handlers.onStatus("lost", "Connection lost. Tap Resume to carry on where you left off.");
+      } else {
+        handlers.onStatus("closed", reason);
+      }
     } else if (type === "error") {
       const error = event.error as { message?: string } | undefined;
       handlers.onActivity("error", error?.message ?? "GPT-Live error");
@@ -104,18 +112,24 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
   if (!localSdp) {
     throw new Error("no local SDP");
   }
+  let sessionId = "";
   try {
-    const answer = await api.assistantSession(localSdp);
+    const answer = await api.assistantSession(localSdp, resumeFrom);
     await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
-    handlers.onActivity("info", answer.tools.length > 0 ? `Connected, tools: ${answer.tools.join(", ")}` : "Connected");
+    sessionId = answer.session_id;
+    const how = answer.resumed ? "Resumed with the conversation so far" : "Connected";
+    handlers.onActivity("info", answer.tools.length > 0 ? `${how}, tools: ${answer.tools.join(", ")}` : how);
   } catch (err) {
     cleanup();
     throw err;
   }
 
   ticker = window.setInterval(() => {
-    if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-      handlers.onStatus("error", "connection lost");
+    if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+      // The phone slept or the network went: keep the id, so Resume forks this conversation
+      handlers.onActivity("info", "Connection lost");
+      cleanup();
+      handlers.onStatus("lost", "Connection lost. Tap Resume to carry on where you left off.");
       return;
     }
     void readLevels(pc, levels);
@@ -145,6 +159,7 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
   }
 
   const session: LiveSession = {
+    id: sessionId,
     micLevel: () => levels.mic,
     voiceLevel: () => levels.voice,
     setMuted: (muted) => {

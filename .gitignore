@@ -1,0 +1,19 @@
+.direnv/
+.env
+.env.*
+!.env.example
+result
+result-*
+
+target/
+
+# Seeed firmware repo is cloned here for flashing, never committed
+vendor/
+
+# Wake word training data and recordings
+data/
+*.wav
+
+.idea/
+.DS_Store
+__pycache__/

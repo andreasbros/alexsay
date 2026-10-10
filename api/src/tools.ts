@@ -181,21 +181,16 @@ export const TOOLS: Tool[] = [
       type: "function",
       name: "set_light",
       description:
-        "Switches a light on or off, or sets its brightness. Prefer the id from list_lights; the name the user said also works.",
+        "Switches one light on or off. On returns the light to its last brightness, exactly like its wall switch. " +
+        "Prefer the id from list_lights; the name the user said also works.",
       parameters: {
         type: "object",
         properties: {
           id: { type: "string", description: "The light id from list_lights" },
           name: { type: "string", description: "The light's name as the user said it, when the id is unknown" },
           on: { type: "boolean", description: "True to switch on, false to switch off" },
-          dim_level: {
-            type: "integer",
-            minimum: 1,
-            maximum: 100,
-            description: "Brightness in percent, only when the user asked to dim, brighten or darken; never for off",
-          },
         },
-        required: [],
+        required: ["on"],
         additionalProperties: false,
       },
     },
@@ -205,7 +200,7 @@ export const TOOLS: Tool[] = [
       if (!light) {
         return { error: "no such light", available: all.map((l) => ({ id: l.id, name: l.name })) };
       }
-      await writeLights(c, [light], args);
+      await writeLights(c, [light], { on: args.on });
       return { ok: true, light: light.name };
     },
   },
@@ -215,21 +210,15 @@ export const TOOLS: Tool[] = [
       type: "function",
       name: "set_lights",
       description:
-        'Switches or dims every light whose name or room matches the given words in one go, e.g. match "kitchen" for all ' +
-        'kitchen lights. Use match "all" for every light in the home only after the user confirmed.',
+        'Switches every light whose name or room matches the given words on or off in one go, e.g. match "kitchen" ' +
+        'for all kitchen lights. Use match "all" for every light in the home only after the user confirmed.',
       parameters: {
         type: "object",
         properties: {
           match: { type: "string", description: 'Room or name words to match, or "all"' },
           on: { type: "boolean", description: "True to switch on, false to switch off" },
-          dim_level: {
-            type: "integer",
-            minimum: 1,
-            maximum: 100,
-            description: "Brightness in percent, only when the user asked to dim, brighten or darker; never for off",
-          },
         },
-        required: ["match"],
+        required: ["match", "on"],
         additionalProperties: false,
       },
     },
@@ -239,8 +228,68 @@ export const TOOLS: Tool[] = [
       if (matched.length === 0) {
         return { error: "no lights match", available: all.map((l) => l.name) };
       }
-      await writeLights(c, matched, args);
+      await writeLights(c, matched, { on: args.on });
       return { ok: true, lights: matched.map((l) => l.name) };
+    },
+  },
+  {
+    needs: "lightwave",
+    definition: {
+      type: "function",
+      name: "dim_light",
+      description:
+        "Sets one light's brightness, only when the user asks to dim, brighten, or make it darker or lighter. " +
+        "The light comes on at that level and keeps it until the next dim.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "The light id from list_lights" },
+          name: { type: "string", description: "The light's name as the user said it, when the id is unknown" },
+          level: { type: "integer", minimum: 1, maximum: 100, description: "Brightness in percent" },
+        },
+        required: ["level"],
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const all = await userLights(c);
+      const light = findLight(all, args);
+      if (!light) {
+        return { error: "no such light", available: all.map((l) => ({ id: l.id, name: l.name })) };
+      }
+      if (!light.dim) {
+        return { error: `${light.name} is not dimmable` };
+      }
+      await writeLights(c, [light], { dim_level: args.level });
+      return { ok: true, light: light.name, level: args.level };
+    },
+  },
+  {
+    needs: "lightwave",
+    definition: {
+      type: "function",
+      name: "dim_lights",
+      description:
+        "Sets the brightness of every matching dimmable light, only when the user asks to dim, brighten, or make a " +
+        'room darker or lighter. Match works like set_lights ("kitchen", or "all" after confirmation).',
+      parameters: {
+        type: "object",
+        properties: {
+          match: { type: "string", description: 'Room or name words to match, or "all"' },
+          level: { type: "integer", minimum: 1, maximum: 100, description: "Brightness in percent" },
+        },
+        required: ["match", "level"],
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const all = await userLights(c);
+      const matched = matchLights(all, string(args, "match")).filter((l) => l.dim);
+      if (matched.length === 0) {
+        return { error: "no dimmable lights match", available: all.filter((l) => l.dim).map((l) => l.name) };
+      }
+      await writeLights(c, matched, { dim_level: args.level });
+      return { ok: true, lights: matched.map((l) => l.name), level: args.level };
     },
   },
 ];

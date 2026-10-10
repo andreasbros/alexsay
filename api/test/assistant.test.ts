@@ -70,7 +70,11 @@ describe("assistant sessions", () => {
     upstream.done();
     expect(await res.json()).toMatchObject({ tools: ["lights"] });
     expect(sent?.session.delegation.responses.tools).toEqual([{ type: "web_search" }, ...toolDefinitions(true)]);
-    expect(toolDefinitions(true).map((t) => t.name)).toContain("set_lights");
+    expect(toolDefinitions(true).map((t) => t.name)).toEqual(
+      expect.arrayContaining(["list_lights", "set_light", "set_lights", "dim_light", "dim_lights"]),
+    );
+    const switchTool = toolDefinitions(true).find((t) => t.name === "set_lights");
+    expect(Object.keys((switchTool?.parameters as { properties: object }).properties)).toEqual(["match", "on"]);
     expect(toolDefinitions(false).map((t) => t.name)).not.toContain("set_lights");
   });
 

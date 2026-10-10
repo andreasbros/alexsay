@@ -58,7 +58,8 @@ body {
 /* The assistant screen fills what is left under the header and never scrolls: the bars take the
    room between the controls and the transcript */
 .assistant {
-  height: calc(100dvh - var(--header-h) - 2 * var(--page-pad));
+  /* svh: the small viewport, which does not jump when a phone's browser bar collapses */
+  height: calc(100svh - var(--header-h) - 2 * var(--page-pad));
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -67,20 +68,17 @@ body {
 
 /* The stage is the flexible row; the SVG is pinned to it and its viewBox scales the mark to fit,
    so the bars never decide the page height themselves */
+/* The stage absorbs layout changes around it; the bars keep one size, set from the viewport alone */
 .stage {
   flex: 1 1 0;
-  min-height: 80px;
-  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: center;
 }
 
 .bars {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 100%;
-  height: 100%;
-  max-width: 440px;
-  max-height: 440px;
+  width: min(64vw, 34svh, 360px);
+  height: min(64vw, 34svh, 360px);
   display: block;
   transition: stroke 0.3s;
   will-change: transform;

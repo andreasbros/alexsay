@@ -52,6 +52,8 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
   speaker.hidden = true;
   document.body.append(speaker);
   const levels = { mic: 0, voice: 0 };
+  const micGate = new NoiseGate();
+  const voiceGate = new NoiseGate();
   // Levels come from WebRTC statistics only: tapping the audio with Web Audio caused clicks
   const statsSeen = { mic: false, voice: false };
   let ticker = 0;
@@ -144,7 +146,7 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
       handlers.onStatus("lost", "Connection lost. Tap Resume to carry on where you left off.");
       return;
     }
-    void readLevels(pc, levels, statsSeen);
+    void readLevels(pc, levels, statsSeen, { mic: micGate, voice: voiceGate });
     if (events.readyState !== "open") {
       return;
     }
@@ -267,6 +269,7 @@ async function readLevels(
   pc: RTCPeerConnection,
   levels: { mic: number; voice: number },
   seen: { mic: boolean; voice: boolean },
+  gates: { mic: NoiseGate; voice: NoiseGate },
 ): Promise<void> {
   const stats = await pc.getStats().catch(() => null);
   if (!stats) {

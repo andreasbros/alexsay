@@ -16,4 +16,5 @@ export const DEFAULT_OPENAI: OpenAiSettings = {
   voice: "cedar",
   instructions: "",
   web_search: true,
+  respond_when_addressed: false,
 };

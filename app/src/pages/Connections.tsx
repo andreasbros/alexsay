@@ -198,6 +198,15 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
                   Web search (the assistant may look things up online; OpenAI bills each search)
                 </Flex>
               </Text>
+              <Text as="label" size="2">
+                <Flex gap="2" align="center">
+                  <Switch
+                    checked={settings.respond_when_addressed}
+                    onCheckedChange={(respond_when_addressed) => setSettings({ ...settings, respond_when_addressed })}
+                  />
+                  Only answer when addressed as Alexsay (ignores the TV and other people in the room)
+                </Flex>
+              </Text>
               <TextArea
                 aria-label="Extra instructions"
                 placeholder="Extra instructions for the assistant (optional)"

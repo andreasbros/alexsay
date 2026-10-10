@@ -122,6 +122,13 @@ describe("assistant sessions", () => {
     expect(config.instructions).not.toMatch(/search the web/);
   });
 
+  it("tells the model to ignore the room unless addressed, when asked to", () => {
+    const quiet = sessionConfig(openaiSettings.parse({ respond_when_addressed: true }), []);
+    expect(String(quiet.instructions)).toMatch(/Only respond when someone addresses you by name/);
+    const chatty = sessionConfig(openaiSettings.parse({}), []);
+    expect(String(chatty.instructions)).not.toMatch(/addresses you by name/);
+  });
+
   it("builds a Responses delegation with the user's instructions appended", () => {
     const config = sessionConfig(openaiSettings.parse({ instructions: "Call me Andreas." }), LIGHT_TOOLS);
     expect(config).toMatchObject({

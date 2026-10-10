@@ -33,6 +33,8 @@ export const openaiSettings = z.object({
   voice: voice.default("cedar"),
   instructions: z.string().max(4000).default(""),
   web_search: z.boolean().default(true),
+  /** Only answer when the user says the name, so a TV or other people in the room are ignored. */
+  respond_when_addressed: z.boolean().default(false),
 });
 export type OpenAiSettings = z.infer<typeof openaiSettings>;
 

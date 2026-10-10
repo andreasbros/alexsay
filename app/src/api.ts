@@ -25,6 +25,7 @@ export interface OpenAiSettings {
   voice: string;
   instructions: string;
   web_search: boolean;
+  respond_when_addressed: boolean;
 }
 
 export interface Connection {

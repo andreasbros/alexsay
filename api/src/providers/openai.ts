@@ -32,6 +32,12 @@ const WEB_SEARCH_INSTRUCTIONS =
   "You can search the web for current information such as news, weather, opening hours or facts you are unsure of; " +
   "say briefly that you are checking, then answer with the essentials and name the source when it matters.";
 
+const ADDRESSED_INSTRUCTIONS =
+  "You are in a room with background sound: a television, music, other people talking to each other. " +
+  "Only respond when someone addresses you by name (Alexsay, Aleksey, Alexei) or clearly continues an exchange " +
+  "they started with you in the last few seconds. Speech that is not aimed at you, overheard conversation and " +
+  "broadcast voices get no reply at all: stay silent and keep listening.";
+
 export interface SessionInput {
   settings: OpenAiSettings;
   tools: LiveTool[];
@@ -42,7 +48,12 @@ export interface SessionInput {
 
 /** The session body GPT-Live expects: voice layer plus a Responses backend that owns the tools. */
 export function sessionConfig(settings: OpenAiSettings, functions: LiveTool[]): Record<string, unknown> {
-  const instructions = [SPEAKER_INSTRUCTIONS, settings.web_search ? WEB_SEARCH_INSTRUCTIONS : "", settings.instructions]
+  const instructions = [
+    SPEAKER_INSTRUCTIONS,
+    settings.respond_when_addressed ? ADDRESSED_INSTRUCTIONS : "",
+    settings.web_search ? WEB_SEARCH_INSTRUCTIONS : "",
+    settings.instructions,
+  ]
     .filter(Boolean)
     .join("\n\n");
   const tools: LiveTool[] = settings.web_search ? [{ type: "web_search" }, ...functions] : functions;

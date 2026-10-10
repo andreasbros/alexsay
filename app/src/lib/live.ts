@@ -33,6 +33,7 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
   let voiceMeter: Meter | null = null;
   const speaker = new Audio();
   speaker.autoplay = true;
+  let ticker = 0;
 
   pc.ontrack = (event) => {
     const [stream] = event.streams;
@@ -93,7 +94,7 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
     throw err;
   }
 
-  const ticker = window.setInterval(() => {
+  ticker = window.setInterval(() => {
     if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
       handlers.onStatus("error", "connection lost");
       return;

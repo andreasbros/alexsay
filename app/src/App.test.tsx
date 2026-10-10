@@ -84,7 +84,7 @@ describe("App", () => {
     renderApp();
     expect(await screen.findByText("Kitchen")).toBeDefined();
     expect(screen.getByText("online")).toBeDefined();
-    expect(screen.getByRole("link", { name: /Assistant/ })).toBeDefined();
-    expect(screen.getByRole("link", { name: /Connections/ })).toBeDefined();
+    expect(screen.getAllByRole("link", { name: /Assistant/ }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: /Connections/ }).length).toBeGreaterThan(0);
   });
 });

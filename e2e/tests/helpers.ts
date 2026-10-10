@@ -1,4 +1,4 @@
-import { type APIRequestContext, type Browser, test as base, expect, type Page } from "@playwright/test";
+import { type APIRequestContext, test as base, expect, type Page, request } from "@playwright/test";
 
 export type Account = { username: string; password: string };
 
@@ -25,14 +25,15 @@ export async function login(page: Page, account: Account): Promise<void> {
   await expect(page.getByRole("heading", { name: "Devices" })).toBeVisible();
 }
 
-/** Signs in through the API only, for cleanup and setup calls that need no browser. */
-export async function apiSession(browser: Browser, account: Account): Promise<APIRequestContext> {
-  const context = await browser.newContext();
-  const res = await context.request.post("/api/session/login", { data: account });
+/** Signs in through the API only, for cleanup and setup calls that need no browser; dispose it when done. */
+export async function apiSession(account: Account): Promise<APIRequestContext> {
+  const context = await request.newContext({ baseURL: env.appUrl() });
+  const res = await context.post("/api/session/login", { data: account });
   if (!res.ok()) {
+    await context.dispose();
     throw new Error(`api login failed for ${account.username}: ${res.status()}`);
   }
-  return context.request;
+  return context;
 }
 
 /** Adds a speaker through the dialog and waits for it to appear in the table. */
@@ -56,13 +57,31 @@ export function heartbeat(request: APIRequestContext, deviceId: string, report: 
   });
 }
 
-/** A device id unique to this test run; deleted again by an admin after the test. */
-export const test = base.extend<{ deviceId: string }>({
-  deviceId: async ({ browser }, use) => {
+/**
+ * `deviceId`: a speaker id unique to this test, deleted by an admin afterwards.
+ * `account`: a freshly registered user, so parallel tests never share connections; removed afterwards.
+ */
+export const test = base.extend<{ deviceId: string; account: Account }>({
+  // biome-ignore lint/correctness/noEmptyPattern: Playwright fixtures take a destructured first argument
+  deviceId: async ({}, use) => {
     const id = crypto.randomUUID();
     await use(id);
-    const admin = await apiSession(browser, env.admin());
+    const admin = await apiSession(env.admin());
     await admin.delete(`/api/devices/${id}`);
+    await admin.dispose();
+  },
+  // biome-ignore lint/correctness/noEmptyPattern: Playwright fixtures take a destructured first argument
+  account: async ({}, use) => {
+    const account = { username: `e2e-${crypto.randomUUID().slice(0, 8)}`, password: crypto.randomUUID() };
+    const context = await request.newContext({ baseURL: env.appUrl() });
+    const res = await context.post("/api/session/register", { data: account });
+    await context.dispose();
+    if (res.status() !== 201) {
+      throw new Error(`register failed: ${res.status()}`);
+    }
+    await use(account);
+    const admin = await apiSession(env.admin());
+    await admin.delete(`/api/users/${account.username}`);
     await admin.dispose();
   },
 });

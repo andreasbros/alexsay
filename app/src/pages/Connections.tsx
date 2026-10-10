@@ -101,7 +101,7 @@ function TestResult({ result, provider }: { result: ProviderTest; provider: Prov
 
 function errorText(err: unknown): string {
   if (err instanceof ApiError) {
-    return err.detail ? `${err.detail} (${err.status})` : err.code;
+    return err.detail ?? err.code;
   }
   return err instanceof Error ? err.message : "failed";
 }

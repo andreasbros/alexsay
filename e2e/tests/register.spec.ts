@@ -1,6 +1,6 @@
 import { apiSession, env, expect, test } from "./helpers";
 
-test("anyone can register with a username and password, and the admin sees them", async ({ page, browser }) => {
+test("anyone can register with a username and password, and the admin sees them", async ({ page }) => {
   const username = `e2e-${Date.now().toString(36)}`;
   await page.goto("/register");
   await page.getByLabel("Username").fill(username);
@@ -15,7 +15,7 @@ test("anyone can register with a username and password, and the admin sees them"
   await expect(page.getByRole("menuitem", { name: "Users" })).toHaveCount(0);
   await page.keyboard.press("Escape");
 
-  const admin = await apiSession(browser, env.admin());
+  const admin = await apiSession(env.admin());
   try {
     const list = (await (await admin.get("/api/users")).json()) as { username: string; role: string }[];
     expect(list).toContainEqual(expect.objectContaining({ username, role: "user" }));

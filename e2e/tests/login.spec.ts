@@ -1,8 +1,9 @@
 import { env, expect, login, test } from "./helpers";
 
+// A made-up account each time, so repeated runs never lock anything out
 test("rejects a wrong password", async ({ page }) => {
   await page.goto("/");
-  await page.getByLabel("Username").fill(env.admin().username);
+  await page.getByLabel("Username").fill(`nobody-${Date.now().toString(36)}`);
   await page.getByLabel("Password").fill("not the password");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByText("Wrong username or password.")).toBeVisible();

@@ -36,13 +36,9 @@ export function Layout({ user }: { user: User }) {
                   </Box>
                 </Flex>
               </Link>
-              <TabNav.Root>
-                {TABS.map(([label, to]) => (
-                  <TabNav.Link key={to} asChild active={to === "/" ? pathname === "/" : pathname.startsWith(to)}>
-                    <Link to={to}>{label}</Link>
-                  </TabNav.Link>
-                ))}
-              </TabNav.Root>
+              <Box display={{ initial: "none", sm: "block" }}>
+                <Tabs pathname={pathname} />
+              </Box>
             </Flex>
             <Flex align="center" gap="3" flexShrink="0">
               <IconButton variant="ghost" color="gray" onClick={toggle} aria-label="Toggle theme">
@@ -72,11 +68,27 @@ export function Layout({ user }: { user: User }) {
               </DropdownMenu.Root>
             </Flex>
           </Flex>
+          {/* Phones get the tabs on their own row, so they never overlap the account buttons */}
+          <Box display={{ initial: "block", sm: "none" }} pb="2">
+            <Tabs pathname={pathname} />
+          </Box>
         </Container>
       </Box>
       <Container size="4" px="4" py="6">
         <Outlet />
       </Container>
     </Box>
+  );
+}
+
+function Tabs({ pathname }: { pathname: string }) {
+  return (
+    <TabNav.Root>
+      {TABS.map(([label, to]) => (
+        <TabNav.Link key={to} asChild active={to === "/" ? pathname === "/" : pathname.startsWith(to)}>
+          <Link to={to}>{label}</Link>
+        </TabNav.Link>
+      ))}
+    </TabNav.Root>
   );
 }

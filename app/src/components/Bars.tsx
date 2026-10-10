@@ -55,7 +55,7 @@ export function Bars({ status, level }: Props) {
         const breathing = 1 + Math.sin(t * 1.6 + i * 0.7) * 0.03;
         const wobble = 0.75 + 0.25 * Math.sin(t * 9 + i * 1.9) * Math.sin(t * 5.3 + i);
         const grow = energy * (0.35 + centreness) * wobble;
-        const height = Math.min(92, REST_HEIGHTS[i] * breathing * (1 + grow));
+        const height = Math.min(92, (REST_HEIGHTS[i] ?? 0) * breathing * (1 + grow));
         bar.setAttribute("y1", String(50 - height / 2 + WIDTH / 2));
         bar.setAttribute("y2", String(50 + height / 2 - WIDTH / 2));
       });

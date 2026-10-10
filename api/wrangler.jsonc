@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "alexsay-app",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-15",
+  "routes": [{ "pattern": "app.alexsay.com", "custom_domain": true }],
+  "assets": {
+    "directory": "../app/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "alexsay",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": { "crons": ["23 3 * * *"] },
+  "vars": {
+    "OPENAI_BASE_URL": "https://api.openai.com/v1",
+    "LIGHTWAVE_AUTH_URL": "https://auth.lightwaverf.com/token",
+    "LIGHTWAVE_BASE_URL": "https://publicapi.lightwaverf.com/v1"
+  },
+  "observability": { "enabled": true }
+}

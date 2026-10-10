@@ -18,7 +18,7 @@ Owner:
 
 - **Everything ordered, nothing arrived.** Pi Hut basket (Pi 5 8GB, Flex XVF3800 circular, cooler, PSU, cables), RS (Visaton R 10 S, due 13 Oct), Amazon (SanDisk High Endurance 256 GB, Anker card reader). See `docs/procurement.md`.
 - **Phase 1 (bench bring-up):** reflash the Flex to USB firmware, prove capture, playback and AEC on the bench, then the daemon. **Phase 2:** the printed cylinder, acoustics, NVMe.
-- **No code yet.** The daemon is designed in `docs/software.md`; the repo layout follows LetterBox (Rust workspace, Nix flake, `just`).
+- **Software scaffold exists (10 Oct 2026):** `device/` (Rust: identity, heartbeat, GPT-Live event types, session state machine; no audio yet), `api/` (Cloudflare Worker, Hono + D1, serves `app/dist` at app.alexsay.com), `app/` (Radix UI: login/register, devices, assistant sphere over WebRTC to GPT-Live, connections for OpenAI and Lightwave, admin users), `website/` (prerendered Vite site, own Worker at www.alexsay.com and alexsay.com), `e2e/` (Playwright with a fake device). Layout and conventions follow LetterBox.
 - **GPT-Live API:** available since 10 Sep 2026, no waitlist. `gpt-live-1` at `wss://api.openai.com/v1/live/sessions`, $0.05/min plus the backend model's tokens, any paid tier (not Free). Primary backend; `gpt-realtime` stays behind the same trait as a fallback.
 
 ## Where things are
@@ -35,6 +35,17 @@ Owner:
 | Similar projects, what we reuse | `docs/prior-art.md` |
 
 When results come in, update `docs/measurements.md` and add an entry to `docs/decisions.md`.
+
+## Server and app facts
+
+- Browser assistant: the Worker brokers only the SDP exchange (`POST /v1/live/sessions` with `transport: {type: "webrtc", sdp}`), audio travels WebRTC browser to OpenAI, JSON events over the `oai-events` data channel. Function calls arrive as `response.event` envelopes wrapping `response.output_item.done`; the browser answers with `response.item.create` (`function_call_output`) + `response.create`.
+- A speaker's UUID is its identity and its secret: whoever adds it in the app owns it; the heartbeat then returns the owner's OpenAI key and settings to the speaker. Unclaimed call-home rows are capped at 200.
+- Provider credentials are AES-GCM sealed in D1 under `SECRETS_KEY` (Worker secret, also in `.env` for `just dev`). Lightwave refresh tokens rotate on every use and are re-sealed.
+- Passwords are salted PBKDF2-SHA256 (100k) hashed on the server; `scripts/hash-password.mjs` makes the same format for `just add-user`.
+- Both `alexsay.com` and `www.alexsay.com` serve the website (no redirect; canonical is www).
+- `@cloudflare/vitest-pool-workers` 0.22 has no `fetchMock`: API tests stub `globalThis.fetch` through `mockUpstream` in `api/test/helpers.ts`.
+- Vite 8 (rolldown) rejects object-form `manualChunks`.
+- The flake references the aarch64 cross gcc by path (not on PATH) so host C builds keep the host gcc; the Pi binary links against `/lib/ld-linux-aarch64.so.1` (see `device/.cargo/config.toml`).
 
 ## Key facts to keep straight
 
@@ -74,7 +85,9 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 - [ ] Bench test: playback, AEC residual (ch1 vs raw), io48 vs io16 playback bandwidth (10 kHz tone).
 - [ ] Measure: XVF3800 + amp current at 5 V, XIAO idle draw, Pi temperature under HA + daemon with the fan held off.
 - [ ] Record wake-word positives/negatives on the device; train an openWakeWord "Alexsay" model.
-- [ ] Scaffold the repo: Nix flake, justfile, Rust workspace (`core` host-tested, `daemon`), systemd unit, HA compose file.
+- [x] Scaffold the repo: Nix flake, justfile, Rust workspace (`core` host-tested, `daemon`), systemd unit. HA compose file still to do.
+- [ ] Daemon audio: ALSA capture/playback through the Flex, GPT-Live WebSocket client in `daemon` on top of `core::live` and `core::session`.
+- [ ] App: email instead of username, password reset, Apple Home / Google Home / Claude / Gemini connections.
 - [ ] Enclosure CAD from Seeed's STEP files (circular mic board, core board) + Pi 5 mechanical drawing; get a PETG print quote.
 - [ ] Buy the Phase 2 bits in `docs/procurement.md` "Still to buy" once the bench works.
 - [ ] Notify-me on The Pi Hut's Raspberry Pi SSD; buy it plus an M.2 HAT+ when back.
@@ -82,11 +95,12 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 ## Code rules
 
 - Same as LetterBox. Everything runs inside the Nix flake: `nix develop` (or direnv), then `just <recipe>`. Add tools to `flake.nix`, never ask for global installs.
-- `just test` must pass before a task is done: `cargo fmt --check`, `cargo clippy -D warnings` (pedantic), `cargo test`.
+- `just test` must pass before a task is done: `cargo fmt --check`, `cargo clippy -D warnings` (pedantic), `cargo test`, Biome, `tsc`, Vitest (api in workerd with local D1), app and website builds. `just e2e` runs against the deployed site with the `test-admin` / `test-user` accounts from `.env`; `just deploy` ends with it.
+- TypeScript: strict, no `any`, validate input with zod, parameterised D1 queries only.
 - Clean, self-documenting code: descriptive names over comments. Comment only the non-obvious why, one line. No commented-out code.
 - No em-dashes anywhere (code, comments, docs).
 - Rust: no `unwrap`/`expect`/`panic` outside tests. Protocol, state machine and DSP logic live in a host-tested `core` crate with no I/O; ALSA, WebSocket and HTTP glue lives in `daemon`.
-- Secrets (`OPENAI_API_KEY`, `HA_TOKEN`) only in `.env` (dev) or `/etc/alexsay/env` (0600, device). Never in the repo.
+- Secrets (`CLOUDFLARE_API_TOKEN`, `SECRETS_KEY`, e2e passwords) only in `.env`; on the device `/etc/alexsay/env` (0600). Never in the repo. Commits go out under Andreas's own account with no Claude co-author line.
 - Every behaviour change ships with a test.
 - Docs stay lean: bullets and tables, no introductions. Update `docs/` and this file when facts change.
 

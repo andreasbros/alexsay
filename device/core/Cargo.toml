@@ -1,0 +1,17 @@
+[package]
+name = "alexsay-core"
+description = "Host-tested logic of the alexsay speaker: identity, config, server and GPT-Live protocols, session state"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

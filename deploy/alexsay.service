@@ -1,0 +1,18 @@
+[Unit]
+Description=alexsay speaker daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/alexsay run
+EnvironmentFile=-/etc/alexsay/env
+Environment=RUST_LOG=info
+StateDirectory=alexsay
+Restart=always
+RestartSec=5
+DynamicUser=no
+User=alexsay
+Group=audio
+
+[Install]
+WantedBy=multi-user.target

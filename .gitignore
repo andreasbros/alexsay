@@ -2,10 +2,17 @@
 .env
 .env.*
 !.env.example
+.dev.vars
 result
 result-*
 
 target/
+
+node_modules/
+dist/
+dist-ssr/
+.wrangler/
+coverage/
 
 # Seeed firmware repo is cloned here for flashing, never committed
 vendor/
@@ -14,6 +21,8 @@ vendor/
 data/
 *.wav
 
+e2e/report/
+e2e/test-results/
 .idea/
 .DS_Store
 __pycache__/

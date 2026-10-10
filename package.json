@@ -1,0 +1,15 @@
+{
+  "name": "alexsay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "biome check .",
+    "fmt": "biome check --write .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter api --filter app --filter website test",
+    "build": "pnpm --filter app --filter website build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15"
+  }
+}

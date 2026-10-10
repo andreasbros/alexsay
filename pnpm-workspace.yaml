@@ -1,0 +1,9 @@
+packages:
+  - api
+  - app
+  - website
+  - e2e
+
+allowBuilds:
+  esbuild: true
+  workerd: true

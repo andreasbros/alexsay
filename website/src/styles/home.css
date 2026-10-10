@@ -1,0 +1,217 @@
+/* Hero */
+.hero {
+  position: relative;
+  padding: clamp(48px, 7vw, 100px) 0 clamp(40px, 6vw, 80px);
+  overflow: hidden;
+}
+.hero-glow {
+  position: absolute;
+  inset: -20% -10% auto;
+  height: 120%;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(40% 50% at 25% 35%, var(--hero-a), transparent 70%),
+    radial-gradient(35% 45% at 78% 30%, var(--hero-b), transparent 70%),
+    radial-gradient(30% 40% at 55% 85%, var(--hero-c), transparent 70%);
+  filter: blur(20px);
+  opacity: 0.9;
+  animation: glow-drift 18s ease-in-out infinite alternate;
+}
+@keyframes glow-drift {
+  from {
+    transform: translate3d(-2%, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(2%, 3%, 0) scale(1.06);
+  }
+}
+.hero-inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  align-items: center;
+  gap: clamp(24px, 4vw, 56px);
+}
+.hero-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 22px;
+  max-width: 600px;
+}
+.hero-copy h1 .serif {
+  display: block;
+  font-size: 1.04em;
+  color: var(--accent);
+}
+.hero-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.hero-note {
+  font-size: 13px;
+  color: var(--text-3);
+}
+.hero-media {
+  animation-delay: 0.15s;
+}
+/* The render carries its own dark backdrop, so it sits in a rounded frame on both themes */
+.hero-render {
+  width: 100%;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+@media (max-width: 900px) {
+  .hero-inner {
+    grid-template-columns: 1fr;
+  }
+  .hero-copy {
+    align-items: center;
+    text-align: center;
+    margin: 0 auto;
+  }
+  .hero-actions {
+    justify-content: center;
+  }
+}
+
+/* Features */
+.features {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+.feature {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition:
+    transform 0.35s var(--ease-spring),
+    border-color 0.2s;
+}
+.feature:hover {
+  transform: translateY(-4px);
+  border-color: var(--border-2);
+}
+.feature-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--hero-a), var(--hero-b));
+  color: var(--accent);
+}
+.feature p {
+  color: var(--text-2);
+  font-size: 15px;
+}
+@media (max-width: 1000px) {
+  .features {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .features {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Integrations */
+.integrations {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+.integration {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-weight: 600;
+  font-size: 15px;
+}
+.integration-badge {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 13px;
+  color: #fff;
+  letter-spacing: -0.02em;
+}
+.integration small {
+  display: block;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+@media (max-width: 900px) {
+  .integrations {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Renders */
+.renders {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.render {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.render img {
+  width: 100%;
+}
+.render figcaption {
+  padding: 16px 22px 20px;
+  font-size: 14px;
+  color: var(--text-2);
+}
+.render-light {
+  background: #f1f1f4;
+}
+.render-light figcaption {
+  color: rgba(14, 14, 20, 0.7);
+}
+.render-dark {
+  background: #0c0c13;
+}
+.render-dark figcaption {
+  color: rgba(244, 244, 247, 0.7);
+}
+@media (max-width: 800px) {
+  .renders {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Open-source call to action */
+.cta-inner {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+.cta .lead {
+  text-align: center;
+}
+.cta .hero-actions {
+  justify-content: center;
+}

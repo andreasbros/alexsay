@@ -1,0 +1,5 @@
+# /etc/alexsay/alexsay.toml: every key is optional
+api_url = "https://app.alexsay.com"
+state_dir = "/var/lib/alexsay"
+# Seconds between heartbeats while the server does not say otherwise
+poll_s = 30

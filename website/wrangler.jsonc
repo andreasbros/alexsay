@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "alexsay-www",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-15",
+  "routes": [
+    { "pattern": "www.alexsay.com", "custom_domain": true },
+    { "pattern": "alexsay.com", "custom_domain": true }
+  ],
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "run_worker_first": true
+  },
+  "observability": { "enabled": true }
+}

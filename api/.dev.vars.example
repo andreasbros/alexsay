@@ -1,0 +1,2 @@
+# Local wrangler dev secrets: cp .dev.vars.example .dev.vars (just dev does this when missing)
+SECRETS_KEY=1111111111111111111111111111111111111111111111111111111111111111

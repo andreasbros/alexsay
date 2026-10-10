@@ -1,0 +1,56 @@
+body {
+  margin: 0;
+}
+
+/* Only the root theme: Radix wraps every popover in a nested .radix-themes, which must not grow */
+#root > .radix-themes {
+  min-height: 100dvh;
+  background: var(--gray-2);
+}
+
+/* Full-height screen that fits the visible viewport on mobile (dvh excludes the browser chrome) */
+.screen {
+  min-height: 100dvh;
+  box-sizing: border-box;
+  padding: var(--space-4);
+}
+
+.mono {
+  font-family: var(--code-font-family);
+  font-size: var(--font-size-1);
+}
+
+.row-link {
+  cursor: pointer;
+}
+
+.row-link:hover {
+  background: var(--accent-a2);
+}
+
+/* Mobile browsers zoom into inputs smaller than 16px; override Radix's input sizes on touch screens */
+@media (pointer: coarse) {
+  .radix-themes :is(input, select, textarea) {
+    /* biome-ignore lint/complexity/noImportantStyles: Radix sizes inputs with its own class selectors */
+    font-size: max(16px, 1em) !important;
+  }
+}
+
+/* The assistant stage: the sphere canvas fills a square that never exceeds the viewport */
+.stage {
+  display: grid;
+  place-items: center;
+  width: 100%;
+}
+
+.sphere {
+  width: min(70vw, 52vh, 420px);
+  height: min(70vw, 52vh, 420px);
+  display: block;
+}
+
+.transcript {
+  min-height: 3.5em;
+  max-width: 44ch;
+  text-align: center;
+}

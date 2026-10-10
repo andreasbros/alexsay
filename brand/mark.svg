@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="13" stroke-linecap="round" stroke-linejoin="round">
+  <!-- A and Y share one stroke: the A's right leg is the Y's left arm -->
+  <path d="M10 84 L38 24 L66 84 L94 24"/>
+  <path d="M66 84 L66 110"/>
+  <path d="M23 62 L53 62"/>
+</svg>

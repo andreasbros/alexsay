@@ -52,16 +52,12 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
   speaker.hidden = true;
   document.body.append(speaker);
   const levels = { mic: 0, voice: 0 };
-  // Stats-based levels are preferred; where a browser reports none, Web Audio meters fill in
+  // Levels come from WebRTC statistics only: tapping the audio with Web Audio caused clicks
   const statsSeen = { mic: false, voice: false };
-  const meters = new Meters();
-  meters.watch("mic", mic);
   let ticker = 0;
 
   pc.ontrack = (event) => {
-    const stream = new MediaStream([event.track]);
-    speaker.srcObject = stream;
-    meters.watch("voice", stream);
+    speaker.srcObject = new MediaStream([event.track]);
     speaker.play().catch((err: unknown) => {
       const reason = err instanceof Error ? err.message : "playback blocked";
       handlers.onActivity("error", `Speaker playback refused: ${reason}`);
@@ -149,12 +145,6 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
       return;
     }
     void readLevels(pc, levels, statsSeen);
-    if (!statsSeen.mic) {
-      levels.mic = meters.level("mic");
-    }
-    if (!statsSeen.voice) {
-      levels.voice = meters.level("voice");
-    }
     if (events.readyState !== "open") {
       return;
     }
@@ -183,7 +173,6 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
     pc.close();
     speaker.srcObject = null;
     speaker.remove();
-    meters.close();
     void recorder.finish();
   }
 
@@ -296,46 +285,6 @@ async function readLevels(
       seen.mic = true;
     }
   });
-}
-
-/** Web Audio loudness meters, created lazily and only read when the stats carry no level. */
-class Meters {
-  private context: AudioContext | null = null;
-  private readonly analysers = new Map<string, AnalyserNode>();
-  private readonly samples = new Uint8Array(512);
-
-  watch(name: string, stream: MediaStream): void {
-    try {
-      this.context ??= new AudioContext();
-      const analyser = this.context.createAnalyser();
-      analyser.fftSize = 512;
-      this.context.createMediaStreamSource(stream).connect(analyser);
-      this.analysers.set(name, analyser);
-      if (this.context.state === "suspended") {
-        void this.context.resume();
-      }
-    } catch {}
-  }
-
-  level(name: string): number {
-    const analyser = this.analysers.get(name);
-    if (!analyser) {
-      return 0;
-    }
-    analyser.getByteTimeDomainData(this.samples);
-    let sum = 0;
-    for (const s of this.samples) {
-      const centred = (s - 128) / 128;
-      sum += centred * centred;
-    }
-    return Math.min(1, Math.sqrt(sum / this.samples.length) * 3);
-  }
-
-  close(): void {
-    void this.context?.close();
-    this.context = null;
-    this.analysers.clear();
-  }
 }
 
 /** Buffers transcript fragments into whole turns and ships them to the history in small batches. */

@@ -13,32 +13,30 @@ const WIDTH = PITCH / 2;
 const REST_HEIGHTS = [2.25, 3.75, 5.25, 7, 5.25, 3.75, 2.25].map((h) => h * PITCH);
 const MAX_HEIGHT = 94;
 
-/** Gradient stops per state: who is talking sets the mood. */
-type Mood = [string, string];
-const IDLE: Mood = ["var(--gray-8)", "var(--gray-7)"];
-const MOODS: Record<string, Mood> = {
-  idle: IDLE,
-  connecting: ["var(--accent-8)", "var(--accent-6)"],
-  listening: ["var(--cyan-9)", "var(--accent-9)"],
-  thinking: ["var(--accent-8)", "var(--pink-8)"],
-  speaking: ["var(--accent-9)", "var(--pink-9)"],
-  lost: ["var(--amber-8)", "var(--gray-7)"],
-  closed: ["var(--gray-8)", "var(--gray-7)"],
-  error: ["var(--red-9)", "var(--red-8)"],
+/** One colour per state, set through style so the theme tokens resolve in every browser. */
+const COLOURS: Record<string, string> = {
+  idle: "var(--gray-8)",
+  connecting: "var(--accent-8)",
+  listening: "var(--cyan-9)",
+  thinking: "var(--pink-8)",
+  speaking: "var(--accent-9)",
+  lost: "var(--amber-9)",
+  closed: "var(--gray-8)",
+  error: "var(--red-9)",
 };
 
 /**
  * The logo bars as a live meter. At rest they hold the logo's shape and breathe. Sound makes them
  * jump at once and settle slowly, the middle bars most, each with its own flutter; thinking sends a
- * wave travelling across them; the whole mark glows and swells with the energy.
+ * wave travelling across them; the whole mark swells with the energy. Plain strokes only: gradients
+ * and filters did not render on every phone.
  */
 export function Bars({ status, level }: Props) {
   const svg = useRef<SVGSVGElement>(null);
   const bars = useRef<(SVGLineElement | null)[]>([]);
-  const state = useRef({ status, level, energy: 0, peak: 0 });
+  const state = useRef({ status, level, energy: 0 });
   state.current.status = status;
   state.current.level = level;
-  const [from, to] = MOODS[status] ?? IDLE;
 
   useEffect(() => {
     let frame = 0;
@@ -51,7 +49,6 @@ export function Bars({ status, level }: Props) {
       const target = live ? level() : 0;
       // Instant attack, slow release: the bars jump on a syllable and sink between words
       state.current.energy += (target - state.current.energy) * (target > state.current.energy ? 0.9 : 0.1);
-      state.current.peak = Math.max(state.current.peak * 0.97, state.current.energy);
       const energy = state.current.energy;
       const thinking = status === "thinking";
       bars.current.forEach((bar, i) => {
@@ -64,14 +61,11 @@ export function Bars({ status, level }: Props) {
         const wave = thinking ? 0.45 * (0.5 + 0.5 * Math.sin(t * 6 - i * 0.9)) : 0;
         const grow = energy * (0.5 + 1.3 * centreness) * flutter + wave;
         const height = Math.min(MAX_HEIGHT, (REST_HEIGHTS[i] ?? 0) * breathing * (1 + grow));
-        bar.setAttribute("y1", String(50 - height / 2 + WIDTH / 2));
-        bar.setAttribute("y2", String(50 + height / 2 - WIDTH / 2));
+        bar.setAttribute("y1", (50 - height / 2 + WIDTH / 2).toFixed(2));
+        bar.setAttribute("y2", (50 + height / 2 - WIDTH / 2).toFixed(2));
       });
-      const element = svg.current;
-      if (element) {
-        const glow = live ? 4 + state.current.peak * 26 : 0;
-        element.style.filter = glow > 0 ? `drop-shadow(0 0 ${glow.toFixed(1)}px var(--bars-glow))` : "none";
-        element.style.transform = `scale(${(1 + energy * 0.06).toFixed(3)})`;
+      if (svg.current) {
+        svg.current.style.transform = `scale(${(1 + energy * 0.08).toFixed(3)})`;
       }
     };
     frame = requestAnimationFrame(draw);
@@ -88,15 +82,8 @@ export function Bars({ status, level }: Props) {
       strokeWidth={WIDTH}
       strokeLinecap="round"
       fill="none"
-      style={{ "--bars-glow": from } as React.CSSProperties}
+      style={{ stroke: COLOURS[status] ?? COLOURS.idle }}
     >
-      <defs>
-        <linearGradient id="bars-mood" x1="0" y1="0" x2="0" y2="1">
-          {/* CSS variables only resolve through style, never through SVG presentation attributes */}
-          <stop offset="0" style={{ stopColor: from }} />
-          <stop offset="1" style={{ stopColor: to }} />
-        </linearGradient>
-      </defs>
       {REST_HEIGHTS.map((height, i) => {
         const x = 50 + (i - 3) * PITCH;
         return (
@@ -106,7 +93,6 @@ export function Bars({ status, level }: Props) {
             ref={(el) => {
               bars.current[i] = el;
             }}
-            stroke="url(#bars-mood)"
             x1={x}
             x2={x}
             y1={50 - height / 2 + WIDTH / 2}

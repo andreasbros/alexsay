@@ -82,7 +82,8 @@ body {
   max-width: 440px;
   max-height: 440px;
   display: block;
-  will-change: transform, filter;
+  transition: stroke 0.3s;
+  will-change: transform;
 }
 
 .activity {

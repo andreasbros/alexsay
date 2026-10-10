@@ -23,15 +23,7 @@ import {
   type ProviderTest,
 } from "../api";
 import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP } from "../components/HelpDialog";
-
-type VoiceType = "male" | "female";
-/** OpenAI does not label its voices; this is how they are commonly heard. The first of each list is the default. */
-const VOICES: Record<VoiceType, string[]> = {
-  male: ["cedar", "ash", "ballad", "echo", "verse"],
-  female: ["marin", "coral", "sage", "shimmer", "alloy"],
-};
-const voiceTypeOf = (voice: string): VoiceType => (VOICES.female.includes(voice) ? "female" : "male");
-const DEFAULTS: OpenAiSettings = { model: "gpt-live-1", backend_model: "gpt-6-luna", voice: "cedar", instructions: "" };
+import { DEFAULT_OPENAI as DEFAULTS, VOICES, voiceTypeOf } from "../voices";
 
 export function Connections() {
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });

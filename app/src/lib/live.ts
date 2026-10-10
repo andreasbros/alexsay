@@ -1,13 +1,14 @@
 import { api } from "../api";
 import { functionCallOf, runTool } from "./tools";
 
-export type LiveStatus = "connecting" | "listening" | "speaking" | "closed" | "error";
+export type LiveStatus = "connecting" | "listening" | "thinking" | "speaking" | "closed" | "error";
+export type ActivityKind = "info" | "tool" | "result" | "error";
 
 export interface LiveHandlers {
   onStatus: (status: LiveStatus, detail?: string) => void;
   onTranscript: (role: "user" | "assistant", delta: string) => void;
-  /** One line per notable event: tool calls, their results, session end. */
-  onActivity: (line: string) => void;
+  /** One entry per notable event: tool calls, their results, session end. */
+  onActivity: (kind: ActivityKind, text: string) => void;
 }
 
 export interface LiveSession {
@@ -15,11 +16,13 @@ export interface LiveSession {
   micLevel: () => number;
   /** 0 to 1, how loud the assistant is right now. */
   voiceLevel: () => number;
+  /** Silences the microphone locally and tells GPT-Live, so it stops listening too. */
+  setMuted: (muted: boolean) => void;
   stop: () => void;
 }
 
-const SPEAKING_HOLD_MS = 350;
-const LEVEL_POLL_MS = 100;
+const SPEAKING_HOLD_MS = 300;
+const LEVEL_POLL_MS = 50;
 
 /**
  * One conversation: microphone and speaker travel over WebRTC straight to GPT-Live, the JSON
@@ -48,6 +51,8 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
   const events = pc.createDataChannel("oai-events");
   const tools = new ToolRunner(events, handlers);
   let lastAssistantAudio = 0;
+  // The backend model is working on an answer: between the user's turn and the first spoken word
+  let thinking = false;
   events.onmessage = (message) => {
     const event = parse(message.data);
     if (!event) {
@@ -56,17 +61,24 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
     const type = String(event.type);
     if (type === "session.output_transcript.delta") {
       lastAssistantAudio = Date.now();
+      thinking = false;
       handlers.onTranscript("assistant", String(event.delta ?? ""));
     } else if (type === "session.input_transcript.delta") {
       handlers.onTranscript("user", String(event.delta ?? ""));
     } else if (type === "session.closed") {
-      handlers.onActivity(`Session closed (${String(event.reason ?? "no reason")})`);
+      handlers.onActivity("info", `Session closed (${String(event.reason ?? "no reason")})`);
       handlers.onStatus("closed", String(event.reason ?? ""));
     } else if (type === "error") {
       const error = event.error as { message?: string } | undefined;
-      handlers.onActivity(`Error: ${error?.message ?? "GPT-Live error"}`);
+      handlers.onActivity("error", error?.message ?? "GPT-Live error");
       handlers.onStatus("error", error?.message ?? "GPT-Live error");
     } else if (type === "response.event") {
+      const nested = event.event as { type?: string } | undefined;
+      if (nested?.type === "response.created") {
+        thinking = true;
+      } else if (nested?.type === "response.completed" || nested?.type === "response.done") {
+        thinking = false;
+      }
       tools.onResponseEvent(event);
     }
   };
@@ -82,7 +94,7 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
   try {
     const answer = await api.assistantSession(localSdp);
     await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
-    handlers.onActivity(answer.tools.length > 0 ? `Connected with tools: ${answer.tools.join(", ")}` : "Connected");
+    handlers.onActivity("info", answer.tools.length > 0 ? `Connected, tools: ${answer.tools.join(", ")}` : "Connected");
   } catch (err) {
     cleanup();
     throw err;
@@ -98,7 +110,7 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
       return;
     }
     const speaking = levels.voice > 0.02 || Date.now() - lastAssistantAudio < SPEAKING_HOLD_MS;
-    handlers.onStatus(speaking ? "speaking" : "listening");
+    handlers.onStatus(speaking ? "speaking" : thinking ? "thinking" : "listening");
   }, LEVEL_POLL_MS);
 
   function cleanup() {
@@ -113,6 +125,15 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
   return {
     micLevel: () => levels.mic,
     voiceLevel: () => levels.voice,
+    setMuted: (muted) => {
+      for (const track of mic.getAudioTracks()) {
+        track.enabled = !muted;
+      }
+      if (events.readyState === "open") {
+        send(events, { type: muted ? "session.input_audio.mute" : "session.input_audio.unmute" });
+      }
+      handlers.onActivity("info", muted ? "Microphone muted" : "Microphone live");
+    },
     stop: () => {
       if (events.readyState === "open") {
         send(events, { type: "session.close" });
@@ -153,9 +174,12 @@ class ToolRunner {
       return;
     }
     this.pending += 1;
-    this.handlers.onActivity(`Tool ${call.name}(${call.arguments})`);
+    this.handlers.onActivity("tool", `${call.name} ${call.arguments}`);
     void runTool(call, api).then((output) => {
-      this.handlers.onActivity(`Result ${call.name}: ${output.slice(0, 160)}`);
+      this.handlers.onActivity(
+        output.includes('"error"') ? "error" : "result",
+        `${call.name}: ${output.slice(0, 160)}`,
+      );
       send(this.channel, {
         type: "response.item.create",
         item: { type: "function_call_output", call_id: call.call_id, output },

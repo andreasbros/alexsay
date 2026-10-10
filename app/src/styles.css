@@ -44,10 +44,59 @@ body {
 }
 
 .bars {
-  width: min(70vw, 52vh, 420px);
-  height: min(70vw, 52vh, 420px);
+  width: min(70vw, 48vh, 400px);
+  height: min(70vw, 48vh, 400px);
   display: block;
-  transition: stroke 0.3s;
+  will-change: transform, filter;
+}
+
+.activity {
+  width: 100%;
+  max-width: 640px;
+}
+
+.activity-head {
+  cursor: pointer;
+  user-select: none;
+}
+
+.activity-list {
+  border-top: 1px solid var(--gray-a5);
+  padding-top: var(--space-2);
+  max-height: 16rem;
+  overflow: auto;
+}
+
+.activity-entry {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--gray-a3);
+  animation: entry-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.activity-entry:last-child {
+  border-bottom: none;
+}
+
+.activity-time {
+  flex-shrink: 0;
+  min-width: 5.5em;
+}
+
+@keyframes entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-entry {
+    animation: none;
+  }
 }
 
 .transcript {

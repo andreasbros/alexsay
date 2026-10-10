@@ -85,7 +85,16 @@ describe("assistant sessions", () => {
     const config = sessionConfig(openaiSettings.parse({ instructions: "Call me Andreas." }), LIGHT_TOOLS);
     expect(config).toMatchObject({
       model: "gpt-live-1",
-      delegation: { type: "responses", responses: { model: "gpt-6-luna", tool_choice: "auto", tools: LIGHT_TOOLS } },
+      delegation: {
+        type: "responses",
+        responses: {
+          model: "gpt-6-luna",
+          tool_choice: "auto",
+          tools: LIGHT_TOOLS,
+          reasoning: { effort: "low" },
+          text: { verbosity: "low" },
+        },
+      },
     });
     expect(String(config.instructions)).toMatch(/Call me Andreas\.$/);
   });

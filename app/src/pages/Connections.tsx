@@ -24,8 +24,14 @@ import {
 } from "../api";
 import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP } from "../components/HelpDialog";
 
-const VOICES = ["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"];
-const DEFAULTS: OpenAiSettings = { model: "gpt-live-1", backend_model: "gpt-6-luna", voice: "marin", instructions: "" };
+type VoiceType = "male" | "female";
+/** OpenAI does not label its voices; this is how they are commonly heard. The first of each list is the default. */
+const VOICES: Record<VoiceType, string[]> = {
+  male: ["cedar", "ash", "ballad", "echo", "verse"],
+  female: ["marin", "coral", "sage", "shimmer", "alloy"],
+};
+const voiceTypeOf = (voice: string): VoiceType => (VOICES.female.includes(voice) ? "female" : "male");
+const DEFAULTS: OpenAiSettings = { model: "gpt-live-1", backend_model: "gpt-6-luna", voice: "cedar", instructions: "" };
 
 export function Connections() {
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });
@@ -111,6 +117,11 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
   const [apiKey, setApiKey] = useState("");
   const [settings, setSettings] = useState<OpenAiSettings>({ ...DEFAULTS, ...connection?.settings });
   const [editing, setEditing] = useState(false);
+  const voiceType = voiceTypeOf(settings.voice);
+  const chooseVoiceType = (type: string) => {
+    const next = type === "female" ? "female" : "male";
+    setSettings({ ...settings, voice: VOICES[next][0] ?? DEFAULTS.voice });
+  };
   const save = useSave(() => api.connectOpenai(apiKey.trim(), settings));
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -167,10 +178,17 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
                   onChange={(e) => setSettings({ ...settings, backend_model: e.target.value })}
                   style={{ flex: 1, minWidth: 140 }}
                 />
+                <Select.Root value={voiceType} onValueChange={chooseVoiceType}>
+                  <Select.Trigger aria-label="Voice type" />
+                  <Select.Content>
+                    <Select.Item value="male">Male</Select.Item>
+                    <Select.Item value="female">Female</Select.Item>
+                  </Select.Content>
+                </Select.Root>
                 <Select.Root value={settings.voice} onValueChange={(voice) => setSettings({ ...settings, voice })}>
                   <Select.Trigger aria-label="Voice" />
                   <Select.Content>
-                    {VOICES.map((v) => (
+                    {VOICES[voiceType].map((v) => (
                       <Select.Item key={v} value={v}>
                         {v}
                       </Select.Item>

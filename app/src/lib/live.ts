@@ -36,11 +36,9 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
   let ticker = 0;
 
   pc.ontrack = (event) => {
-    const [stream] = event.streams;
-    if (stream) {
-      speaker.srcObject = stream;
-      voiceMeter = meter(audioContext, stream);
-    }
+    const stream = new MediaStream([event.track]);
+    speaker.srcObject = stream;
+    voiceMeter = meter(audioContext, stream);
   };
   for (const track of mic.getTracks()) {
     pc.addTrack(track, mic);

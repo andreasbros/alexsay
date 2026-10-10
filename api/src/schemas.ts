@@ -30,7 +30,7 @@ const voice = z.enum(["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo
 export const openaiSettings = z.object({
   model: z.string().trim().min(1).max(64).default("gpt-live-1"),
   backend_model: z.string().trim().min(1).max(64).default("gpt-6-luna"),
-  voice: voice.default("marin"),
+  voice: voice.default("cedar"),
   instructions: z.string().max(4000).default(""),
 });
 export type OpenAiSettings = z.infer<typeof openaiSettings>;

@@ -7,7 +7,9 @@ interface Props {
   level: () => number;
 }
 
-const POINTS = 180;
+const POINTS = 120;
+/** Half the display rate is plenty for a blob and leaves the main thread free for audio. */
+const FRAME_MS = 33;
 
 /** A liquid sphere: a radial-gradient blob whose rim is pushed by a few drifting waves scaled by the audio level. */
 export function Sphere({ status, level }: Props) {
@@ -23,8 +25,14 @@ export function Sphere({ status, level }: Props) {
       return;
     }
     let frame = 0;
+    let last = 0;
     const start = performance.now();
     const draw = (now: number) => {
+      if (now - last < FRAME_MS) {
+        frame = requestAnimationFrame(draw);
+        return;
+      }
+      last = now;
       const t = (now - start) / 1000;
       const { status, level } = state.current;
       const target = status === "idle" || status === "closed" ? 0 : level();
@@ -65,9 +73,16 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, t: num
   const ripple = 0.02 + level * 0.12;
   const [light, mid, dark] = PALETTE[status] ?? IDLE;
 
-  ctx.save();
-  ctx.shadowColor = mid;
-  ctx.shadowBlur = size * (0.08 + level * 0.12);
+  // A soft halo drawn as a gradient disc: far cheaper than a canvas shadow blur every frame
+  const haloRadius = radius * (1.25 + level * 0.3);
+  const halo = ctx.createRadialGradient(centre, centre, radius * 0.9, centre, centre, haloRadius);
+  halo.addColorStop(0, withAlpha(mid, 0.35 + level * 0.3));
+  halo.addColorStop(1, withAlpha(mid, 0));
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(centre, centre, haloRadius, 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.beginPath();
   for (let i = 0; i <= POINTS; i++) {
     const angle = (i / POINTS) * Math.PI * 2;
@@ -96,7 +111,6 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, t: num
   gradient.addColorStop(1, dark);
   ctx.fillStyle = gradient;
   ctx.fill();
-  ctx.restore();
 
   // A soft highlight that drifts, so the surface reads as liquid rather than flat
   const hx = centre + Math.cos(t * 0.6) * radius * 0.25;
@@ -108,4 +122,10 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, t: num
   ctx.beginPath();
   ctx.arc(centre, centre, radius * 1.1, 0, Math.PI * 2);
   ctx.fill();
+}
+
+/** "#rrggbb" plus an alpha, as canvas gradients need. */
+function withAlpha(hex: string, alpha: number): string {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha.toFixed(3)})`;
 }

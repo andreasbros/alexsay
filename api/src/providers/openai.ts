@@ -35,7 +35,15 @@ export function sessionConfig(settings: OpenAiSettings, tools: LiveTool[]): Reco
     audio: { output: { voice: settings.voice } },
     delegation: {
       type: "responses",
-      responses: { model: settings.backend_model, instructions, tools, tool_choice: "auto" },
+      responses: {
+        model: settings.backend_model,
+        instructions,
+        tools,
+        tool_choice: "auto",
+        // Spoken replies: think briefly, answer briefly, so GPT-Live is not left waiting
+        reasoning: { effort: "low" },
+        text: { verbosity: "low" },
+      },
     },
   };
 }

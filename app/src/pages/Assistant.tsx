@@ -1,5 +1,5 @@
 import { SpeakerLoudIcon, SpeakerOffIcon } from "@radix-ui/react-icons";
-import { Badge, Button, Callout, Flex, Heading, Select, Text } from "@radix-ui/themes";
+import { Badge, Button, Callout, Flex, Select, Text } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router";
@@ -141,14 +141,11 @@ export function Assistant() {
 
   return (
     <div className="assistant">
-      <Flex align="center" justify="between" gap="3" wrap="wrap">
-        <Flex align="center" gap="3">
-          <Heading size="6">Assistant</Heading>
-          <Badge color={COLOURS[status]} size="2">
-            {LABELS[status]}
-          </Badge>
-        </Flex>
-        <Flex align="center" gap="2">
+      <Flex align="center" justify="between" gap="2" wrap="nowrap" className="assistant-bar">
+        <Badge color={COLOURS[status]} size="2" className="assistant-status" role="status">
+          {LABELS[status]}
+        </Badge>
+        <Flex align="center" gap="2" wrap="nowrap">
           <Select.Root
             size="2"
             value={settings.voice}

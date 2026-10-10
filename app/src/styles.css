@@ -68,6 +68,22 @@ body {
 
 /* The stage is the flexible row; the SVG is pinned to it and its viewBox scales the mark to fit,
    so the bars never decide the page height themselves */
+/* One fixed-height row: the status on the left is sized like the controls on the right and never
+   wraps, so nothing above the bars ever changes height */
+.assistant-bar {
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.assistant-status {
+  height: 32px;
+  min-width: 7.5em;
+  padding: 0 var(--space-3);
+  justify-content: center;
+  font-size: var(--font-size-2);
+  border-radius: var(--radius-3);
+}
+
 /* The stage absorbs layout changes around it; the bars keep one size, set from the viewport alone */
 .stage {
   flex: 1 1 0;

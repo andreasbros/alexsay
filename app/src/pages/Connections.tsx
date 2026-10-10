@@ -382,7 +382,7 @@ function explain(err: unknown): string {
     if (err.detail) {
       return `Lightwave said: ${err.detail}`;
     }
-    return err.status >= 500 ? "Lightwave did not respond." : "The request was refused.";
+    return err.status >= 500 ? "Lightwave did not respond." : `The request was refused (${err.code}).`;
   }
   return err instanceof Error ? err.message : "Something went wrong.";
 }

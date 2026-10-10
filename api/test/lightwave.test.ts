@@ -114,4 +114,18 @@ describe("lightwave", () => {
     expect(res.status).toBe(204);
     expect((await json(`${APP}/api/lightwave/features`, "POST", { features: [] }, maria)).status).toBe(400);
   });
+
+  it("accepts Lightwave's real feature id shape, plus sign included", async () => {
+    await connectLightwave(maria);
+    const id = "5b8aa9b4d36c330fd5b4e100-22-3157332334+1";
+    const upstream = mockUpstream({
+      [`POST https://publicapi.lightwaverf.com/v1/feature/${id}`]: (_req, body) => {
+        expect(body).toBe('{"value":1}');
+        return reply(200, {});
+      },
+    });
+    const res = await json(`${APP}/api/lightwave/features/${encodeURIComponent(id)}`, "POST", { value: 1 }, maria);
+    upstream.done();
+    expect(res.status).toBe(204);
+  });
 });

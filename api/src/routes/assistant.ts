@@ -109,7 +109,7 @@ export const lightwaveRoutes = new Hono<AppEnv>()
   })
   .post("/features/:id", async (c) => {
     const featureId = c.req.param("id");
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(featureId)) {
+    if (!/^[A-Za-z0-9_.+-]{1,160}$/.test(featureId)) {
       return c.json({ error: "not_found" }, 404);
     }
     const { value } = await jsonBody(c, schemas.featureValue);

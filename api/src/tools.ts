@@ -188,7 +188,12 @@ export const TOOLS: Tool[] = [
           id: { type: "string", description: "The light id from list_lights" },
           name: { type: "string", description: "The light's name as the user said it, when the id is unknown" },
           on: { type: "boolean", description: "True to switch on, false to switch off" },
-          dim_level: { type: "integer", minimum: 0, maximum: 100, description: "Brightness in percent, if dimmable" },
+          dim_level: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description: "Brightness in percent, only when the user asked to dim, brighten or darken; never for off",
+          },
         },
         required: [],
         additionalProperties: false,
@@ -217,7 +222,12 @@ export const TOOLS: Tool[] = [
         properties: {
           match: { type: "string", description: 'Room or name words to match, or "all"' },
           on: { type: "boolean", description: "True to switch on, false to switch off" },
-          dim_level: { type: "integer", minimum: 0, maximum: 100, description: "Brightness in percent, if dimmable" },
+          dim_level: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description: "Brightness in percent, only when the user asked to dim, brighten or darker; never for off",
+          },
         },
         required: ["match"],
         additionalProperties: false,
@@ -249,13 +259,21 @@ async function userLights(c: Context<AppEnv>): Promise<Light[]> {
   return lights(lightwaveUrls(c), token);
 }
 
-async function writeLights(c: Context<AppEnv>, targets: Light[], args: Record<string, unknown>): Promise<void> {
-  const dim = num(args, "dim_level");
+/** Lightwave keeps the dim level across off and on, so "off" never touches it and a dim never goes to 0. */
+const MIN_DIM = 1;
+
+export function lightWrites(targets: Light[], args: Record<string, unknown>): { featureId: string; value: number }[] {
   const on = typeof args.on === "boolean" ? args.on : null;
-  const writes = targets.flatMap((light) => [
-    ...(dim !== null && light.dim ? [{ featureId: light.dim, value: Math.round(dim) }] : []),
+  const requested = num(args, "dim_level");
+  const dim = requested === null || on === false ? null : Math.max(MIN_DIM, Math.min(100, Math.round(requested)));
+  return targets.flatMap((light) => [
+    ...(dim !== null && light.dim ? [{ featureId: light.dim, value: dim }] : []),
     ...(on !== null ? [{ featureId: light.switch, value: on ? 1 : 0 }] : []),
   ]);
+}
+
+async function writeLights(c: Context<AppEnv>, targets: Light[], args: Record<string, unknown>): Promise<void> {
+  const writes = lightWrites(targets, args);
   if (writes.length === 0) {
     return;
   }

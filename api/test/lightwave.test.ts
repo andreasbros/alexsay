@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { lightWrites } from "../src/tools";
 import { APP, addUser, call, connectLightwave, json, mockUpstream, reply, resetDb, signIn } from "./helpers";
 
 const STRUCTURE = {
@@ -127,5 +128,17 @@ describe("lightwave", () => {
     const res = await json(`${APP}/api/lightwave/features/${encodeURIComponent(id)}`, "POST", { value: 1 }, maria);
     upstream.done();
     expect(res.status).toBe(204);
+  });
+
+  it("never writes a dim level when switching off, and never below 1%", () => {
+    const dimmable = { id: "fs1", name: "Kitchen", device: "d", switch: "sw", dim: "dm", on: true, dim_level: 60 };
+    expect(lightWrites([dimmable], { on: false, dim_level: 0 })).toEqual([{ featureId: "sw", value: 0 }]);
+    expect(lightWrites([dimmable], { on: false })).toEqual([{ featureId: "sw", value: 0 }]);
+    expect(lightWrites([dimmable], { dim_level: 0 })).toEqual([{ featureId: "dm", value: 1 }]);
+    expect(lightWrites([dimmable], { on: true, dim_level: 40 })).toEqual([
+      { featureId: "dm", value: 40 },
+      { featureId: "sw", value: 1 },
+    ]);
+    expect(lightWrites([dimmable], { on: true })).toEqual([{ featureId: "sw", value: 1 }]);
   });
 });

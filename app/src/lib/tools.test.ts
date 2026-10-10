@@ -89,6 +89,14 @@ describe("tools", () => {
     expect(JSON.parse(all)).toEqual({ ok: true, lights: ["Kitchen", "Kitchen 2", "Hall"] });
   });
 
+  it("acknowledges the hang-up tool", async () => {
+    const api = { lights: vi.fn(), setFeature: vi.fn(), setFeatures: vi.fn() };
+    expect(JSON.parse(await runTool({ call_id: "c", name: "end_conversation", arguments: "{}" }, api))).toMatchObject({
+      ok: true,
+    });
+    expect(api.lights).not.toHaveBeenCalled();
+  });
+
   it("reports unknown lights and tools without throwing", async () => {
     const api = {
       lights: vi.fn(async () => [kitchen]),

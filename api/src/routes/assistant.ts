@@ -8,6 +8,18 @@ import * as schemas from "../schemas";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
 
+/** Always offered: the model hangs up when the user is done. */
+export const SESSION_TOOLS: LiveTool[] = [
+  {
+    type: "function",
+    name: "end_conversation",
+    description:
+      "Ends the conversation after the user said goodbye, thanks or that is all. Say a short goodbye first; the " +
+      "session closes once you finish speaking.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+];
+
 /** Tools the backend model may call; the browser runs them against /api/lightwave. */
 export const LIGHT_TOOLS: LiveTool[] = [
   {
@@ -64,7 +76,7 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
   try {
     const session = await createLiveSession(c.env.OPENAI_BASE_URL, connection.apiKey, {
       settings: connection.settings,
-      tools: hasLights ? LIGHT_TOOLS : [],
+      tools: hasLights ? [...SESSION_TOOLS, ...LIGHT_TOOLS] : SESSION_TOOLS,
       sdp,
     });
     return c.json({ session_id: session.sessionId, sdp: session.sdp, tools: hasLights ? ["lights"] : [] });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sessionConfig } from "../src/providers/openai";
-import { LIGHT_TOOLS } from "../src/routes/assistant";
+import { LIGHT_TOOLS, SESSION_TOOLS } from "../src/routes/assistant";
 import { openaiSettings } from "../src/schemas";
 import {
   APP,
@@ -69,7 +69,11 @@ describe("assistant sessions", () => {
     const res = await json(`${APP}/api/assistant/sessions`, "POST", { sdp: OFFER }, maria);
     upstream.done();
     expect(await res.json()).toMatchObject({ tools: ["lights"] });
-    expect(sent?.session.delegation.responses.tools).toEqual([{ type: "web_search" }, ...LIGHT_TOOLS]);
+    expect(sent?.session.delegation.responses.tools).toEqual([
+      { type: "web_search" },
+      ...SESSION_TOOLS,
+      ...LIGHT_TOOLS,
+    ]);
   });
 
   it("passes GPT-Live's refusal through", async () => {
@@ -87,6 +91,7 @@ describe("assistant sessions", () => {
       instructions: string;
     };
     expect(config.delegation.responses.tools).toEqual([]);
+    expect(SESSION_TOOLS.map((t) => (t.type === "function" ? t.name : t.type))).toEqual(["end_conversation"]);
     expect(config.instructions).not.toMatch(/search the web/);
   });
 

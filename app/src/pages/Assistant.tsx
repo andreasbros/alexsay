@@ -71,6 +71,9 @@ export function Assistant() {
         if (info) {
           setDetail(info);
         }
+        if (next === "closed") {
+          session.current = null;
+        }
       },
       onTranscript: (role: Turn["role"], delta: string) => setTurns((current) => appendTurn(current, role, delta)),
     };

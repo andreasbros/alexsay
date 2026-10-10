@@ -34,6 +34,8 @@ export async function runTool(call: FunctionCall, api: ToolApi): Promise<string>
   const args = parseArguments(call.arguments);
   try {
     switch (call.name) {
+      case "end_conversation":
+        return JSON.stringify({ ok: true, note: "say goodbye; the session closes when you finish speaking" });
       case "list_lights":
         return JSON.stringify(
           (await api.lights()).map((l) => ({

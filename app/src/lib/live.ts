@@ -23,6 +23,8 @@ export interface LiveSession {
 
 const SPEAKING_HOLD_MS = 300;
 const LEVEL_POLL_MS = 50;
+/** After the assistant asked to hang up, how long its goodbye may trail off before the line closes. */
+const HANGUP_QUIET_MS = 1500;
 
 /**
  * One conversation: microphone and speaker travel over WebRTC straight to GPT-Live, the JSON
@@ -56,7 +58,11 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
 
   // The channel must exist before the offer so it is part of the negotiated SDP.
   const events = pc.createDataChannel("oai-events");
-  const tools = new ToolRunner(events, handlers);
+  // Set by the end_conversation tool: close once the goodbye has been spoken
+  let hangingUp = false;
+  const tools = new ToolRunner(events, handlers, () => {
+    hangingUp = true;
+  });
   let lastAssistantAudio = 0;
   // The backend model is working on an answer: between the user's turn and the first spoken word
   let thinking = false;
@@ -117,6 +123,14 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
       return;
     }
     const speaking = levels.voice > 0.02 || Date.now() - lastAssistantAudio < SPEAKING_HOLD_MS;
+    if (speaking) {
+      lastAssistantAudio = Math.max(lastAssistantAudio, levels.voice > 0.02 ? Date.now() : 0);
+    }
+    if (hangingUp && !speaking && Date.now() - lastAssistantAudio > HANGUP_QUIET_MS) {
+      handlers.onActivity("info", "Conversation ended by the assistant");
+      session.stop();
+      return;
+    }
     handlers.onStatus(speaking ? "speaking" : thinking ? "thinking" : "listening");
   }, LEVEL_POLL_MS);
 
@@ -130,7 +144,7 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
     speaker.remove();
   }
 
-  return {
+  const session: LiveSession = {
     micLevel: () => levels.mic,
     voiceLevel: () => levels.voice,
     setMuted: (muted) => {
@@ -150,6 +164,7 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
       handlers.onStatus("closed");
     },
   };
+  return session;
 }
 
 /**
@@ -165,6 +180,7 @@ class ToolRunner {
   constructor(
     private readonly channel: RTCDataChannel,
     private readonly handlers: LiveHandlers,
+    private readonly onHangUp: () => void,
   ) {}
 
   onResponseEvent(envelope: Record<string, unknown>): void {
@@ -183,6 +199,9 @@ class ToolRunner {
     }
     this.pending += 1;
     this.handlers.onActivity("tool", `${call.name} ${call.arguments}`);
+    if (call.name === "end_conversation") {
+      this.onHangUp();
+    }
     void runTool(call, api).then((output) => {
       this.handlers.onActivity(
         output.includes('"error"') ? "error" : "result",

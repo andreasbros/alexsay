@@ -14,7 +14,7 @@
     {
       "binding": "DB",
       "database_name": "alexsay",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "7cc3c19a-8f07-45f2-9666-bd17894a0f0b",
       "migrations_dir": "migrations"
     }
   ],

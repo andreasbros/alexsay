@@ -1,19 +1,13 @@
-import { type Context, Hono } from "hono";
+import { Hono } from "hono";
 import { exchangeLightwave, lightwaveToken, lightwaveUrls, openaiConnection } from "../connections";
 import { connections } from "../db";
+import { providerFailure } from "../provider_errors";
 import { structureIds } from "../providers/lightwave";
 import { listModels, ProviderError } from "../providers/openai";
 import * as schemas from "../schemas";
 import { seal } from "../secrets";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
-
-function providerFailure(c: Context<AppEnv>, err: unknown) {
-  if (err instanceof ProviderError) {
-    return c.json({ ok: false, error: "provider", status: err.status, detail: err.detail }, 502);
-  }
-  throw err;
-}
 
 /** Each provider is one card in the app: stored sealed, listed without secrets, testable on demand. */
 export const connectionRoutes = new Hono<AppEnv>()
@@ -72,7 +66,7 @@ export const connectionRoutes = new Hono<AppEnv>()
         backend_model: models.includes(backend_model),
       });
     } catch (err) {
-      return providerFailure(c, err);
+      return providerFailure(c, "openai", err);
     }
   })
   .post("/lightwave/test", async (c) => {
@@ -84,7 +78,7 @@ export const connectionRoutes = new Hono<AppEnv>()
       const structures = await structureIds(lightwaveUrls(c), token);
       return c.json({ ok: true, structures: structures.length });
     } catch (err) {
-      return providerFailure(c, err);
+      return providerFailure(c, "lightwave", err);
     }
   })
   .delete("/:provider", async (c) => {

@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { lightwaveToken, lightwaveUrls, openaiConnection } from "../connections";
 import { connections } from "../db";
+import { providerFailure } from "../provider_errors";
 import { lights, writeFeature, writeFeatures } from "../providers/lightwave";
-import { createLiveSession, type LiveTool, ProviderError } from "../providers/openai";
+import { createLiveSession, type LiveTool } from "../providers/openai";
 import * as schemas from "../schemas";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
@@ -68,10 +69,7 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
     });
     return c.json({ session_id: session.sessionId, sdp: session.sdp, tools: hasLights ? ["lights"] : [] });
   } catch (err) {
-    if (err instanceof ProviderError) {
-      return c.json({ error: "provider", status: err.status, detail: err.detail }, 502);
-    }
-    throw err;
+    return providerFailure(c, "openai", err);
   }
 });
 
@@ -85,10 +83,7 @@ export const lightwaveRoutes = new Hono<AppEnv>()
       }
       return c.json(await lights(lightwaveUrls(c), token));
     } catch (err) {
-      if (err instanceof ProviderError) {
-        return c.json({ error: "provider", status: err.status, detail: err.detail }, 502);
-      }
-      throw err;
+      return providerFailure(c, "lightwave", err);
     }
   })
   .post("/features", async (c) => {
@@ -101,10 +96,7 @@ export const lightwaveRoutes = new Hono<AppEnv>()
       await writeFeatures(lightwaveUrls(c), token, features);
       return c.body(null, 204);
     } catch (err) {
-      if (err instanceof ProviderError) {
-        return c.json({ error: "provider", status: err.status, detail: err.detail }, 502);
-      }
-      throw err;
+      return providerFailure(c, "lightwave", err);
     }
   })
   .post("/features/:id", async (c) => {
@@ -121,9 +113,6 @@ export const lightwaveRoutes = new Hono<AppEnv>()
       await writeFeature(lightwaveUrls(c), token, featureId, value);
       return c.body(null, 204);
     } catch (err) {
-      if (err instanceof ProviderError) {
-        return c.json({ error: "provider", status: err.status, detail: err.detail }, 502);
-      }
-      throw err;
+      return providerFailure(c, "lightwave", err);
     }
   });

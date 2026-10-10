@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Renders brand/logo.svg into every icon the app and the website need. Run inside nix develop.
+# Renders the brand mark into every icon the app and the website need. Run inside nix develop.
+# Icons keep a transparent background; iOS and the Open Graph card get a solid one because they
+# would otherwise paint it black.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -7,27 +9,25 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 render() {
-  resvg --width "$1" --height "$1" brand/logo.svg "$2"
+  resvg --width "$2" --height "$2" "$1" "$3"
 }
 
-render 16 "$tmp/16.png"
-render 32 "$tmp/32.png"
-render 48 "$tmp/48.png"
-render 96 "$tmp/favicon-96.png"
-render 180 "$tmp/apple-touch-icon.png"
-render 192 "$tmp/favicon-192.png"
-render 512 "$tmp/icon-512.png"
+for size in 16 32 48; do render brand/mark.svg "$size" "$tmp/$size.png"; done
+render brand/mark.svg 96 "$tmp/favicon-96.png"
+render brand/mark.svg 192 "$tmp/favicon-192.png"
+render brand/mark.svg 512 "$tmp/icon-512.png"
 magick "$tmp/16.png" "$tmp/32.png" "$tmp/48.png" "$tmp/favicon.ico"
 
-# Open Graph card: the tile and the wordmark on the dark brand background
-# The tile is the brand dark, so the card uses a slightly lighter backdrop to keep its edge visible
-render 300 "$tmp/og-tile.png"
-magick -size 1200x630 xc:'#16161f' \
-  \( "$tmp/og-tile.png" \) -geometry +120+165 -composite \
+render brand/mark.svg 144 "$tmp/apple-mark.png"
+magick -size 180x180 xc:'#ffffff' "$tmp/apple-mark.png" -gravity center -composite "$tmp/apple-touch-icon.png"
+
+render brand/mark-light.svg 300 "$tmp/og-mark.png"
+magick -size 1200x630 xc:'#0a0a0f' \
+  "$tmp/og-mark.png" -geometry +120+165 -composite \
   -font DejaVu-Sans-Bold -pointsize 110 -fill '#f4f4f7' -annotate +470+330 'Alexsay' \
   -font DejaVu-Sans -pointsize 30 -fill '#a4a4b8' -annotate +474+392 'Open-source home assistant speaker' \
   "$tmp/og.png"
-cp brand/logo.svg "$tmp/favicon.svg"
+cp brand/favicon.svg "$tmp/favicon.svg"
 
 for dir in website/public app/public; do
   mkdir -p "$dir"

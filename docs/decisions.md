@@ -67,3 +67,9 @@ Newest last. Each entry: what was decided, why, what was rejected.
 - **Decision:** Flash `respeaker_flex_ua-io16-6ch-cir.bin` first; test `respeaker_flex_ua-io48-cir.bin` for production.
 - **Why:** 6 channels give raw mics for wake-word data and AEC debugging. io48 may give full-band playback of the 24 kHz API voice.
 - **Rejected:** Keeping the shipped I2S firmware.
+
+## 2026-10-10: GPT-Live is the primary backend
+
+- **Decision:** Build on `gpt-live-1` (Live API, WebSocket, PCM 16 kHz, Responses delegation for tools). `gpt-realtime` stays behind the `VoiceBackend` trait as a fallback.
+- **Why:** GPT-Live-1 has been GA in the API since 10 Sep 2026; the 9 Oct entry wrongly assumed a waitlist alpha. It is the model the project was conceived for (true full duplex), costs $0.05/min plus the backend model, and accepts 16 kHz audio, so the io16 firmware needs no resampling.
+- **Rejected:** `gpt-realtime` as the primary backend.

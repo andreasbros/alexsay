@@ -1,6 +1,6 @@
 # alexsay
 
-A self-built smart speaker that replaces an Amazon Echo Dot. Say **"Alex"** and it opens a full-duplex OpenAI voice conversation (GPT-Live once its API opens, `gpt-realtime` until then), with Home Assistant on the same box for home control.
+A self-built smart speaker that replaces an Amazon Echo Dot. Say **"Alex"** and it opens a full-duplex OpenAI voice conversation (GPT-Live, `gpt-live-1`), with Home Assistant on the same box for home control.
 
 - **Hardware:** Raspberry Pi 5 8GB, Seeed reSpeaker Flex XVF3800 (circular 4-mic array, hardware echo cancellation, on-board amp), Visaton R 10 S 4" driver, one 3D-printed cylinder
 - **Target:** voice quality at least an Echo Dot 3; barge-in (interrupt the assistant mid-sentence) works; wake word ignores "Alexa"
@@ -12,9 +12,9 @@ Everything lives in [`docs/`](docs/README.md):
 
 | Doc | What it covers |
 |---|---|
-| [Architecture](docs/architecture.md) | End-to-end system: mic array → Pi → OpenAI realtime, Home Assistant, session flow |
+| [Architecture](docs/architecture.md) | End-to-end system: mic array → Pi → OpenAI GPT-Live, Home Assistant, session flow |
 | [Device design](docs/device-design.md) | Hardware, BOM, enclosure, acoustics, power and thermal budget |
-| [Software](docs/software.md) | The `alexsay` daemon: state machine, audio formats, realtime protocol, wake word, tools |
+| [Software](docs/software.md) | The `alexsay` daemon: state machine, audio formats, GPT-Live protocol, wake word, tools |
 | [Build manual](docs/build-manual.md) | Phase 1 bench bring-up, step by step |
 | [Procurement](docs/procurement.md) | Everything ordered, everything still missing |
 | [Measurements](docs/measurements.md) | Test plan and results (AEC, wake word, latency, thermals) |

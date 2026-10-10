@@ -51,7 +51,7 @@ The Flex runs one of Seeed's geometry-specific USB images (circular = `-cir`; ne
 | Image | Rate | Channels in | Use |
 |---|---|---|---|
 | `respeaker_flex_ua-io16-6ch-cir.bin` | 16 kHz | 6 (conference, ASR, 4 raw) | **Bring-up**, wake-word data capture, AEC debugging |
-| `respeaker_flex_ua-io48-cir.bin` | 48 kHz | 2 (conference, ASR) | **Production candidate**: if playback is genuinely 48 kHz the speaker gets the realtime API's full 24 kHz-sampled voice (up to ~11 kHz) and music becomes possible again |
+| `respeaker_flex_ua-io48-cir.bin` | 48 kHz | 2 (conference, ASR) | **Production candidate**: if playback is genuinely 48 kHz, run GPT-Live at 24 kHz and the speaker gets its full 24 kHz-sampled voice (up to ~11 kHz) and music becomes possible again |
 | `respeaker_flex_ua-io16-cir.bin` | 16 kHz | 2 | Fallback |
 
 The XVF3800's echo canceller works at 16 kHz internally either way, so the 48 kHz image changes playback fidelity, not AEC. Test: play a 10 kHz tone with each image; audible on io48 and silent on io16 means full-band.

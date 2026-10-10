@@ -5,7 +5,7 @@ You are picking up a hardware + software project with a context window that neve
 ## What we're building
 
 - A free-standing cylinder speaker (≈150 mm Ø × 210 mm, set by the driver's square frame; measure it on arrival) that replaces an Amazon Echo Dot.
-- Wake word **"Alex"** opens a full-duplex OpenAI voice session (`gpt-realtime` now, GPT-Live when its API opens). The user can interrupt the assistant mid-sentence (barge-in).
+- Wake word **"Alex"** opens a full-duplex OpenAI voice session (`gpt-live-1`, with `gpt-realtime` as a fallback backend). The user can interrupt the assistant mid-sentence (barge-in).
 - Home Assistant runs on the same Pi; the assistant controls the home through it via function calls.
 - Voice only. Music playback was dropped on 10 Oct 2026 (it may come back cheaply if the Flex 48 kHz firmware turns out full-band; see docs/device-design.md).
 
@@ -19,7 +19,7 @@ Owner:
 - **Everything ordered, nothing arrived.** Pi Hut basket (Pi 5 8GB, Flex XVF3800 circular, cooler, PSU, cables), RS (Visaton R 10 S, due 13 Oct), Amazon (SanDisk High Endurance 256 GB, Anker card reader). See `docs/procurement.md`.
 - **Phase 1 (bench bring-up):** reflash the Flex to USB firmware, prove capture, playback and AEC on the bench, then the daemon. **Phase 2:** the printed cylinder, acoustics, NVMe.
 - **No code yet.** The daemon is designed in `docs/software.md`; the repo layout follows LetterBox (Rust workspace, Nix flake, `just`).
-- **GPT-Live API:** waitlist alpha (`gpt-live-1-diamond-alpha`, `wss://api.openai.com/v1/live/sessions`). Build against GA `gpt-realtime` behind a backend trait.
+- **GPT-Live API:** available since 10 Sep 2026, no waitlist. `gpt-live-1` at `wss://api.openai.com/v1/live/sessions`, $0.05/min plus the backend model's tokens, any paid tier (not Free). Primary backend; `gpt-realtime` stays behind the same trait as a fallback.
 
 ## Where things are
 
@@ -48,7 +48,8 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 - Flex amp: rated 10 W at 4 Ω on its 12 V terminal; on USB 5 V expect ~3 W (estimate, to measure). We run it from USB only.
 - Visaton R 10 S 4 Ω: fs 160 Hz, Qts 1.45, Vas 1.9 L, Xmax ±0.5 mm, 92.6 dB/1 W, 100 Hz to 13 kHz, 93 mm cut-out. High Qts: any small sealed box peaks 6 to 8 dB around 220 to 270 Hz, so **high-pass ~150 Hz and a peaking cut at fc are mandatory** (applied in the daemon before playback, so AEC still sees the true output).
 - Pi 5 on the 27 W PSU allows 1.6 A total on USB. Budget: XVF3800 + amp peak < 1 A.
-- Realtime API audio is PCM16 mono 24 kHz both ways; the device is 16 kHz (or 48 kHz). The daemon resamples.
+- GPT-Live takes PCM16 mono at **16 kHz** or 24 kHz, fixed at `session.start` for both directions. With the io16 firmware the daemon runs at 16 kHz end to end, no resampling. (`gpt-realtime` is 24 kHz only and needs a resampler.)
+- GPT-Live tools: Responses delegation to a backend text model; custom functions arrive as `response.output_item.done` inside `response.event`, the daemon runs them and returns `function_call_output` + `response.create`.
 
 ## Gotchas already discovered
 
@@ -66,7 +67,7 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 
 ## Open tasks
 
-- [ ] Request GPT-Live API access; create a project-scoped OpenAI API key with a monthly cap.
+- [ ] OpenAI platform: add prepaid credit (Free tier can't use `gpt-live-1`), create project `alexsay` with a monthly budget, create a project API key.
 - [ ] On arrival: `f3` the SD card; flash Raspberry Pi OS Lite 64-bit; check `vcgencmd get_throttled` is `0x0`.
 - [ ] Reflash the Flex to `respeaker_flex_ua-io16-6ch-cir.bin`; capture all 6 channels.
 - [ ] Inspect the Flex speaker connector against the JST cables; otherwise solder to the pad.

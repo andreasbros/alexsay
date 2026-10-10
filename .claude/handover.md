@@ -15,8 +15,8 @@ A condensed history of the design conversation, so a new session understands the
 
 ## GPT-Live
 
-- Launched July 2026 behind ChatGPT Voice. API access is a waitlist alpha: model `gpt-live-1-diamond-alpha`, endpoint `wss://api.openai.com/v1/live/sessions`.
-- Plan: build against GA `gpt-realtime` with a thin transport layer, swap later.
+- Launched 8 Jul 2026 behind ChatGPT Voice. The 9 Oct design assumed API access was a waitlist alpha (`gpt-live-1-diamond-alpha`) and planned to build on `gpt-realtime` first.
+- **Corrected 10 Oct:** `gpt-live-1` has been in the API since 10 Sep 2026 (`wss://api.openai.com/v1/live/sessions`, $0.05/min plus the backend model, any paid tier). It became the primary backend; `gpt-realtime` stays behind the same trait as a fallback.
 - Full duplex means the mic hears the speaker constantly, so **hardware AEC is essential**.
 - "Alex" is a substring of "Alexa": the wake-word model needs negatives. openWakeWord or microWakeWord.
 

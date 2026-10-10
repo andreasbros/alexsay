@@ -8,7 +8,7 @@ Same conventions as LetterBox: Nix flake, `just` recipes, host-tested logic sepa
 
 | Path | What |
 |---|---|
-| `core/` | No I/O, host-tested: session state machine, realtime event types (serde), playback EQ (biquads), resampler wrapper, ring buffer, tool schemas and argument validation |
+| `core/` | No I/O, host-tested: session state machine, GPT-Live and realtime event types (serde), playback EQ (biquads), resampler wrapper, ring buffer, tool schemas and argument validation |
 | `daemon/` | The `alexsay` binary: ALSA capture/playback (`alsa`), WebSocket client (`tokio-tungstenite`), Home Assistant client (`reqwest`), wake word (`ort`, ONNX Runtime), systemd notify |
 | `deploy/` | `alexsay.service`, Home Assistant `compose.yaml`, udev rule for the Flex (vendor `2886`) |
 | `scripts/` | Wake-word recording and dataset tools |
@@ -26,7 +26,7 @@ stateDiagram-v2
     Connecting --> Error: connect failed
     Listening --> Responding: first output audio
     Responding --> Listening: response done
-    Responding --> Listening: barge-in (speech_started), playback flushed, item truncated
+    Responding --> Listening: barge-in (model yields), queued playback dropped
     Listening --> Closing: idle timeout / end_conversation / cap
     Responding --> Closing: end_conversation after this response
     Closing --> Idle
@@ -34,7 +34,7 @@ stateDiagram-v2
 ```
 
 - Wake-word detection runs only in `Idle`. In a session "Alex" is an ordinary word.
-- Mic audio streams to the backend for the whole session; the server decides turns (semantic VAD).
+- Mic audio streams to the backend for the whole session; GPT-Live decides turns (native full-duplex turn-taking).
 - `Connecting` never drops audio: capture keeps filling the ring buffer and the whole backlog is sent once the socket is ready.
 
 ## Audio
@@ -43,14 +43,15 @@ stateDiagram-v2
 |---|---|---|
 | Capture (Flex, 6 ch image) | 16 kHz, 32-bit, 6 ch | use ch1 (ASR beam); ch2 to ch5 only for recording datasets |
 | Capture (Flex, 48 kHz image) | 48 kHz, 2 ch | ch1 ASR beam |
-| Realtime API in/out | PCM16 mono 24 kHz, base64 in JSON events | |
+| GPT-Live in/out | PCM16 mono 16 kHz (`audio/pcm`, `rate: 16000`), base64 in JSON events | fixed at `session.start` for both directions; matches io16, so no resampling |
+| `gpt-realtime` fallback in/out | PCM16 mono 24 kHz | needs resampling |
 | Playback (Flex) | 16 kHz or 48 kHz to match the image | exact channel count/format from `aplay --dump-hw-params` on the bench |
 
 - Open ALSA devices **by card name** from config, never by index (indices move with USB order).
 - 10 ms periods, 4-period buffer. Audio threads run `SCHED_FIFO`.
-- Resampling with `rubato` (fixed ratios 2:3 and 1:2).
-- Playback chain: 24 kHz deltas → resample → EQ (high-pass ~150 Hz, peaking cut at the box's fc, see [device-design.md](device-design.md#acoustics)) → limiter at −3 dBFS → ALSA. All of it before the XVF3800, so its AEC reference matches what the speaker plays.
-- Playback position = frames written minus `snd_pcm_delay`; it feeds `conversation.item.truncate` on barge-in.
+- Resampling with `rubato` only where rates differ: io48 firmware (48 to 16 kHz) or the `gpt-realtime` fallback (16 to 24 kHz).
+- Playback chain: 16 kHz deltas → EQ (high-pass ~150 Hz, peaking cut at the box's fc, see [device-design.md](device-design.md#acoustics)) → limiter at −3 dBFS → ALSA. All of it before the XVF3800, so its AEC reference matches what the speaker plays.
+- Keep the playback queue short (≤ 100 ms ahead of the DAC) so a barge-in stops the voice quickly. Playback position = frames written minus `snd_pcm_delay`; the `gpt-realtime` fallback needs it for `conversation.item.truncate`.
 - Ring buffer: 2 s of ASR-beam audio, always running, so "Alex, turn the lights off" spoken in one breath arrives whole.
 
 ## Voice backend
@@ -71,10 +72,29 @@ trait VoiceSession {
 
 | Backend | Endpoint | Model | Status |
 |---|---|---|---|
-| `Realtime` | `wss://api.openai.com/v1/realtime?model=gpt-realtime` | `gpt-realtime` (GA) | Build first |
-| `Live` | `wss://api.openai.com/v1/live/sessions` | `gpt-live-1-diamond-alpha` | Waitlist alpha; fill in when access arrives |
+| `Live` | `wss://api.openai.com/v1/live/sessions` | `gpt-live-1` | **Primary.** GA since 10 Sep 2026, $0.05/min billed per second plus the delegated backend model; paid tiers only (Free not supported), 50 concurrent sessions on Build tier |
+| `Realtime` | `wss://api.openai.com/v1/realtime?model=gpt-realtime` | `gpt-realtime` | Fallback, same trait |
 
-Realtime events the daemon uses (GA names; confirm against the API reference when writing the client):
+GPT-Live events the daemon uses (WebSocket guide, Oct 2026; confirm against the API reference when writing the client):
+
+| Direction | Event | Use |
+|---|---|---|
+| out | `session.start` | first message: `model`, instructions, `audio.format {type: audio/pcm, rate: 16000}`, `audio.output.voice`, `delegation {type: responses, responses: {model, instructions, tools, tool_choice}}` |
+| in | `session.started` | session id; only then send audio |
+| out | `session.input_audio.append` | mic audio (raw PCM, base64, even byte length) |
+| out | `session.input_audio.mute` / `.unmute` | daemon mute state (doesn't stop speech already generated) |
+| in | `session.output_audio.delta` | playback |
+| in | `session.input_transcript.delta`, `session.output_transcript.delta` | logs |
+| in | `response.event` wrapping `response.output_item.done` (function call: `call_id`, `name`, `arguments`) | run a tool |
+| out | `response.item.create` (`function_call_output`, matching `call_id`), then `response.create` | tool result |
+| out | `session.update` / in `session.updated` | change instructions, tools |
+| out | `session.close` / in `session.closed` | end of session |
+| in | `error` | log, earcon, close |
+
+- Delegation mode is fixed per session; GPT-Live speaks while the backend model reasons and calls tools.
+- Interruption events aren't documented in the WebSocket guide; read "Managing sessions" (`docs/guides/live-conversations`) before writing the playback flush.
+
+`gpt-realtime` fallback events (GA names):
 
 | Direction | Event | Use |
 |---|---|---|
@@ -133,7 +153,8 @@ model = "/var/lib/alexsay/alex.onnx"
 threshold = 0.5
 
 [session]
-backend = "realtime"           # or "live"
+backend = "live"               # or "realtime"
+delegate_model = "<backend text model for Responses delegation>"
 voice = "<voice>"
 idle_close_s = 10
 max_minutes = 10
@@ -167,5 +188,5 @@ exposed = ["light.kitchen", "light.hallway"]
 ## Testing
 
 - `core`: state-machine transitions (barge-in, network drop mid-response, tool call during barge-in), event parsing against recorded JSON fixtures, EQ coefficients against reference values, resampler latency and level.
-- `daemon`: integration test against a fake realtime server (`tokio-tungstenite`) with WAV files standing in for ALSA.
+- `daemon`: integration test against a fake Live server (`tokio-tungstenite`) with WAV files standing in for ALSA.
 - Bench: the measurement plan in [measurements.md](measurements.md).

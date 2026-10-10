@@ -4,7 +4,12 @@ Steps run on Andreas's Ubuntu laptop (flashing) and on the Pi over SSH. Record r
 
 ## 0. Before the parts arrive
 
-1. Request GPT-Live API access (OpenAI platform). Meanwhile create a **project-scoped** API key for `gpt-realtime` and set a monthly spend limit on that project.
+1. OpenAI API (GPT-Live needs no waitlist since 10 Sep 2026):
+   1. [platform.openai.com](https://platform.openai.com) → Settings → Billing: add prepaid credit (the Free tier can't use `gpt-live-1`).
+   2. Settings → Projects → create `alexsay`; Limits: set a monthly budget and alert.
+   3. In that project → API keys → create a secret key, owned by the project, named `alexsay-pi`. Copy it once.
+   4. Put it only in `.env` (dev) and later `/etc/alexsay/env` (0600) on the Pi as `OPENAI_API_KEY=...`.
+   5. Smoke test from the laptop: open a WebSocket to `wss://api.openai.com/v1/live/sessions` with `Authorization: Bearer $OPENAI_API_KEY`, send `session.start` with `"model": "gpt-live-1"`, expect `session.started`.
 2. Download the Seeed reSpeaker Flex firmware repo **as a whole** (`git clone` or "Download ZIP"); GitHub "save as" on a single `.bin` corrupts it. Keep it in `vendor/` (git-ignored).
 3. Install Raspberry Pi Imager on the laptop.
 

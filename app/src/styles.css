@@ -28,8 +28,10 @@ body {
   }
 }
 
+/* Vertical rhythm only: the side gutters stay Radix's px prop on the container */
 .page {
-  padding: var(--page-pad) 0;
+  padding-top: var(--page-pad);
+  padding-bottom: var(--page-pad);
 }
 
 .mono {

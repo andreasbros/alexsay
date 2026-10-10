@@ -85,4 +85,33 @@ describe("lightwave", () => {
     expect(res.status).toBe(204);
     expect((await json(`${APP}/api/lightwave/features/f-switch`, "POST", { value: 101 }, maria)).status).toBe(400);
   });
+
+  it("writes several features in one Lightwave call", async () => {
+    await connectLightwave(maria);
+    const upstream = mockUpstream({
+      "POST https://publicapi.lightwaverf.com/v1/features/write": (_req, body) => {
+        expect(JSON.parse(body)).toEqual({
+          features: [
+            { featureId: "f-switch", value: 1 },
+            { featureId: "f-dim", value: 60 },
+          ],
+        });
+        return reply(200, {});
+      },
+    });
+    const res = await json(
+      `${APP}/api/lightwave/features`,
+      "POST",
+      {
+        features: [
+          { featureId: "f-switch", value: 1 },
+          { featureId: "f-dim", value: 60 },
+        ],
+      },
+      maria,
+    );
+    upstream.done();
+    expect(res.status).toBe(204);
+    expect((await json(`${APP}/api/lightwave/features`, "POST", { features: [] }, maria)).status).toBe(400);
+  });
 });

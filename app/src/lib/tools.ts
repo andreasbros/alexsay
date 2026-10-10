@@ -1,6 +1,6 @@
 import type { api as Api, Light } from "../api";
 
-type ToolApi = Pick<typeof Api, "lights" | "setFeature">;
+type ToolApi = Pick<typeof Api, "lights" | "setFeature" | "setFeatures">;
 
 /** A function call the backend model asked for, as GPT-Live delivers it inside a response.event envelope. */
 export interface FunctionCall {
@@ -61,6 +61,23 @@ export async function runTool(call: FunctionCall, api: ToolApi): Promise<string>
         }
         return JSON.stringify({ ok: true, light: light.name });
       }
+      case "set_lights": {
+        const lights = await api.lights();
+        const matched = matchLights(lights, typeof args.match === "string" ? args.match : "");
+        if (matched.length === 0) {
+          return JSON.stringify({ error: "no lights match", available: lights.map((l) => l.name) });
+        }
+        const writes = matched.flatMap((light) => [
+          ...(typeof args.dim_level === "number" && light.dim
+            ? [{ featureId: light.dim, value: Math.round(args.dim_level) }]
+            : []),
+          ...(typeof args.on === "boolean" ? [{ featureId: light.switch, value: args.on ? 1 : 0 }] : []),
+        ]);
+        if (writes.length > 0) {
+          await api.setFeatures(writes);
+        }
+        return JSON.stringify({ ok: true, lights: matched.map((l) => l.name) });
+      }
       default:
         return JSON.stringify({ error: `unknown tool ${call.name}` });
     }
@@ -98,4 +115,16 @@ function parseArguments(text: string): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/** Every light whose name or device contains all the words, or every light for "all". */
+function matchLights(lights: Light[], match: string): Light[] {
+  const words = normalise(match).split(" ").filter(Boolean);
+  if (words.length === 0 || (words.length === 1 && words[0] === "all")) {
+    return lights;
+  }
+  return lights.filter((l) => {
+    const haystack = normalise(`${l.device} ${l.name}`);
+    return words.every((word) => haystack.includes(word));
+  });
 }

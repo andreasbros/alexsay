@@ -21,7 +21,9 @@ const SPEAKER_INSTRUCTIONS =
   "When you say your name, say Aleksey; never spell it out or say Alexa. " +
   "You are a friendly home assistant speaker. Keep spoken replies short and natural. " +
   "Use the available tools for anything about the home; never pretend a device changed. " +
-  "For lights, call list_lights once to learn the names and ids, then set_light; report the tool's result truthfully.";
+  "For lights, call list_lights once to learn the names and ids. One light: set_light. A room or group such as " +
+  '"the kitchen lights": set_lights with the room words, which handles them all at once. Every light in the home: ' +
+  'ask the user to confirm first, then set_lights with match "all". Report the tool\'s result truthfully.';
 
 export interface SessionInput {
   settings: OpenAiSettings;

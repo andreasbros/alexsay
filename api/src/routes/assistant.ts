@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { lightwaveToken, lightwaveUrls, openaiConnection } from "../connections";
 import { connections } from "../db";
-import { lights, writeFeature } from "../providers/lightwave";
+import { lights, writeFeature, writeFeatures } from "../providers/lightwave";
 import { createLiveSession, type LiveTool, ProviderError } from "../providers/openai";
 import * as schemas from "../schemas";
 import type { AppEnv } from "../types";
@@ -14,6 +14,23 @@ export const LIGHT_TOOLS: LiveTool[] = [
     name: "list_lights",
     description: "Lists the user's lights with their current on/off state and dim level.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    type: "function",
+    name: "set_lights",
+    description:
+      'Switches or dims every light whose name or room matches the given words in one go, e.g. match "kitchen" for all ' +
+      'kitchen lights. Use match "all" for every light in the home only after the user confirmed.',
+    parameters: {
+      type: "object",
+      properties: {
+        match: { type: "string", description: 'Room or name words to match, or "all"' },
+        on: { type: "boolean", description: "True to switch on, false to switch off" },
+        dim_level: { type: "integer", minimum: 0, maximum: 100, description: "Brightness in percent, if dimmable" },
+      },
+      required: ["match"],
+      additionalProperties: false,
+    },
   },
   {
     type: "function",
@@ -67,6 +84,22 @@ export const lightwaveRoutes = new Hono<AppEnv>()
         return c.json({ error: "no_lightwave_connection" }, 412);
       }
       return c.json(await lights(lightwaveUrls(c), token));
+    } catch (err) {
+      if (err instanceof ProviderError) {
+        return c.json({ error: "provider", status: err.status, detail: err.detail }, 502);
+      }
+      throw err;
+    }
+  })
+  .post("/features", async (c) => {
+    const { features } = await jsonBody(c, schemas.featureWrites);
+    try {
+      const token = await lightwaveToken(c, c.get("user").username);
+      if (!token) {
+        return c.json({ error: "no_lightwave_connection" }, 412);
+      }
+      await writeFeatures(lightwaveUrls(c), token, features);
+      return c.body(null, 204);
     } catch (err) {
       if (err instanceof ProviderError) {
         return c.json({ error: "provider", status: err.status, detail: err.detail }, 502);

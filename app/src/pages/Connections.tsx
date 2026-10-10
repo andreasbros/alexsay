@@ -310,15 +310,30 @@ function LightwaveCard({ connection }: { connection: Connection | undefined }) {
 
 function Lights() {
   const client = useQueryClient();
-  const lights = useQuery({ queryKey: ["lights"], queryFn: api.lights, retry: false });
+  const lights = useQuery({ queryKey: ["lights"], queryFn: api.lights, retry: false, refetchInterval: 30_000 });
+  const [notice, setNotice] = useState<{ tone: "red" | "grass"; text: string } | null>(null);
   const toggle = useMutation({
     mutationFn: ({ light, on }: { light: Light; on: boolean }) => api.setFeature(light.switch, on ? 1 : 0),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["lights"] }),
+    onMutate: async ({ light, on }) => {
+      await client.cancelQueries({ queryKey: ["lights"] });
+      const previous = client.getQueryData<Light[]>(["lights"]);
+      client.setQueryData<Light[]>(["lights"], (all) => all?.map((l) => (l.id === light.id ? { ...l, on } : l)));
+      setNotice(null);
+      return { previous };
+    },
+    onError: (err, { light, on }, context) => {
+      client.setQueryData(["lights"], context?.previous);
+      setNotice({ tone: "red", text: `${light.name} could not be switched ${on ? "on" : "off"}. ${explain(err)}` });
+    },
+    onSuccess: (_result, { light, on }) => {
+      setNotice({ tone: "grass", text: `${light.name} is ${on ? "on" : "off"}.` });
+      window.setTimeout(() => client.invalidateQueries({ queryKey: ["lights"] }), 1500);
+    },
   });
   if (lights.error) {
     return (
       <Callout.Root color="red" size="1">
-        <Callout.Text>Could not load lights: {errorText(lights.error)}</Callout.Text>
+        <Callout.Text>Lights are unavailable right now. {explain(lights.error)}</Callout.Text>
       </Callout.Root>
     );
   }
@@ -330,6 +345,11 @@ function Lights() {
       <Text size="2" weight="medium">
         Lights
       </Text>
+      {notice && (
+        <Callout.Root color={notice.tone} size="1" role="status">
+          <Callout.Text>{notice.text}</Callout.Text>
+        </Callout.Root>
+      )}
       {lights.data.length === 0 && (
         <Text size="2" color="gray">
           No switchable lights found.
@@ -344,10 +364,25 @@ function Lights() {
           <Switch
             checked={light.on}
             aria-label={`${light.name} on`}
+            disabled={toggle.isPending && toggle.variables?.light.id === light.id}
             onCheckedChange={(on) => toggle.mutate({ light, on })}
           />
         </Flex>
       ))}
     </Flex>
   );
+}
+
+/** Lightwave's own words when it gave any, otherwise a plain sentence; never a status code. */
+function explain(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === "no_lightwave_connection") {
+      return "Connect Lightwave first.";
+    }
+    if (err.detail) {
+      return `Lightwave said: ${err.detail}`;
+    }
+    return err.status >= 500 ? "Lightwave did not respond." : "The request was refused.";
+  }
+  return err instanceof Error ? err.message : "Something went wrong.";
 }

@@ -53,4 +53,11 @@ export const lightwaveConnection = z.object({
 
 export const assistantSession = z.object({ sdp: z.string().min(16).max(65_536) });
 
+const featureId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 export const featureValue = z.object({ value: z.number().int().min(0).max(100) });
+export const featureWrites = z.object({
+  features: z
+    .array(z.object({ featureId, value: z.number().int().min(0).max(100) }))
+    .min(1)
+    .max(50),
+});

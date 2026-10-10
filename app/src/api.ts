@@ -105,6 +105,8 @@ export const api = {
   lights: () => request<Light[]>("GET", "/api/lightwave/lights"),
   setFeature: (featureId: string, value: number) =>
     request<void>("POST", `/api/lightwave/features/${encodeURIComponent(featureId)}`, { value }),
+  setFeatures: (features: { featureId: string; value: number }[]) =>
+    request<void>("POST", "/api/lightwave/features", { features }),
 
   users: () => request<User[]>("GET", "/api/users"),
   setRole: (username: string, role: Role) =>

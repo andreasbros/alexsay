@@ -27,7 +27,11 @@ describe("tools", () => {
   });
 
   it("switches and dims a light", async () => {
-    const api = { lights: vi.fn(async () => [kitchen]), setFeature: vi.fn(async () => undefined) };
+    const api = {
+      lights: vi.fn(async () => [kitchen]),
+      setFeature: vi.fn(async () => undefined),
+      setFeatures: vi.fn(async () => undefined),
+    };
     const output = await runTool(
       { call_id: "c1", name: "set_light", arguments: JSON.stringify({ id: "fs1", on: true, dim_level: 55.4 }) },
       api,
@@ -41,7 +45,11 @@ describe("tools", () => {
 
   it("finds a light by the name the model heard", async () => {
     const bedroom = { ...kitchen, id: "fs2", name: "Bedroom Light 1", dim: null, dim_level: null };
-    const api = { lights: vi.fn(async () => [kitchen, bedroom]), setFeature: vi.fn(async () => undefined) };
+    const api = {
+      lights: vi.fn(async () => [kitchen, bedroom]),
+      setFeature: vi.fn(async () => undefined),
+      setFeatures: vi.fn(async () => undefined),
+    };
     const output = await runTool(
       { call_id: "c1", name: "set_light", arguments: JSON.stringify({ name: "bedroom light 1", on: true }) },
       api,
@@ -55,8 +63,38 @@ describe("tools", () => {
     expect(JSON.parse(loose)).toEqual({ ok: true, light: "Kitchen" });
   });
 
+  it("switches every matching light with one batch call", async () => {
+    const kitchen2 = { ...kitchen, id: "fs3", name: "Kitchen 2", dim: null, dim_level: null };
+    const hall = { ...kitchen, id: "fs4", name: "Hall", switch: "h-switch", dim: null, dim_level: null };
+    const api = {
+      lights: vi.fn(async () => [kitchen, kitchen2, hall]),
+      setFeature: vi.fn(async () => undefined),
+      setFeatures: vi.fn(async () => undefined),
+    };
+    const output = await runTool(
+      { call_id: "c1", name: "set_lights", arguments: JSON.stringify({ match: "Kitchen", on: true, dim_level: 80 }) },
+      api,
+    );
+    expect(JSON.parse(output)).toEqual({ ok: true, lights: ["Kitchen", "Kitchen 2"] });
+    expect(api.setFeatures.mock.calls).toEqual([
+      [
+        [
+          { featureId: "f-dim", value: 80 },
+          { featureId: "f-switch", value: 1 },
+          { featureId: "f-switch", value: 1 },
+        ],
+      ],
+    ]);
+    const all = await runTool({ call_id: "c2", name: "set_lights", arguments: '{"match":"all","on":false}' }, api);
+    expect(JSON.parse(all)).toEqual({ ok: true, lights: ["Kitchen", "Kitchen 2", "Hall"] });
+  });
+
   it("reports unknown lights and tools without throwing", async () => {
-    const api = { lights: vi.fn(async () => [kitchen]), setFeature: vi.fn(async () => undefined) };
+    const api = {
+      lights: vi.fn(async () => [kitchen]),
+      setFeature: vi.fn(async () => undefined),
+      setFeatures: vi.fn(async () => undefined),
+    };
     expect(JSON.parse(await runTool({ call_id: "c", name: "set_light", arguments: '{"id":"zz"}' }, api))).toEqual({
       error: "no such light",
       available: [{ id: "fs1", name: "Kitchen" }],

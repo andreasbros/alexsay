@@ -136,3 +136,13 @@ export async function writeFeature(
 ): Promise<void> {
   await api(urls, token, `/feature/${featureId}`, { method: "POST", body: JSON.stringify({ value }) });
 }
+
+export interface FeatureWrite {
+  featureId: string;
+  value: number;
+}
+
+/** Several features in one round trip, for "all the kitchen lights". */
+export async function writeFeatures(urls: LightwaveUrls, token: string, features: FeatureWrite[]): Promise<void> {
+  await api(urls, token, "/features/write", { method: "POST", body: JSON.stringify({ features }) });
+}

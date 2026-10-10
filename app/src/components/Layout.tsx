@@ -74,7 +74,7 @@ export function Layout({ user }: { user: User }) {
           </Box>
         </Container>
       </Box>
-      <Container size="4" px="4" py="5">
+      <Container size="4" px="4" className="page">
         <Outlet />
       </Container>
     </Box>

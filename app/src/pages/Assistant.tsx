@@ -22,14 +22,17 @@ export function Assistant() {
   const [status, setStatus] = useState<LiveStatus | "idle">("idle");
   const [detail, setDetail] = useState<string | null>(null);
   const [said, setSaid] = useState({ user: "", assistant: "" });
+  const [activity, setActivity] = useState<string[]>([]);
 
   useEffect(() => () => session.current?.stop(), []);
 
   const start = async () => {
     setDetail(null);
     setSaid({ user: "", assistant: "" });
+    setActivity([]);
     try {
       session.current = await startLive({
+        onActivity: (line) => setActivity((lines) => [...lines.slice(-11), line]),
         onStatus: (next, info) => {
           setStatus(next);
           if (info) {
@@ -99,6 +102,19 @@ export function Assistant() {
         <Button size="3" onClick={start} disabled={!hasOpenai}>
           Start talking
         </Button>
+      )}
+      {activity.length > 0 && (
+        <Flex direction="column" gap="1" width="100%" style={{ maxWidth: 640 }}>
+          <Text size="1" color="gray" weight="medium">
+            Activity
+          </Text>
+          {activity.map((line, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: an append-only log
+            <Text key={index} size="1" color="gray" className="mono" style={{ overflowWrap: "anywhere" }}>
+              {line}
+            </Text>
+          ))}
+        </Flex>
       )}
     </Flex>
   );

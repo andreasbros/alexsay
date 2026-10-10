@@ -97,5 +97,6 @@ describe("assistant sessions", () => {
       },
     });
     expect(String(config.instructions)).toMatch(/Call me Andreas\.$/);
+    expect(String(config.instructions)).toMatch(/pronounced "Aleksey"/);
   });
 });

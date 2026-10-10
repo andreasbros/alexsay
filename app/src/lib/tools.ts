@@ -1,4 +1,4 @@
-import type { api as Api } from "../api";
+import type { api as Api, Light } from "../api";
 
 type ToolApi = Pick<typeof Api, "lights" | "setFeature">;
 
@@ -35,11 +35,23 @@ export async function runTool(call: FunctionCall, api: ToolApi): Promise<string>
   try {
     switch (call.name) {
       case "list_lights":
-        return JSON.stringify(await api.lights());
+        return JSON.stringify(
+          (await api.lights()).map((l) => ({
+            id: l.id,
+            name: l.name,
+            on: l.on,
+            dim_level: l.dim_level,
+            dimmable: !!l.dim,
+          })),
+        );
       case "set_light": {
-        const light = (await api.lights()).find((l) => l.id === args.id);
+        const lights = await api.lights();
+        const light = findLight(lights, args);
         if (!light) {
-          return JSON.stringify({ error: `no light with id ${String(args.id)}` });
+          return JSON.stringify({
+            error: "no such light",
+            available: lights.map((l) => ({ id: l.id, name: l.name })),
+          });
         }
         if (typeof args.dim_level === "number" && light.dim) {
           await api.setFeature(light.dim, Math.round(args.dim_level));
@@ -56,6 +68,24 @@ export async function runTool(call: FunctionCall, api: ToolApi): Promise<string>
     return JSON.stringify({ error: err instanceof Error ? err.message : "tool failed" });
   }
 }
+
+/** The model may pass the id from list_lights, or just the name it heard; names match loosely. */
+function findLight(lights: Light[], args: Record<string, unknown>): Light | undefined {
+  const id = typeof args.id === "string" ? args.id : "";
+  const wanted = normalise(typeof args.name === "string" ? args.name : id);
+  return (
+    lights.find((l) => l.id === id) ??
+    lights.find((l) => normalise(l.name) === wanted) ??
+    lights.find((l) => normalise(l.name).includes(wanted) || wanted.includes(normalise(l.name))) ??
+    lights.find((l) => normalise(`${l.device} ${l.name}`).includes(wanted))
+  );
+}
+
+const normalise = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 
 function parseArguments(text: string): Record<string, unknown> {
   try {

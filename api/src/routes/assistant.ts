@@ -18,15 +18,17 @@ export const LIGHT_TOOLS: LiveTool[] = [
   {
     type: "function",
     name: "set_light",
-    description: "Switches a light on or off, or sets its brightness. Use the light id from list_lights.",
+    description:
+      "Switches a light on or off, or sets its brightness. Prefer the id from list_lights; the name the user said also works.",
     parameters: {
       type: "object",
       properties: {
         id: { type: "string", description: "The light id from list_lights" },
+        name: { type: "string", description: "The light's name as the user said it, when the id is unknown" },
         on: { type: "boolean", description: "True to switch on, false to switch off" },
         dim_level: { type: "integer", minimum: 0, maximum: 100, description: "Brightness in percent, if dimmable" },
       },
-      required: ["id"],
+      required: [],
       additionalProperties: false,
     },
   },

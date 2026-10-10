@@ -39,10 +39,27 @@ describe("tools", () => {
     ]);
   });
 
+  it("finds a light by the name the model heard", async () => {
+    const bedroom = { ...kitchen, id: "fs2", name: "Bedroom Light 1", dim: null, dim_level: null };
+    const api = { lights: vi.fn(async () => [kitchen, bedroom]), setFeature: vi.fn(async () => undefined) };
+    const output = await runTool(
+      { call_id: "c1", name: "set_light", arguments: JSON.stringify({ name: "bedroom light 1", on: true }) },
+      api,
+    );
+    expect(JSON.parse(output)).toEqual({ ok: true, light: "Bedroom Light 1" });
+    expect(api.setFeature.mock.calls).toEqual([["f-switch", 1]]);
+    const loose = await runTool(
+      { call_id: "c2", name: "set_light", arguments: '{"id":"the kitchen","on":false}' },
+      api,
+    );
+    expect(JSON.parse(loose)).toEqual({ ok: true, light: "Kitchen" });
+  });
+
   it("reports unknown lights and tools without throwing", async () => {
     const api = { lights: vi.fn(async () => [kitchen]), setFeature: vi.fn(async () => undefined) };
     expect(JSON.parse(await runTool({ call_id: "c", name: "set_light", arguments: '{"id":"zz"}' }, api))).toEqual({
-      error: "no light with id zz",
+      error: "no such light",
+      available: [{ id: "fs1", name: "Kitchen" }],
     });
     expect(JSON.parse(await runTool({ call_id: "c", name: "dance", arguments: "nope" }, api))).toEqual({
       error: "unknown tool dance",

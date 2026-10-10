@@ -6,6 +6,8 @@ export type LiveStatus = "connecting" | "listening" | "speaking" | "closed" | "e
 export interface LiveHandlers {
   onStatus: (status: LiveStatus, detail?: string) => void;
   onTranscript: (role: "user" | "assistant", delta: string) => void;
+  /** One line per notable event: tool calls, their results, session end. */
+  onActivity: (line: string) => void;
 }
 
 export interface LiveSession {
@@ -17,10 +19,12 @@ export interface LiveSession {
 }
 
 const SPEAKING_HOLD_MS = 350;
+const LEVEL_POLL_MS = 100;
 
 /**
  * One conversation: microphone and speaker travel over WebRTC straight to GPT-Live, the JSON
  * events over the `oai-events` data channel. The Worker only brokers the SDP exchange.
+ * Levels for the sphere come from WebRTC stats, so nothing taps the audio path itself.
  */
 export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
   handlers.onStatus("connecting");
@@ -28,17 +32,13 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   });
   const pc = new RTCPeerConnection();
-  const audioContext = new AudioContext();
-  const micMeter = meter(audioContext, mic);
-  let voiceMeter: Meter | null = null;
   const speaker = new Audio();
   speaker.autoplay = true;
+  const levels = { mic: 0, voice: 0 };
   let ticker = 0;
 
   pc.ontrack = (event) => {
-    const stream = new MediaStream([event.track]);
-    speaker.srcObject = stream;
-    voiceMeter = meter(audioContext, stream);
+    speaker.srcObject = new MediaStream([event.track]);
   };
   for (const track of mic.getTracks()) {
     pc.addTrack(track, mic);
@@ -46,6 +46,7 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
 
   // The channel must exist before the offer so it is part of the negotiated SDP.
   const events = pc.createDataChannel("oai-events");
+  const tools = new ToolRunner(events, handlers);
   let lastAssistantAudio = 0;
   events.onmessage = (message) => {
     const event = parse(message.data);
@@ -59,20 +60,14 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
     } else if (type === "session.input_transcript.delta") {
       handlers.onTranscript("user", String(event.delta ?? ""));
     } else if (type === "session.closed") {
+      handlers.onActivity(`Session closed (${String(event.reason ?? "no reason")})`);
       handlers.onStatus("closed", String(event.reason ?? ""));
     } else if (type === "error") {
       const error = event.error as { message?: string } | undefined;
+      handlers.onActivity(`Error: ${error?.message ?? "GPT-Live error"}`);
       handlers.onStatus("error", error?.message ?? "GPT-Live error");
-    }
-    const call = functionCallOf(event);
-    if (call) {
-      void runTool(call, api).then((output) => {
-        send(events, {
-          type: "response.item.create",
-          item: { type: "function_call_output", call_id: call.call_id, output },
-        });
-        send(events, { type: "response.create" });
-      });
+    } else if (type === "response.event") {
+      tools.onResponseEvent(event);
     }
   };
   events.onopen = () => handlers.onStatus("listening");
@@ -87,6 +82,7 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
   try {
     const answer = await api.assistantSession(localSdp);
     await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
+    handlers.onActivity(answer.tools.length > 0 ? `Connected with tools: ${answer.tools.join(", ")}` : "Connected");
   } catch (err) {
     cleanup();
     throw err;
@@ -97,12 +93,13 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
       handlers.onStatus("error", "connection lost");
       return;
     }
+    void readLevels(pc, levels);
     if (events.readyState !== "open") {
       return;
     }
-    const speaking = (voiceMeter?.level() ?? 0) > 0.04 || Date.now() - lastAssistantAudio < SPEAKING_HOLD_MS;
+    const speaking = levels.voice > 0.02 || Date.now() - lastAssistantAudio < SPEAKING_HOLD_MS;
     handlers.onStatus(speaking ? "speaking" : "listening");
-  }, 120);
+  }, LEVEL_POLL_MS);
 
   function cleanup() {
     window.clearInterval(ticker);
@@ -111,12 +108,11 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
     }
     pc.close();
     speaker.srcObject = null;
-    void audioContext.close();
   }
 
   return {
-    micLevel: () => micMeter.level(),
-    voiceLevel: () => voiceMeter?.level() ?? 0,
+    micLevel: () => levels.mic,
+    voiceLevel: () => levels.voice,
     stop: () => {
       if (events.readyState === "open") {
         send(events, { type: "session.close" });
@@ -127,26 +123,74 @@ export async function startLive(handlers: LiveHandlers): Promise<LiveSession> {
   };
 }
 
-interface Meter {
-  level: () => number;
+/**
+ * Runs the backend model's function calls and answers them. Several calls can arrive in one
+ * response; every output goes back as its own item and `response.create` follows once, after
+ * the last one, so the backend resumes exactly once.
+ */
+class ToolRunner {
+  private pending = 0;
+  private answered = 0;
+  private responseDone = false;
+
+  constructor(
+    private readonly channel: RTCDataChannel,
+    private readonly handlers: LiveHandlers,
+  ) {}
+
+  onResponseEvent(envelope: Record<string, unknown>): void {
+    const nested = envelope.event as { type?: string } | undefined;
+    if (nested?.type === "response.created") {
+      this.responseDone = false;
+      this.answered = 0;
+    }
+    if (nested?.type === "response.completed" || nested?.type === "response.done") {
+      this.responseDone = true;
+      this.resumeIfReady();
+    }
+    const call = functionCallOf(envelope);
+    if (!call) {
+      return;
+    }
+    this.pending += 1;
+    this.handlers.onActivity(`Tool ${call.name}(${call.arguments})`);
+    void runTool(call, api).then((output) => {
+      this.handlers.onActivity(`Result ${call.name}: ${output.slice(0, 160)}`);
+      send(this.channel, {
+        type: "response.item.create",
+        item: { type: "function_call_output", call_id: call.call_id, output },
+      });
+      this.pending -= 1;
+      this.answered += 1;
+      this.resumeIfReady();
+    });
+  }
+
+  private resumeIfReady(): void {
+    if (this.pending === 0 && this.answered > 0 && this.responseDone) {
+      this.answered = 0;
+      send(this.channel, { type: "response.create" });
+    }
+  }
 }
 
-function meter(context: AudioContext, stream: MediaStream): Meter {
-  const analyser = context.createAnalyser();
-  analyser.fftSize = 512;
-  context.createMediaStreamSource(stream).connect(analyser);
-  const samples = new Uint8Array(analyser.fftSize);
-  return {
-    level: () => {
-      analyser.getByteTimeDomainData(samples);
-      let sum = 0;
-      for (const s of samples) {
-        const centred = (s - 128) / 128;
-        sum += centred * centred;
-      }
-      return Math.min(1, Math.sqrt(sum / samples.length) * 3);
-    },
-  };
+/** Microphone and assistant loudness from the peer connection's own statistics. */
+async function readLevels(pc: RTCPeerConnection, levels: { mic: number; voice: number }): Promise<void> {
+  const stats = await pc.getStats().catch(() => null);
+  if (!stats) {
+    return;
+  }
+  stats.forEach((report: { type: string; kind?: string; audioLevel?: number }) => {
+    if (report.kind !== "audio" || typeof report.audioLevel !== "number") {
+      return;
+    }
+    const level = Math.min(1, report.audioLevel * 4);
+    if (report.type === "inbound-rtp") {
+      levels.voice = level;
+    } else if (report.type === "media-source") {
+      levels.mic = level;
+    }
+  });
 }
 
 function iceGathered(pc: RTCPeerConnection): Promise<void> {

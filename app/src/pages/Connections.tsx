@@ -283,7 +283,9 @@ function LightwaveCard({ connection }: { connection: Connection | undefined }) {
               />
               {save.error && (
                 <Text size="2" color="red">
-                  {errorText(save.error)}
+                  {save.error instanceof ApiError && save.error.code === "lightwave_rejected"
+                    ? `Lightwave refused the tokens (${save.error.detail ?? "no detail"}). A refresh token works once: open my.lightwaverf.com, Settings, API Integration, Get Token for a fresh pair and paste both again.`
+                    : errorText(save.error)}
                 </Text>
               )}
               <Flex gap="2" justify="end">

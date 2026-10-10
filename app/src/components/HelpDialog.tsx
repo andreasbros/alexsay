@@ -101,9 +101,12 @@ export const LIGHTWAVE_HELP = {
     {
       text: 'Copy both values shown: the long string labelled "Basic" is the basic token, the other is the refresh token.',
     },
-    { text: "Paste them above and press Save, then Test. The test counts your homes; the lights list appears below." },
+    {
+      text: "Paste them above and press Save. Saving exchanges the tokens with Lightwave at once, so a mistake shows immediately.",
+    },
+    { text: "Press Test to count your homes; the lights list appears below the card." },
   ],
   note:
-    "The refresh token is single use: every exchange returns a new one, which this app stores for you. If another " +
-    "integration used the same token, generate a fresh pair here.",
+    'A refresh token works once. If Lightwave answers "Unknown refresh token", the pasted one was already used (by an ' +
+    "earlier save or another integration): press Get Token again and paste the new pair.",
 };

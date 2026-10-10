@@ -33,11 +33,6 @@ const STRUCTURE = {
   ],
 };
 
-const TOKEN = {
-  "POST https://auth.lightwaverf.com/token": () =>
-    reply(200, { access_token: "access-1", refresh_token: "refresh-2", expires_in: 3600 }),
-};
-
 describe("lightwave", () => {
   let maria: string;
 
@@ -54,7 +49,6 @@ describe("lightwave", () => {
   it("lists switchable feature sets with their live state", async () => {
     await connectLightwave(maria);
     const upstream = mockUpstream({
-      ...TOKEN,
       "GET https://publicapi.lightwaverf.com/v1/structures": () => reply(200, { structures: ["s1"] }),
       "GET https://publicapi.lightwaverf.com/v1/structure/s1": () => reply(200, STRUCTURE),
       "POST https://publicapi.lightwaverf.com/v1/features/read": (_req, body) => {
@@ -81,7 +75,6 @@ describe("lightwave", () => {
   it("writes a feature value", async () => {
     await connectLightwave(maria);
     const upstream = mockUpstream({
-      ...TOKEN,
       "POST https://publicapi.lightwaverf.com/v1/feature/f-switch": (_req, body) => {
         expect(body).toBe('{"value":0}');
         return reply(200, {});

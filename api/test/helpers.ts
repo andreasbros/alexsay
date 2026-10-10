@@ -49,13 +49,21 @@ export const OPENAI_KEY = "sk-test-0123456789abcdefghijklmnop";
 export const connectOpenai = (cookie: string, settings: Record<string, unknown> = {}) =>
   json(`${APP}/api/connections/openai`, "PUT", { api_key: OPENAI_KEY, settings }, cookie);
 
-export const connectLightwave = (cookie: string) =>
-  json(
+/** Saving Lightwave tokens exchanges them at once, so the save itself needs the auth server mocked. */
+export async function connectLightwave(cookie: string): Promise<Response> {
+  const upstream = mockUpstream({
+    "POST https://auth.lightwaverf.com/token": () =>
+      reply(200, { access_token: "access-0", refresh_token: "refresh-1", expires_in: 3600 }),
+  });
+  const res = await json(
     `${APP}/api/connections/lightwave`,
     "PUT",
     { basic_token: "basic-token-0123456789", refresh_token: "refresh-token-0123456789" },
     cookie,
   );
+  upstream.done();
+  return res;
+}
 
 export type UpstreamHandler = (req: Request, body: string) => Response | Promise<Response>;
 

@@ -58,7 +58,7 @@ export async function accessToken(
     body: JSON.stringify({ grant_type: "refresh_token", refresh_token: secret.refresh_token }),
   });
   if (!res.ok) {
-    throw new ProviderError(res.status, (await res.text().catch(() => "")).slice(0, 200) || "token refresh failed");
+    throw new ProviderError(res.status, await describe(res, "token refresh failed"));
   }
   const body = (await res.json()) as { access_token: string; refresh_token: string; expires_in?: number };
   const next: LightwaveSecret = {
@@ -76,9 +76,20 @@ async function api<T>(urls: LightwaveUrls, token: string, path: string, init: Re
     headers: { authorization: `bearer ${token}`, "content-type": "application/json", ...init.headers },
   });
   if (!res.ok) {
-    throw new ProviderError(res.status, (await res.text().catch(() => "")).slice(0, 200) || res.statusText);
+    throw new ProviderError(res.status, await describe(res, res.statusText));
   }
   return (await res.json()) as T;
+}
+
+/** Lightwave answers errors as JSON with error_description or message; fall back to the raw text. */
+async function describe(res: Response, fallback: string): Promise<string> {
+  const text = (await res.text().catch(() => "")).slice(0, 400);
+  try {
+    const parsed = JSON.parse(text) as { error_description?: string; message?: string; error?: string };
+    return parsed.error_description ?? parsed.message ?? parsed.error ?? text;
+  } catch {
+    return text || fallback;
+  }
 }
 
 export async function structureIds(urls: LightwaveUrls, token: string): Promise<string[]> {

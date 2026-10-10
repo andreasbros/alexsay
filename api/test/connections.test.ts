@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import { seal } from "../src/secrets";
 import {
   APP,
   addUser,
@@ -81,29 +82,59 @@ describe("connections", () => {
     expect(await res.json()).toMatchObject({ ok: false, status: 401, detail: "Incorrect API key provided" });
   });
 
-  it("tests Lightwave by refreshing the token and keeps the rotated refresh token", async () => {
-    await connectLightwave(maria);
-    const first = mockUpstream({
-      "POST https://auth.lightwaverf.com/token": (req, body) => {
-        expect(req.headers.get("authorization")).toBe("basic basic-token-0123456789");
-        expect(JSON.parse(body)).toEqual({ grant_type: "refresh_token", refresh_token: "refresh-token-0123456789" });
-        return reply(200, { access_token: "access-1", refresh_token: "refresh-2", expires_in: 3600 });
-      },
+  it("exchanges pasted Lightwave tokens on save and refuses a dead refresh token", async () => {
+    const dead = mockUpstream({
+      "POST https://auth.lightwaverf.com/token": () =>
+        reply(400, { error: "invalid_token", error_description: "Unknown refresh token" }),
+    });
+    const refused = await json(
+      `${APP}/api/connections/lightwave`,
+      "PUT",
+      { basic_token: "basic-token-0123456789", refresh_token: "used-before-0123456789" },
+      maria,
+    );
+    dead.done();
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: "lightwave_rejected", detail: "Unknown refresh token" });
+    expect(await (await call(`${APP}/api/connections`, {}, maria)).json()).toEqual([]);
+
+    expect((await connectLightwave(maria)).status).toBe(200);
+    // The stored secret already holds the rotated token and a cached access token
+    const upstream = mockUpstream({
       "GET https://publicapi.lightwaverf.com/v1/structures": (req) => {
-        expect(req.headers.get("authorization")).toBe("bearer access-1");
+        expect(req.headers.get("authorization")).toBe("bearer access-0");
         return reply(200, { structures: ["s1", "s2"] });
       },
     });
     const res = await call(`${APP}/api/connections/lightwave/test`, { method: "POST" }, maria);
-    first.done();
+    upstream.done();
     expect(await res.json()).toEqual({ ok: true, structures: 2 });
+  });
 
-    const second = mockUpstream({
+  it("recovers when a parallel request already rotated the Lightwave refresh token", async () => {
+    await connectLightwave(maria);
+    await env.DB.prepare("UPDATE connections SET secret = ? WHERE provider = 'lightwave'")
+      .bind(await seal("11".repeat(32), { basic_token: "basic-token-0123456789", refresh_token: "stale" }))
+      .run();
+    let refreshes = 0;
+    const upstream = mockUpstream({
+      "POST https://auth.lightwaverf.com/token": async (_req, body) => {
+        refreshes += 1;
+        if (JSON.parse(body).refresh_token === "stale") {
+          // Simulate the other request winning the race between our read and our refresh
+          await env.DB.prepare("UPDATE connections SET secret = ? WHERE provider = 'lightwave'")
+            .bind(await seal("11".repeat(32), { basic_token: "basic-token-0123456789", refresh_token: "fresh" }))
+            .run();
+          return reply(400, { error: "invalid_token", error_description: "Unknown refresh token" });
+        }
+        return reply(200, { access_token: "access-2", refresh_token: "refresh-3", expires_in: 3600 });
+      },
       "GET https://publicapi.lightwaverf.com/v1/structures": () => reply(200, { structures: ["s1"] }),
     });
-    const again = await call(`${APP}/api/connections/lightwave/test`, { method: "POST" }, maria);
-    second.done();
-    expect(await again.json()).toEqual({ ok: true, structures: 1 });
+    const res = await call(`${APP}/api/connections/lightwave/test`, { method: "POST" }, maria);
+    upstream.done();
+    expect(refreshes).toBe(2);
+    expect(await res.json()).toEqual({ ok: true, structures: 1 });
   });
 
   it("removes a connection", async () => {

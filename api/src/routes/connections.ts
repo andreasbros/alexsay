@@ -1,5 +1,5 @@
 import { type Context, Hono } from "hono";
-import { lightwaveToken, lightwaveUrls, openaiConnection } from "../connections";
+import { exchangeLightwave, lightwaveToken, lightwaveUrls, openaiConnection } from "../connections";
 import { connections } from "../db";
 import { structureIds } from "../providers/lightwave";
 import { listModels, ProviderError } from "../providers/openai";
@@ -43,7 +43,16 @@ export const connectionRoutes = new Hono<AppEnv>()
     return c.json({ provider: "openai", settings });
   })
   .put("/lightwave", async (c) => {
-    const secret = await jsonBody(c, schemas.lightwaveConnection);
+    const pasted = await jsonBody(c, schemas.lightwaveConnection);
+    let secret: Awaited<ReturnType<typeof exchangeLightwave>>;
+    try {
+      secret = await exchangeLightwave(c, pasted);
+    } catch (err) {
+      if (err instanceof ProviderError) {
+        return c.json({ error: "lightwave_rejected", status: err.status, detail: err.detail }, 400);
+      }
+      throw err;
+    }
     const sealed = await seal(c.env.SECRETS_KEY, secret);
     await connections.put(c.env.DB, c.get("user").username, "lightwave", sealed, "{}");
     return c.json({ provider: "lightwave", settings: {} });

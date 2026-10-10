@@ -25,14 +25,14 @@ test("stores an OpenAI key, tests it, and the assistant becomes available", asyn
   await expect(page.getByText(/via gpt-6\.1-sol/)).toBeVisible();
 });
 
-test("a bad Lightwave token is reported when tested", async ({ page, account }) => {
+test("bad Lightwave tokens are refused when saved", async ({ page, account }) => {
   await login(page, account);
   await page.getByRole("link", { name: /Connections/ }).click();
   await page.getByLabel("Lightwave basic token").fill("e2e-basic-token-0123456789");
   await page.getByLabel("Lightwave refresh token").fill("e2e-refresh-token-0123456789");
   await page.getByRole("button", { name: "Save" }).last().click();
-  await expect(page.getByText("connected").last()).toBeVisible();
-  await expect(page.getByText(/Could not load lights/)).toBeVisible();
+  await expect(page.getByText(/Lightwave refused the tokens/)).toBeVisible();
+  await expect(page.getByText("not connected")).toHaveCount(2);
 });
 
 test("each connection has a Help dialog with the steps to get its keys", async ({ page, account }) => {

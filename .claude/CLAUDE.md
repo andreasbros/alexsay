@@ -38,6 +38,8 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 
 ## Server and app facts
 
+- Live since 10 Oct 2026: Worker `alexsay-app` (app.alexsay.com, D1 `alexsay`), Worker `alexsay-www` (www.alexsay.com and alexsay.com). Deploy token `alexsay-deploy` and the e2e account passwords are in `.env` only. `just e2e` passes against production.
+
 - Browser assistant: the Worker brokers only the SDP exchange (`POST /v1/live/sessions` with `transport: {type: "webrtc", sdp}`), audio travels WebRTC browser to OpenAI, JSON events over the `oai-events` data channel. Function calls arrive as `response.event` envelopes wrapping `response.output_item.done`; the browser answers with `response.item.create` (`function_call_output`) + `response.create`.
 - A speaker's UUID is its identity and its secret: whoever adds it in the app owns it; the heartbeat then returns the owner's OpenAI key and settings to the speaker. Unclaimed call-home rows are capped at 200.
 - Provider credentials are AES-GCM sealed in D1 under `SECRETS_KEY` (Worker secret, also in `.env` for `just dev`). Lightwave refresh tokens rotate on every use and are re-sealed.

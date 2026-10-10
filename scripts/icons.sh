@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Renders the brand mark into every icon the app and the website need. Run inside nix develop.
-# Icons keep a transparent background; iOS and the Open Graph card get a solid one because they
-# would otherwise paint it black.
+# Raster icons use the accent colour on a transparent background, which reads on light and dark
+# tab bars alike; the SVG favicon switches with the theme. iOS and the Open Graph card get a solid
+# background because they would otherwise paint it black.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -12,13 +13,13 @@ render() {
   resvg --width "$2" --height "$2" "$1" "$3"
 }
 
-for size in 16 32 48; do render brand/mark.svg "$size" "$tmp/$size.png"; done
-render brand/mark.svg 96 "$tmp/favicon-96.png"
-render brand/mark.svg 192 "$tmp/favicon-192.png"
-render brand/mark.svg 512 "$tmp/icon-512.png"
+for size in 16 32 48; do render brand/mark-accent.svg "$size" "$tmp/$size.png"; done
+render brand/mark-accent.svg 96 "$tmp/favicon-96.png"
+render brand/mark-accent.svg 192 "$tmp/favicon-192.png"
+render brand/mark-accent.svg 512 "$tmp/icon-512.png"
 magick "$tmp/16.png" "$tmp/32.png" "$tmp/48.png" "$tmp/favicon.ico"
 
-render brand/mark.svg 144 "$tmp/apple-mark.png"
+render brand/mark-accent.svg 144 "$tmp/apple-mark.png"
 magick -size 180x180 xc:'#ffffff' "$tmp/apple-mark.png" -gravity center -composite "$tmp/apple-touch-icon.png"
 
 render brand/mark-light.svg 300 "$tmp/og-mark.png"

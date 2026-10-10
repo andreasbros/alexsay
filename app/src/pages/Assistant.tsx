@@ -6,6 +6,7 @@ import { Link } from "react-router";
 import { ApiError, api, type OpenAiSettings } from "../api";
 import { Activity, type ActivityEntry } from "../components/Activity";
 import { Bars } from "../components/Bars";
+import { appendTurn, Transcript, type Turn } from "../components/Transcript";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
 import { DEFAULT_OPENAI, VOICES } from "../voices";
 
@@ -38,7 +39,7 @@ export function Assistant() {
   const [status, setStatus] = useState<LiveStatus | "idle">("idle");
   const [detail, setDetail] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
-  const [said, setSaid] = useState({ user: "", assistant: "" });
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const log = (kind: ActivityEntry["kind"], text: string) =>
     setActivity((entries) => [...entries.slice(-49), { at: new Date(), kind, text }]);
@@ -47,7 +48,7 @@ export function Assistant() {
 
   const start = async () => {
     setDetail(null);
-    setSaid({ user: "", assistant: "" });
+    setTurns([]);
     setMuted(false);
     try {
       session.current = await startLive({
@@ -58,10 +59,7 @@ export function Assistant() {
             setDetail(info);
           }
         },
-        onTranscript: (role, delta) =>
-          setSaid((s) =>
-            role === "user" ? { user: s.user + delta, assistant: "" } : { ...s, assistant: s.assistant + delta },
-          ),
+        onTranscript: (role, delta) => setTurns((current) => appendTurn(current, role, delta)),
       });
     } catch (err) {
       setStatus("error");
@@ -121,19 +119,12 @@ export function Assistant() {
       <div className="stage">
         <Bars status={status} level={level} />
       </div>
-      <Flex direction="column" align="center" gap="1" className="transcript">
-        {said.user && (
-          <Text size="2" color="gray">
-            {said.user}
-          </Text>
-        )}
-        {said.assistant && <Text size="3">{said.assistant}</Text>}
-        {detail && (
-          <Text size="2" color={status === "error" ? "red" : "gray"}>
-            {detail}
-          </Text>
-        )}
-      </Flex>
+      <Transcript turns={turns} thinking={status === "thinking"} />
+      {detail && (
+        <Text size="2" color={status === "error" ? "red" : "gray"} align="center">
+          {detail}
+        </Text>
+      )}
       <Flex gap="3" align="center" wrap="wrap" justify="center">
         {active ? (
           <Button size="3" color="red" variant="soft" onClick={stop}>

@@ -32,6 +32,7 @@ export const openaiSettings = z.object({
   backend_model: z.string().trim().min(1).max(64).default("gpt-6-luna"),
   voice: voice.default("cedar"),
   instructions: z.string().max(4000).default(""),
+  web_search: z.boolean().default(true),
 });
 export type OpenAiSettings = z.infer<typeof openaiSettings>;
 

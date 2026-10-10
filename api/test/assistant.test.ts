@@ -69,7 +69,7 @@ describe("assistant sessions", () => {
     const res = await json(`${APP}/api/assistant/sessions`, "POST", { sdp: OFFER }, maria);
     upstream.done();
     expect(await res.json()).toMatchObject({ tools: ["lights"] });
-    expect(sent?.session.delegation.responses.tools).toEqual(LIGHT_TOOLS);
+    expect(sent?.session.delegation.responses.tools).toEqual([{ type: "web_search" }, ...LIGHT_TOOLS]);
   });
 
   it("passes GPT-Live's refusal through", async () => {
@@ -81,6 +81,15 @@ describe("assistant sessions", () => {
     expect(await res.json()).toMatchObject({ error: "provider", status: 403 });
   });
 
+  it("leaves web search out when the user switched it off", () => {
+    const config = sessionConfig(openaiSettings.parse({ web_search: false }), []) as {
+      delegation: { responses: { tools: unknown[] } };
+      instructions: string;
+    };
+    expect(config.delegation.responses.tools).toEqual([]);
+    expect(config.instructions).not.toMatch(/search the web/);
+  });
+
   it("builds a Responses delegation with the user's instructions appended", () => {
     const config = sessionConfig(openaiSettings.parse({ instructions: "Call me Andreas." }), LIGHT_TOOLS);
     expect(config).toMatchObject({
@@ -90,7 +99,7 @@ describe("assistant sessions", () => {
         responses: {
           model: "gpt-6-luna",
           tool_choice: "auto",
-          tools: LIGHT_TOOLS,
+          tools: [{ type: "web_search" }, ...LIGHT_TOOLS],
           reasoning: { effort: "low" },
           text: { verbosity: "low" },
         },

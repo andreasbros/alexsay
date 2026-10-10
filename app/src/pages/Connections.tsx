@@ -139,6 +139,7 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
           <Flex gap="3" align="center" wrap="wrap">
             <Text size="2">
               {connection.settings.model} via {connection.settings.backend_model}, voice {connection.settings.voice}
+              {connection.settings.web_search === false ? ", no web search" : ", web search on"}
             </Text>
             <Button size="1" variant="soft" onClick={() => setEditing(true)}>
               Change
@@ -188,6 +189,15 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
                   </Select.Content>
                 </Select.Root>
               </Flex>
+              <Text as="label" size="2">
+                <Flex gap="2" align="center">
+                  <Switch
+                    checked={settings.web_search}
+                    onCheckedChange={(web_search) => setSettings({ ...settings, web_search })}
+                  />
+                  Web search (the assistant may look things up online; OpenAI bills each search)
+                </Flex>
+              </Text>
               <TextArea
                 aria-label="Extra instructions"
                 placeholder="Extra instructions for the assistant (optional)"

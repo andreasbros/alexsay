@@ -36,6 +36,11 @@ export async function apiSession(account: Account): Promise<APIRequestContext> {
   return context;
 }
 
+/** Opens one of the app's tabs; the tab bar is a navigation landmark, which keeps page links out of it. */
+export async function openTab(page: Page, name: RegExp): Promise<void> {
+  await page.getByRole("navigation").getByRole("link", { name }).first().click();
+}
+
 /** Adds a speaker through the dialog and waits for it to appear in the table. */
 export async function addDevice(page: Page, id: string, name = ""): Promise<void> {
   await page.getByRole("button", { name: "Add device" }).click();

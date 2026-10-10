@@ -1,4 +1,4 @@
-import { env, expect, login, test } from "./helpers";
+import { env, expect, login, openTab, test } from "./helpers";
 
 test("the admin reaches the Users page and sees roles", async ({ page }) => {
   await login(page, env.admin());
@@ -15,7 +15,7 @@ test("the signed-in pages fit the viewport width", async ({ page }) => {
     page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(await horizontalOverflow()).toBe(0);
   for (const name of [/Assistant/, /Connections/]) {
-    await page.getByRole("link", { name }).click();
+    await openTab(page, name);
     expect(await horizontalOverflow()).toBe(0);
   }
 });

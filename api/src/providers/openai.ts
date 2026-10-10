@@ -9,12 +9,15 @@ export class ProviderError extends Error {
   }
 }
 
-export interface LiveTool {
+export interface FunctionTool {
   type: "function";
   name: string;
   description: string;
   parameters: Record<string, unknown>;
 }
+
+/** OpenAI runs hosted tools itself; web_search gives the backend current information. */
+export type LiveTool = FunctionTool | { type: "web_search" };
 
 const SPEAKER_INSTRUCTIONS =
   'Your name is Alexsay, pronounced "Aleksey" (ah-lek-SAY, like the Russian first name Alexei). ' +
@@ -25,6 +28,10 @@ const SPEAKER_INSTRUCTIONS =
   '"the kitchen lights": set_lights with the room words, which handles them all at once. Every light in the home: ' +
   'ask the user to confirm first, then set_lights with match "all". Report the tool\'s result truthfully.';
 
+const WEB_SEARCH_INSTRUCTIONS =
+  "You can search the web for current information such as news, weather, opening hours or facts you are unsure of; " +
+  "say briefly that you are checking, then answer with the essentials and name the source when it matters.";
+
 export interface SessionInput {
   settings: OpenAiSettings;
   tools: LiveTool[];
@@ -32,8 +39,11 @@ export interface SessionInput {
 }
 
 /** The session body GPT-Live expects: voice layer plus a Responses backend that owns the tools. */
-export function sessionConfig(settings: OpenAiSettings, tools: LiveTool[]): Record<string, unknown> {
-  const instructions = [SPEAKER_INSTRUCTIONS, settings.instructions].filter(Boolean).join("\n\n");
+export function sessionConfig(settings: OpenAiSettings, functions: LiveTool[]): Record<string, unknown> {
+  const instructions = [SPEAKER_INSTRUCTIONS, settings.web_search ? WEB_SEARCH_INSTRUCTIONS : "", settings.instructions]
+    .filter(Boolean)
+    .join("\n\n");
+  const tools: LiveTool[] = settings.web_search ? [{ type: "web_search" }, ...functions] : functions;
   return {
     model: settings.model,
     instructions,

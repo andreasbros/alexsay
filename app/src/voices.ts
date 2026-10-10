@@ -15,4 +15,5 @@ export const DEFAULT_OPENAI: OpenAiSettings = {
   backend_model: "gpt-6-luna",
   voice: "cedar",
   instructions: "",
+  web_search: true,
 };

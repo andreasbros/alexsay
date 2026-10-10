@@ -24,6 +24,7 @@ export interface OpenAiSettings {
   backend_model: string;
   voice: string;
   instructions: string;
+  web_search: boolean;
 }
 
 export interface Connection {

@@ -108,7 +108,20 @@ create-db:
 deploy: test-js
     pnpm --filter api exec wrangler d1 migrations apply alexsay --remote
     pnpm --filter api exec wrangler deploy
+    just wait-live
     just e2e
+
+# Wait until app.alexsay.com serves the build just uploaded; the first requests after a deploy can still hit the old assets
+wait-live:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    want=$(jq -r .build app/public/version.json)
+    for _ in $(seq 1 30); do
+      got=$(curl -fsS "${E2E_APP_URL:-https://app.alexsay.com}/version.json" | jq -r .build || true)
+      [ "$got" = "$want" ] && { echo "live: $want"; exit 0; }
+      sleep 2
+    done
+    echo "still serving $got, wanted $want"; exit 1
 
 # Build and deploy the website Worker (www.alexsay.com)
 deploy-website: test-js

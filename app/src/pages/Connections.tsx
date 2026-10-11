@@ -23,7 +23,7 @@ import {
   type ProviderTest,
   type TwilioSettings,
 } from "../api";
-import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP, TWILIO_HELP } from "../components/HelpDialog";
+import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP, OPENAI_SIP_HELP, TWILIO_HELP } from "../components/HelpDialog";
 import { toE164 } from "../lib/phone";
 import { DEFAULT_OPENAI as DEFAULTS, VOICES, voiceTypeOf } from "../voices";
 
@@ -152,7 +152,7 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
             <Text size="2">
               {connection.settings.model} via {connection.settings.backend_model}, voice {connection.settings.voice}
               {connection.settings.web_search === false ? ", no web search" : ", web search on"}
-              {connection.settings.project_id ? ", joins phone calls" : ""}
+              {connection.settings.project_id ? ", joins phone calls" : ", not on phone calls"}
             </Text>
             <Button size="1" variant="soft" onClick={() => setEditing(true)}>
               Change
@@ -226,11 +226,15 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
                 value={settings.instructions}
                 onChange={(e) => setSettings({ ...settings, instructions: e.target.value })}
               />
-              <Text size="2" weight="medium" mt="1">
-                Phone calls
-              </Text>
+              <Flex align="center" justify="between" gap="2" mt="1">
+                <Text size="2" weight="medium">
+                  Phone calls
+                </Text>
+                <HelpDialog {...OPENAI_SIP_HELP} label="How to enable" size="1" />
+              </Flex>
               <Text size="1" color="gray">
-                With a project ID and the webhook secret the assistant joins calls placed from the Assistant page.
+                OpenAI&apos;s SIP endpoint lets the assistant join calls placed from the Assistant page: it needs the
+                project ID and the signing secret of a webhook for realtime.call.incoming. Twilio must be connected.
               </Text>
               <TextField.Root
                 aria-label="OpenAI project ID"

@@ -6,12 +6,24 @@ export interface HelpStep {
 }
 
 /** A grey Help button that opens the numbered steps for getting a provider's credentials. */
-export function HelpDialog({ title, steps, note }: { title: string; steps: HelpStep[]; note?: ReactNode }) {
+export function HelpDialog({
+  title,
+  steps,
+  note,
+  label = "Help",
+  size,
+}: {
+  title: string;
+  steps: HelpStep[];
+  note?: ReactNode;
+  label?: string;
+  size?: "1" | "2";
+}) {
   return (
     <Dialog.Root>
       <Dialog.Trigger>
-        <Button type="button" variant="soft" color="gray">
-          Help
+        <Button type="button" variant="soft" color="gray" size={size}>
+          {label}
         </Button>
       </Dialog.Trigger>
       <Dialog.Content maxWidth="520px">
@@ -200,4 +212,48 @@ export const CONTACTS_HELP = {
     },
   ],
   note: "Contacts stay in your account only; the assistant reads them to call and message people you name.",
+};
+
+export const OPENAI_SIP_HELP = {
+  title: "Let the assistant join phone calls (OpenAI SIP)",
+  steps: [
+    {
+      text: "What it is: OpenAI's Realtime API has a SIP endpoint, sip.api.openai.com. When you place a call from the Assistant page, Twilio dials that endpoint into the call as a third participant, so the assistant hears everyone and can speak. Twilio must already be connected below.",
+    },
+    {
+      text: (
+        <>
+          Copy the project ID: open{" "}
+          {external("https://platform.openai.com/settings/organization/general", "platform.openai.com, Settings")}, pick
+          the project your API key belongs to (its name is in the top left) and under General copy the ID that starts
+          with proj_.
+        </>
+      ),
+    },
+    {
+      text: (
+        <>
+          Create the webhook: in the same project open{" "}
+          {external("https://platform.openai.com/settings/project/webhooks", "Settings, Project, Webhooks")} and press
+          Create. URL: https://app.alexsay.com/v1/openai/webhook. Events: tick realtime.call.incoming. Save.
+        </>
+      ),
+    },
+    {
+      text: "Copy the webhook's signing secret (starts with whsec_). It is shown once, after saving; use Rotate secret if you lost it.",
+    },
+    {
+      text: 'Back here press Change on the OpenAI card and paste both under "Phone calls": the project ID and the webhook secret. Leave the call model as gpt-realtime unless OpenAI names a newer realtime model. Save.',
+    },
+    {
+      text: 'Check: the card summary now says "joins phone calls". Start a conversation on the Assistant page and say, for example, "call Mum and ask if Sunday lunch is still on". Your page answers at once, Mum\'s phone rings, and the assistant joins and speaks when the task calls for it or when you say Alexsay.',
+    },
+    {
+      text: 'The API key must be allowed to use the Realtime API in that project (the default "All" permissions are fine). Make sure billing has credit: a SIP call is charged per minute of realtime audio on top of Twilio\'s call rates.',
+    },
+  ],
+  note:
+    "Without this setup calls still open in the Assistant page; you simply talk to the other person yourself. " +
+    "If the assistant never joins, look under Settings, Project, Webhooks for failed deliveries: a 403 there means " +
+    "the secret pasted here does not match, a 404 means the call did not come through Twilio's conference.",
 };

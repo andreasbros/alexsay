@@ -82,10 +82,18 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
   let hangingUp = false;
   let hangUpAskedAt = 0;
   let recentUserWords = "";
-  const tools = new ToolRunner(events, handlers, conversationId, () => {
-    hangingUp = true;
-    hangUpAskedAt = Date.now();
-  });
+  let userFarewellAt = 0;
+  let currentReply = "";
+  const armHangUp = (why: string) => {
+    if (!hangingUp) {
+      hangingUp = true;
+      hangUpAskedAt = Date.now();
+      handlers.onActivity("info", why);
+    }
+  };
+  const tools = new ToolRunner(events, handlers, conversationId, () =>
+    armHangUp("The assistant is ending the conversation"),
+  );
   tools.recorder = recorder;
   let lastAssistantAudio = 0;
   // The backend model is working on an answer: between the user's turn and the first spoken word
@@ -103,15 +111,20 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
       thinking = false;
       handlers.onTranscript("assistant", String(event.delta ?? ""));
       recorder.add("assistant", String(event.delta ?? ""));
+      currentReply = `${currentReply}${String(event.delta ?? "")}`.slice(-400);
+      if (isSignOff(currentReply, userFarewellAt ? Date.now() - userFarewellAt : null)) {
+        armHangUp("The assistant signed off: ending after it finishes");
+      }
     } else if (type === "session.input_transcript.delta") {
       lastUserWords = Date.now();
       handlers.onTranscript("user", String(event.delta ?? ""));
       recorder.add("user", String(event.delta ?? ""));
       recentUserWords = `${recentUserWords}${String(event.delta ?? "")}`.slice(-200);
-      if (!hangingUp && GOODBYES.test(recentUserWords)) {
-        hangingUp = true;
-        hangUpAskedAt = Date.now();
-        handlers.onActivity("info", "You said goodbye: ending after the reply");
+      currentReply = "";
+      if (USER_FAREWELL.test(recentUserWords)) {
+        userFarewellAt = Date.now();
+        recentUserWords = "";
+        armHangUp("You said goodbye: ending after the reply");
       }
     } else if (type === "session.closed") {
       const reason = String(event.reason ?? "no reason");

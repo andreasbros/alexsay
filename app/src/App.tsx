@@ -7,6 +7,7 @@ import { Devices } from "./pages/Devices";
 import { Login } from "./pages/Login";
 import { MemoryPage } from "./pages/Memory";
 import { Register } from "./pages/Register";
+import { Settings } from "./pages/Settings";
 import { Users } from "./pages/Users";
 import { useSession } from "./session";
 
@@ -37,6 +38,7 @@ export function App() {
         <Route path="assistant" element={<Assistant />} />
         <Route path="connections" element={<Connections />} />
         <Route path="memory" element={<MemoryPage />} />
+        <Route path="settings" element={<Settings />} />
         {user.role === "admin" && <Route path="users" element={<Users user={user} />} />}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

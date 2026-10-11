@@ -9,6 +9,8 @@ export interface LineHandlers {
   onActivity: (kind: ActivityKind, text: string) => void;
   /** The browser refused to start the call's sound; `resume` must be called from a tap. */
   onPlaybackBlocked?: (resume: () => void) => void;
+  /** The page answered one of the assistant's own conference legs. */
+  onConferenceJoined?: (conference: string) => void;
 }
 
 export interface PhoneLine {
@@ -66,6 +68,10 @@ export async function openPhoneLine(
       set("connected", callerOf(call));
       if (sink) {
         playThrough(sink, call, handlers);
+      }
+      const conference = call.customParameters.get("conference");
+      if (conference) {
+        handlers.onConferenceJoined?.(conference);
       }
     });
     call.on("disconnect", () => {

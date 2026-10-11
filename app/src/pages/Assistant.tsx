@@ -173,6 +173,9 @@ export function Assistant() {
         {
           onActivity: log,
           onPlaybackBlocked: (resume) => setResumeAudio(() => resume),
+          // Tell the server the page is on, so the person is dialled even if Twilio's callback is late or lost
+          onConferenceJoined: (conference) =>
+            api.hostAnswered(conference).catch((err) => log("error", `Could not start dialling: ${describe(err)}`)),
           onStatus: (next, who) => {
             const wasOnCall = lineStatusRef.current === "connected";
             lineStatusRef.current = next;

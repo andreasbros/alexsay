@@ -6,10 +6,19 @@ import { providerFailure } from "../provider_errors";
 import { CLIENT_IDENTITY, configureNumber, listNumbers, voiceToken } from "../providers/twilio";
 import { type Recipient, resolveRecipient } from "../recipients";
 import * as schemas from "../schemas";
-import { addToConference, endCall, placeCall, sendText, startConference, TelephonyError, webhooks } from "../telephony";
+import {
+  addToConference,
+  endCall,
+  hostAnswered,
+  placeCall,
+  sendText,
+  startConference,
+  TelephonyError,
+  webhooks,
+} from "../telephony";
 import { toolContext } from "../tool_context";
 import type { AppEnv } from "../types";
-import { jsonBody } from "../validate";
+import { jsonBody, parse } from "../validate";
 
 const VOICE_TOKEN_TTL_S = 3600;
 const RECENT_CALLS = 8;
@@ -116,6 +125,22 @@ export const twilioRoutes = new Hono<AppEnv>()
         recipients.push(await recipientOrThrow(c, username, ref));
       }
       return c.json(await startConference(toolContext(c), username, recipients, "mobile"), 201);
+    });
+  })
+  /**
+   * The page answered its leg: dial the people waiting for it. Twilio's own answered callback does
+   * the same, so whichever arrives first dials and the other finds nothing left to do.
+   */
+  .post("/conferences/:name/answered", async (c) => {
+    const name = parse(schemas.conferenceName, c.req.param("name"));
+    const username = c.get("user").username;
+    const host = await calls.hostLeg(c.env.DB, username, name);
+    if (!host) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    return telephony(c, async () => {
+      await hostAnswered({ env: c.env, origin: new URL(c.req.url).origin }, host);
+      return c.json({ ok: true });
     });
   })
   .post("/conferences/participants", async (c) => {

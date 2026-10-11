@@ -633,9 +633,14 @@ describe("twilio", () => {
     expect(legs.map((l) => l.form.To)).toEqual([`client:alexsay-app?conference=${name}`]);
     expect(legs[0]?.form).toMatchObject({ Label: "host", EndConferenceOnExit: "true" });
 
-    // The page answered: Mum is dialled. The assistant is not on the line yet.
-    await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
+    // The page answered and says so itself: Mum is dialled. Twilio's own callback then finds nothing to do.
+    expect((await call(`${APP}/api/twilio/conferences/${name}/answered`, { method: "POST" }, maria)).status).toBe(200);
     expect(legs.map((l) => l.form.To)).toEqual([`client:alexsay-app?conference=${name}`, MUM]);
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
+    expect(legs).toHaveLength(2);
+    expect((await call(`${APP}/api/twilio/conferences/ay-unknown00/answered`, { method: "POST" }, maria)).status).toBe(
+      404,
+    );
 
     // Mum picks up: the assistant joins that very moment, briefed to listen first
     await twilioWebhook("/v1/twilio/status", { CallSid: "CA2", CallStatus: "in-progress" });

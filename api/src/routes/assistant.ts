@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { lightwaveToken, lightwaveUrls, openaiConnection } from "../connections";
-import { connections } from "../db";
+import { connections, users } from "../db";
+import { logFor } from "../log";
 import { contextInstructions, loadContext } from "../memory";
 import { providerFailure } from "../provider_errors";
 import { lights, writeFeature, writeFeatures } from "../providers/lightwave";
@@ -18,13 +19,19 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
   if (!connection) {
     return c.json({ error: "no_openai_connection" }, 412);
   }
-  const [hasLights, hasPhone] = await Promise.all([
+  const [hasLights, hasPhone, logAccess] = await Promise.all([
     connections.get(c.env.DB, me.username, "lightwave").then((row) => row !== null),
     connections.get(c.env.DB, me.username, "twilio").then((row) => row !== null),
+    users.logAccess(c.env.DB, me.username),
   ]);
   try {
     const context = contextInstructions(await loadContext(c.env.DB, me.username));
-    const input = { settings: connection.settings, tools: toolDefinitions(hasLights, hasPhone), context, sdp };
+    const input = {
+      settings: connection.settings,
+      tools: toolDefinitions(hasLights, hasPhone, logAccess),
+      context,
+      sdp,
+    };
     const session = await createLiveSession(c.env.OPENAI_BASE_URL, connection.apiKey, {
       ...input,
       resumeFrom: resume_from,
@@ -35,6 +42,7 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
       }
       throw err;
     });
+    void logFor(c, me.username, "info", `assistant session ${session.sessionId}${resume_from ? " (resumed)" : ""}`);
     return c.json({
       session_id: session.sessionId,
       sdp: session.sdp,

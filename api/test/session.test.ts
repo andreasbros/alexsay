@@ -14,10 +14,10 @@ describe("session", () => {
   it("registers a new account as a plain user and signs it in", async () => {
     const res = await register("Maria", "battery staple");
     expect(res.status).toBe(201);
-    expect(await res.json()).toEqual({ username: "maria", role: "user" });
+    expect(await res.json()).toMatchObject({ username: "maria", role: "user" });
     const cookie = res.headers.get("set-cookie")?.split(";")[0] ?? "";
     const me = await call(`${APP}/api/session/me`, {}, cookie);
-    expect(await me.json()).toEqual({ username: "maria", role: "user" });
+    expect(await me.json()).toMatchObject({ username: "maria", role: "user" });
   });
 
   it("refuses a taken username, short passwords and odd names", async () => {
@@ -29,7 +29,7 @@ describe("session", () => {
   it("signs in with the right password and returns the user", async () => {
     const cookie = await signIn("andreas", "correct horse");
     const me = await call(`${APP}/api/session/me`, {}, cookie);
-    expect(await me.json()).toEqual({ username: "andreas", role: "admin" });
+    expect(await me.json()).toMatchObject({ username: "andreas", role: "admin" });
   });
 
   it("sets a secure, http-only session cookie", async () => {

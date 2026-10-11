@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { logFor } from "./log";
 import { toolByName } from "./tools";
 import type { ToolContext } from "./types";
 
@@ -79,6 +80,7 @@ export class CallAgent extends DurableObject<Env> {
       throw new Error(`realtime socket refused (${res.status})`);
     }
     socket.accept();
+    void logFor({ env: this.env }, start.username, "info", `call agent: on the realtime socket for ${start.callId}`);
     const context: ToolContext = {
       env: this.env,
       user: { username: start.username, role: "user" },
@@ -87,6 +89,9 @@ export class CallAgent extends DurableObject<Env> {
     };
     socket.addEventListener("message", (message) => {
       void this.onMessage(socket, context, message.data);
+    });
+    socket.addEventListener("close", () => {
+      void logFor({ env: this.env }, start.username, "info", `call agent: socket closed for ${start.callId}`);
     });
   }
 
@@ -102,6 +107,12 @@ export class CallAgent extends DurableObject<Env> {
       return;
     }
     const output = await runCallTool(context, call);
+    void logFor(
+      { env: this.env },
+      context.user.username,
+      output.includes('"error"') ? "warn" : "info",
+      `on-call tool ${call.name} ${call.arguments.slice(0, 120)} -> ${output.slice(0, 200)}`,
+    );
     socket.send(
       JSON.stringify({
         type: "conversation.item.create",

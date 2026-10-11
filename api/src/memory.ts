@@ -51,7 +51,8 @@ export function contextInstructions(context: Context, today = new Date()): strin
       "when the user refers to earlier talks or asks you to remember or forget something; do not announce them otherwise. " +
       "Phone book tools: find_contact looks someone up by name or digits, list_contacts pages through everyone " +
       "(favourites first), favourite_contact stars or unstars a person, add_contact and update_contact add or edit one " +
-      "(name, number, label, note). Use the note for what the user tells you about a person.",
+      "(name, number, label, note). Use the note for what the user tells you about a person. If read_log is " +
+      "available, use it when the user asks what happened or why something failed, and quote the lines that matter.",
   );
   return parts.join("\n\n");
 }

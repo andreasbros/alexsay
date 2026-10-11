@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { logFor } from "./log";
 import { ProviderError } from "./providers/openai";
 import type { AppEnv, Provider } from "./types";
 
@@ -17,6 +18,10 @@ export function providerFailure(c: Context<AppEnv>, provider: Provider, err: unk
         path: c.req.path,
       }),
     );
+    const username = c.get("user")?.username;
+    if (username) {
+      void logFor(c, username, "error", `${provider} ${c.req.method} ${c.req.path}: ${err.status} ${err.detail}`);
+    }
     return c.json({ ok: false, error: "provider", status: err.status, detail: err.detail }, 502);
   }
   throw err;

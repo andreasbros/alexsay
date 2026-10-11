@@ -6,6 +6,8 @@ export interface User {
   role: Role;
   created_at?: number;
   devices?: number;
+  /** The assistant may read this user's server log. */
+  ai_log_access?: boolean;
 }
 
 export interface Device {
@@ -230,6 +232,8 @@ export const api = {
   register: (username: string, password: string) =>
     request<User>("POST", "/api/session/register", { username, password }),
   logout: () => request<void>("POST", "/api/session/logout"),
+  updateSettings: (settings: { ai_log_access: boolean }) =>
+    request<{ ai_log_access: boolean }>("PATCH", "/api/session/settings", settings),
 
   devices: () => request<Device[]>("GET", "/api/devices"),
   addDevice: (id: string, name: string) => request<Device>("POST", "/api/devices", { id, name }),

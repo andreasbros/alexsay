@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { type TwilioConnection, twilioFromRow } from "../connections";
 import { calls, connections, contacts, devices, messages } from "../db";
+import { logFor } from "../log";
 import { bareNumber, normalisePhone, WHATSAPP_PREFIX } from "../phone";
 import { CLIENT_IDENTITY, validSignature } from "../providers/twilio";
 import { guestAnswered, hostAnswered } from "../telephony";
@@ -55,6 +56,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       at: now,
     });
     await contacts.stamp(c.env.DB, owner.username, from, "last_called_at", now);
+    void logFor(c, owner.username, "info", `incoming call from ${from}, ringing ${rang.join(", ")}`);
     return xml(c, ringTwiml(speakers, mobile, CLIENT_IDENTITY));
   })
   .post("/voice/outbound", async (c) => {
@@ -114,6 +116,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       at: now,
     });
     await contacts.stamp(c.env.DB, owner.username, from, "last_messaged_at", now);
+    void logFor(c, owner.username, "info", `incoming message from ${from}`);
     return xml(c, emptyTwiml());
   })
   .post("/status", async (c) => {
@@ -130,6 +133,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     const status = (params.CallStatus ?? "").slice(0, 32);
     await calls.setStatus(c.env.DB, call.sid ?? "", status);
     const place = { env: c.env, origin: new URL(c.req.url).origin };
+    void logFor(place, call.username, "info", `twilio: ${call.role || call.kind} leg ${call.phone} is ${status}`);
     if (status === "in-progress" && call.role === "host") {
       await hostAnswered(place, call);
     }

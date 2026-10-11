@@ -29,4 +29,13 @@ export const sessionRoutes = new Hono<AppEnv>()
     await logout(c);
     return c.body(null, 204);
   })
-  .get("/me", requireUser, (c) => c.json(c.get("user")));
+  .get("/me", requireUser, async (c) => {
+    const user = c.get("user");
+    return c.json({ ...user, ai_log_access: await users.logAccess(c.env.DB, user.username) });
+  })
+  /** Account-level preferences the server must enforce, unlike the browser-only ones in Settings. */
+  .patch("/settings", requireUser, async (c) => {
+    const { ai_log_access } = await jsonBody(c, schemas.userSettings);
+    await users.setLogAccess(c.env.DB, c.get("user").username, ai_log_access);
+    return c.json({ ai_log_access });
+  });

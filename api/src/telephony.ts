@@ -1,5 +1,6 @@
 import { canJoinCalls, openaiConnection, type TwilioConnection, twilioConnection } from "./connections";
 import { type CallRow, calls, contacts, messages } from "./db";
+import { logFor } from "./log";
 import { contextInstructions, currentConversation, loadContext } from "./memory";
 import { toWhatsapp } from "./phone";
 import {
@@ -109,8 +110,8 @@ function myNumber(connection: TwilioConnection): string {
 /**
  * A call for the user. With a message, the person is phoned and the message read out. Otherwise a
  * conference opens in stages: the user's side rings first (the Assistant page, or their mobile when
- * they asked for it); once they are on, the person is dialled; the moment that call is answered the
- * assistant joins over SIP, so it hears the greeting, a voicemail or a menu from the first second.
+ * they asked for it); once they are on, the person is dialled and the assistant is dialled in over SIP
+ * right behind them, so it hears the ringing, the greeting, a recording or a menu from the first second.
  */
 export async function placeCall(
   c: ToolContext,
@@ -245,25 +246,43 @@ async function openConference(
     at: Date.now(),
   });
   const openai = await openaiConnection(c, username);
+  const pending = brief.guests.map((g) => g.name ?? g.phone);
+  void logFor(
+    c,
+    username,
+    "info",
+    `call ${conference}: ringing the ${host === "browser" ? "app" : "mobile"} first; ` +
+      `then ${pending.join(", ")}; assistant ${canJoinCalls(openai) ? "will join" : "not set up"}`,
+  );
   return {
     conference,
     host,
-    pending: brief.guests.map((g) => g.name ?? g.phone),
+    pending,
     assistant: canJoinCalls(openai),
   };
 }
 
-/** The host picked up: dial everyone who was waiting for them, once. */
+/**
+ * The host picked up: dial everyone who was waiting for them, once, and seat the assistant straight
+ * after, so it is on the line whatever answers: a person, a recorded service, a menu, voicemail.
+ */
 export async function hostAnswered(place: Place, hostLeg: CallRow): Promise<void> {
   const brief = parseBrief(hostLeg.brief);
   if (!hostLeg.conference || !brief || brief.dialled || brief.guests.length === 0) {
     return;
   }
   await calls.setBrief(place.env.DB, hostLeg.id, JSON.stringify({ ...brief, dialled: true }));
+  void logFor(
+    place,
+    hostLeg.username,
+    "info",
+    `call ${hostLeg.conference}: host is on, dialling ${brief.guests.length}`,
+  );
   const connection = await ready(place, hostLeg.username);
   for (const guest of brief.guests) {
     await dialGuest(place, hostLeg.username, connection, hostLeg.conference, guest);
   }
+  await seatAssistant(place, hostLeg.username, hostLeg.conference, brief);
 }
 
 async function dialGuest(place: Place, username: string, connection: Ready, conference: string, guest: Guest) {
@@ -288,35 +307,29 @@ async function dialGuest(place: Place, username: string, connection: Ready, conf
     at: now,
   });
   await contacts.stamp(place.env.DB, username, guest.phone, "last_called_at", now);
+  void logFor(place, username, "info", `call ${conference}: dialled ${guest.name ?? guest.phone} (${leg.status})`);
   return placed(leg, { phone: guest.phone, contact: null });
 }
 
-/**
- * A guest picked up: the assistant joins now, so it hears the greeting, voicemail or menu rather than
- * speaking into a ringing line. Only the first report wins the seat.
- */
+/** A guest picked up: noted for the log; the assistant is already on the line. */
 export async function guestAnswered(place: Place, guestLeg: CallRow): Promise<void> {
-  if (!guestLeg.conference) {
-    return;
-  }
-  const openai = await openaiConnection(place, guestLeg.username);
+  void logFor(place, guestLeg.username, "info", `call ${guestLeg.conference}: ${guestLeg.phone} answered`);
+}
+
+/** Dials the assistant's SIP leg into the conference; the unique seat means it happens once per call. */
+async function seatAssistant(place: Place, username: string, conference: string, hostBrief: HostBrief): Promise<void> {
+  const openai = await openaiConnection(place, username);
   if (!canJoinCalls(openai)) {
     return;
   }
-  const seat = {
-    id: crypto.randomUUID(),
-    username: guestLeg.username,
-    conference: guestLeg.conference,
-    at: Date.now(),
-  };
+  const seat = { id: crypto.randomUUID(), username, conference, at: Date.now() };
   if (!(await calls.claimAssistant(place.env.DB, seat))) {
     return;
   }
-  const connection = await ready(place, guestLeg.username);
-  const host = await calls.hostLeg(place.env.DB, guestLeg.username, guestLeg.conference);
-  const brief = await callBrief(place, guestLeg.username, parseBrief(host?.brief ?? null));
-  const to = `sip:${openai.settings.project_id}@${OPENAI_SIP_HOST};transport=tls?${CONFERENCE_HEADER}=${guestLeg.conference}`;
-  const leg = await addParticipant(connection.client, guestLeg.conference, {
+  const connection = await ready(place, username);
+  const brief = await callBrief(place, username, hostBrief);
+  const to = `sip:${openai.settings.project_id}@${OPENAI_SIP_HOST};transport=tls?${CONFERENCE_HEADER}=${conference}`;
+  const leg = await addParticipant(connection.client, conference, {
     to,
     from: "alexsay",
     label: "assistant",
@@ -325,6 +338,7 @@ export async function guestAnswered(place: Place, guestLeg: CallRow): Promise<vo
   });
   await calls.setBrief(place.env.DB, seat.id, brief);
   await calls.setLeg(place.env.DB, seat.id, leg.sid, leg.status);
+  void logFor(place, username, "info", `call ${conference}: assistant dialled in over SIP`);
 }
 
 const parseBrief = (text: string | null): HostBrief | null => {
@@ -348,10 +362,11 @@ async function callBrief(place: Scope, username: string, hostBrief: HostBrief | 
     .map((g) => `About ${g.name ?? g.phone}: ${g.note}`)
     .join("\n");
   const picked =
-    "The call has just been answered. Listen first: it may be a person, voicemail, or an automated menu or " +
-    "switchboard. For a menu, do not talk to it; choose the option that fits with press_digits, one step at a " +
-    "time (for example 2 for billing), and tell " +
-    `${username} briefly what you pressed. If no option fits, ask ${username}.`;
+    "The other side is being dialled as you join: you may hear ringing first. Listen: what answers may be a " +
+    "person, a recorded service, voicemail, or an automated menu or switchboard. For a menu, do not talk to it; " +
+    "choose the option that fits with press_digits, one step at a time (for example 2 for billing), and tell " +
+    `${username} briefly what you pressed. If no option fits, ask ${username}. For a recording or a service that ` +
+    "only talks (a speaking clock, an announcement), say nothing and let it be heard.";
   const conduct = hostBrief?.task
     ? `${username} asked you to handle this: ${hostBrief.task}. Once a person is on and has finished their ` +
       `greeting, introduce yourself as Alexsay calling on behalf of ${username} and get it done politely and ` +
@@ -413,6 +428,7 @@ export async function endCall(c: Scope, username: string): Promise<{ conference:
   }
   await completeCall(connection.client, host.sid);
   await calls.endConference(c.env.DB, conference);
+  void logFor(c, username, "info", `call ${conference}: hung up`);
   return { conference };
 }
 

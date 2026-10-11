@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import type { CallAgentStart } from "../call_agent";
 import { openaiConnection } from "../connections";
-import { calls, connections } from "../db";
+import { calls, connections, users } from "../db";
+import { logFor } from "../log";
 import { acceptCall, ProviderError, rejectCall, verifyWebhook } from "../providers/openai";
 import { CONFERENCE_HEADER, notOnCalls } from "../telephony";
 import { toolDefinitions } from "../tools";
@@ -46,11 +47,12 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
   }
   try {
     const hasLights = (await connections.get(c.env.DB, leg.username, "lightwave")) !== null;
+    const logAccess = await users.logAccess(c.env.DB, leg.username);
     await acceptCall(c.env.OPENAI_BASE_URL, openai.apiKey, callId, {
       model: openai.settings.call_model,
       instructions: leg.brief ?? "",
       voice: openai.settings.voice,
-      tools: toolDefinitions(hasLights, true).filter((t) => !notOnCalls(t.name)),
+      tools: toolDefinitions(hasLights, true, logAccess).filter((t) => !notOnCalls(t.name)),
     });
     const start: CallAgentStart = {
       callId,
@@ -59,6 +61,7 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
       username: leg.username,
       origin: new URL(c.req.url).origin,
     };
+    void logFor(c, leg.username, "info", `openai: SIP call ${callId} accepted for ${conference}`);
     const agent = c.env.CALL_AGENT.get(c.env.CALL_AGENT.idFromName(callId));
     c.executionCtx.waitUntil(
       agent.fetch("https://call-agent/start", { method: "POST", body: JSON.stringify(start) }).catch(() => undefined),
@@ -66,6 +69,7 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
   } catch (err) {
     const detail = err instanceof ProviderError ? err.detail : err instanceof Error ? err.message : "accept failed";
     console.warn(JSON.stringify({ provider: "openai", webhook: "call.incoming", user: leg.username, error: detail }));
+    void logFor(c, leg.username, "error", `openai: SIP call for ${conference} refused: ${detail}`);
     await rejectCall(c.env.OPENAI_BASE_URL, openai.apiKey, callId).catch(() => undefined);
     return c.json({ ok: false });
   }

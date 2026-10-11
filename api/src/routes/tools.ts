@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { logFor } from "../log";
 import { ProviderError } from "../providers/openai";
 import * as schemas from "../schemas";
 import { toolContext } from "../tool_context";
@@ -18,10 +19,19 @@ export const toolRoutes = new Hono<AppEnv>().post("/call", async (c) => {
     return c.json({ output: { error: `unknown tool ${name}` } });
   }
   try {
-    return c.json({ output: await tool.run(ctx, args, conversation_id ?? null) });
+    const output = await tool.run(ctx, args, conversation_id ?? null);
+    if (name !== "read_log") {
+      const summary = JSON.stringify(output);
+      const failed = summary.includes('"error"');
+      void logFor(c, ctx.user.username, failed ? "warn" : "info", `tool ${name} ${summarise(args)} -> ${summary}`);
+    }
+    return c.json({ output });
   } catch (err) {
     const detail = err instanceof ProviderError ? err.detail : err instanceof Error ? err.message : "tool failed";
     console.warn(JSON.stringify({ tool: name, user: c.get("user").username, error: detail }));
+    void logFor(c, ctx.user.username, "error", `tool ${name} ${summarise(args)} failed: ${detail}`);
     return c.json({ output: { error: detail } });
   }
 });
+
+const summarise = (args: Record<string, unknown>) => JSON.stringify(args).slice(0, 120);

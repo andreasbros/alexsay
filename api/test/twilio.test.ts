@@ -633,29 +633,24 @@ describe("twilio", () => {
     expect(legs.map((l) => l.form.To)).toEqual([`client:alexsay-app?conference=${name}`]);
     expect(legs[0]?.form).toMatchObject({ Label: "host", EndConferenceOnExit: "true" });
 
-    // The page answered and says so itself: Mum is dialled. Twilio's own callback then finds nothing to do.
+    // The page answered and says so itself: Mum is dialled and the assistant right behind her.
     expect((await call(`${APP}/api/twilio/conferences/${name}/answered`, { method: "POST" }, maria)).status).toBe(200);
-    expect(legs.map((l) => l.form.To)).toEqual([`client:alexsay-app?conference=${name}`, MUM]);
-    await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
-    expect(legs).toHaveLength(2);
-    expect((await call(`${APP}/api/twilio/conferences/ay-unknown00/answered`, { method: "POST" }, maria)).status).toBe(
-      404,
-    );
-
-    // Mum picks up: the assistant joins that very moment, briefed to listen first
-    await twilioWebhook("/v1/twilio/status", { CallSid: "CA2", CallStatus: "in-progress" });
     expect(legs.map((l) => l.form.To)).toEqual([
       `client:alexsay-app?conference=${name}`,
       MUM,
       `sip:proj_abc12345@sip.api.openai.com;transport=tls?X-Alexsay-Conference=${name}`,
     ]);
     expect(legs[2]?.form).toMatchObject({ Label: "assistant", From: "alexsay" });
-    // A repeated answered callback does not seat a second assistant
+    // Twilio's own callbacks then find nothing left to do
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
     await twilioWebhook("/v1/twilio/status", { CallSid: "CA2", CallStatus: "in-progress" });
     expect(legs).toHaveLength(3);
+    expect((await call(`${APP}/api/twilio/conferences/ay-unknown00/answered`, { method: "POST" }, maria)).status).toBe(
+      404,
+    );
     const brief = await env.DB.prepare("SELECT brief FROM calls WHERE role = 'assistant'").first<{ brief: string }>();
     expect(brief?.brief).toContain("Mum (+447700900123)");
-    expect(brief?.brief).toContain("Listen first");
+    expect(brief?.brief).toContain("you may hear ringing first");
     expect(brief?.brief).toContain("press_digits");
     expect(brief?.brief).toContain("ask whether Sunday lunch is still on");
     expect(brief?.brief).toContain("end_call");
@@ -707,7 +702,6 @@ describe("twilio", () => {
       )
     ).json()) as { output: { conference: string } };
     await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
-    await twilioWebhook("/v1/twilio/status", { CallSid: "CA2", CallStatus: "in-progress" });
     legs.done();
     const conference = placedCall.output.conference;
     const event = {
@@ -726,7 +720,7 @@ describe("twilio", () => {
     expect(res.status).toBe(200);
     const session = accepted as { instructions: string; tools: { name: string }[]; model: string } | null;
     expect(session).toMatchObject({ model: "gpt-realtime" });
-    expect(session?.instructions).toContain("Listen first");
+    expect(session?.instructions).toContain("you may hear ringing first");
     expect(session?.instructions).toContain("Do not introduce yourself and do not speak first");
     const toolNames = session?.tools.map((t) => t.name) ?? [];
     expect(toolNames).toEqual(

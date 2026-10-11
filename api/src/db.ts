@@ -1,3 +1,4 @@
+import { purgeLog } from "./log";
 import { searchName } from "./phone";
 import type {
   CallRow,
@@ -51,6 +52,21 @@ export const users = {
     db.prepare("UPDATE users SET password_hash = ? WHERE username = ?").bind(passwordHash, username).run(),
 
   remove: (db: D1Database, username: string) => db.prepare("DELETE FROM users WHERE username = ?").bind(username).run(),
+
+  /** Whether the user let the assistant read their server log. */
+  logAccess: async (db: D1Database, username: string) =>
+    (
+      await db
+        .prepare("SELECT ai_log_access FROM users WHERE username = ?")
+        .bind(username)
+        .first<{ ai_log_access: number }>()
+    )?.ai_log_access === 1,
+
+  setLogAccess: (db: D1Database, username: string, allowed: boolean) =>
+    db
+      .prepare("UPDATE users SET ai_log_access = ? WHERE username = ?")
+      .bind(allowed ? 1 : 0, username)
+      .run(),
 
   countAdmins: async (db: D1Database) =>
     (await db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").first<{ n: number }>())?.n ?? 0,
@@ -209,6 +225,7 @@ export async function purgeExpired(db: D1Database, now: number): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now),
     db.prepare("DELETE FROM login_failures WHERE at <= ?").bind(now - DAY_MS),
+    purgeLog(db, now),
   ]);
 }
 

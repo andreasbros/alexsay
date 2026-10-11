@@ -1,5 +1,6 @@
 import { countryCode, lightwaveToken, lightwaveUrls } from "./connections";
-import { contacts, conversations, memories, messages } from "./db";
+import { contacts, conversations, memories, messages, users } from "./db";
+import { DEFAULT_LOG_LINES, formatLogLine, MAX_LOG_LINES, readLog } from "./log";
 import { normalisePhone } from "./phone";
 import { type Light, lights, writeFeatures } from "./providers/lightwave";
 import type { FunctionTool } from "./providers/openai";
@@ -24,8 +25,8 @@ import { MEMORY_CATEGORIES } from "./types";
  */
 export interface Tool {
   definition: FunctionTool;
-  /** Provider tools only make sense once the user connected that provider. */
-  needs?: "lightwave" | "twilio";
+  /** Provider tools only make sense once the user connected that provider; the log once the user allowed it. */
+  needs?: "lightwave" | "twilio" | "log";
   run: (c: ToolContext, args: Record<string, unknown>, conversationId: string | null) => Promise<unknown>;
 }
 
@@ -359,6 +360,33 @@ export const TOOLS: Tool[] = [
       }
       await writeLights(c, matched, { dim_level: args.level });
       return { ok: true, lights: matched.map((l) => l.name), level: args.level };
+    },
+  },
+  {
+    needs: "log",
+    definition: {
+      type: "function",
+      name: "read_log",
+      description:
+        "Reads the server's log of what it did for this user: tool calls, calls placed and answered, webhooks, " +
+        `failures. Use it when the user asks what happened or why something did not work. Up to ${MAX_LOG_LINES} ` +
+        `lines, ${DEFAULT_LOG_LINES} by default; tail is the newest lines, head the oldest.`,
+      parameters: {
+        type: "object",
+        properties: {
+          position: { type: "string", enum: ["tail", "head"] },
+          lines: { type: "integer", minimum: 1, maximum: MAX_LOG_LINES },
+        },
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      if (!(await users.logAccess(c.env.DB, c.user.username))) {
+        return { error: "the user has not allowed log access in Settings" };
+      }
+      const position = string(args, "position") === "head" ? "head" : "tail";
+      const lines = await readLog(c.env.DB, c.user.username, position, num(args, "lines") ?? DEFAULT_LOG_LINES);
+      return { position, lines: lines.map(formatLogLine) };
     },
   },
   {
@@ -778,8 +806,8 @@ async function sendTool(c: ToolContext, args: Record<string, unknown>, channel: 
 
 export const toolByName = (name: string) => TOOLS.find((t) => t.definition.name === name);
 
-export function toolDefinitions(hasLightwave: boolean, hasTwilio = false): FunctionTool[] {
-  const available = { lightwave: hasLightwave, twilio: hasTwilio };
+export function toolDefinitions(hasLightwave: boolean, hasTwilio = false, logAccess = false): FunctionTool[] {
+  const available = { lightwave: hasLightwave, twilio: hasTwilio, log: logAccess };
   return TOOLS.filter((t) => !t.needs || available[t.needs]).map((t) => t.definition);
 }
 

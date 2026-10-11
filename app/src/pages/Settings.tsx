@@ -1,13 +1,20 @@
 import { Card, Flex, Heading, Switch, Text } from "@radix-ui/themes";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { api, type User } from "../api";
 import { BUILD } from "../build";
 import { isDebug, setDebug, subscribeDebug } from "../lib/debug";
 import { setSoundsEnabled, soundsEnabled } from "../lib/sounds";
 
-/** Per-browser preferences; nothing here touches the account on the server. */
-export function Settings() {
+/** Per-browser preferences, plus the one the server must enforce: whether the assistant may read the log. */
+export function Settings({ user }: { user: User }) {
   const [debug, setDebugOn] = useState(isDebug);
   const [sounds, setSounds] = useState(soundsEnabled);
+  const client = useQueryClient();
+  const logAccess = useMutation({
+    mutationFn: (ai_log_access: boolean) => api.updateSettings({ ai_log_access }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["session"] }),
+  });
   useEffect(() => subscribeDebug(() => setDebugOn(isDebug())), []);
   return (
     <Flex direction="column" gap="5">
@@ -36,6 +43,20 @@ export function Settings() {
       <Card size="3">
         <Flex direction="column" gap="3">
           <Heading size="4">Diagnostics</Heading>
+          <Text as="label" size="2">
+            <Flex gap="3" align="center">
+              <Switch
+                checked={logAccess.isPending ? (logAccess.variables ?? false) : (user.ai_log_access ?? false)}
+                onCheckedChange={(on) => logAccess.mutate(on)}
+                aria-label="AI log access"
+              />
+              AI log access
+            </Flex>
+          </Text>
+          <Text size="2" color="gray">
+            Lets the assistant read the server&apos;s log of what it did for you (calls placed and answered, tools,
+            failures), so you can ask it what happened. Up to 100 lines at a time, newest or oldest first.
+          </Text>
           <Text as="label" size="2">
             <Flex gap="3" align="center">
               <Switch checked={debug} onCheckedChange={(on) => setDebug(on)} />

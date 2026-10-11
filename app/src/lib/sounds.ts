@@ -25,7 +25,6 @@ interface Note {
   at: number;
   length: number;
   gain?: number;
-  square?: boolean;
 }
 
 /** One pulse of the connecting tone; the clip loops until the line is ready. */
@@ -38,7 +37,7 @@ const READY: Note[] = [{ hz: 783.99, at: 0, length: 0.16 }];
 const END: Note[] = [
   { hz: 659.25, at: 0, length: 0.14 },
   { hz: 440, at: 0.16, length: 0.22 },
-  { hz: 220, at: 0.5, length: 0.09, gain: 0.5, square: true },
+  { hz: 330, at: 0.46, length: 0.12, gain: 0.6 },
 ];
 
 const clips = {
@@ -50,9 +49,23 @@ const clips = {
 function lazyClip(notes: Note[], seconds: number): () => HTMLAudioElement {
   let element: HTMLAudioElement | null = null;
   return () => {
-    element ??= new Audio(wavUrl(notes, seconds));
+    if (!element) {
+      element = new Audio(wavUrl(notes, seconds));
+      element.preload = "auto";
+      element.load();
+    }
     return element;
   };
+}
+
+/** Generates and loads every clip ahead of time, so the first play is instant. */
+export function preloadSounds(): void {
+  if (!soundsEnabled()) {
+    return;
+  }
+  clips.connecting();
+  clips.ready();
+  clips.end();
 }
 
 /**
@@ -138,9 +151,10 @@ export function wavUrl(notes: Note[], seconds: number): string {
   return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
 }
 
-/** Sine (or square) notes with a short attack and an exponential release, summed into one clip. */
+/** Sine notes with a short attack, an exponential release and a clean fade to silence, summed into one clip. */
 export function renderNotes(notes: Note[], seconds: number): Float32Array {
   const out = new Float32Array(Math.ceil(seconds * RATE));
+  const fadeSamples = Math.floor(0.01 * RATE);
   for (const note of notes) {
     const start = Math.floor(note.at * RATE);
     const length = Math.floor(note.length * RATE);
@@ -149,9 +163,8 @@ export function renderNotes(notes: Note[], seconds: number): Float32Array {
       const t = i / RATE;
       const attack = Math.min(1, i / (0.012 * RATE));
       const release = Math.exp((-4 * i) / length);
-      const phase = 2 * Math.PI * note.hz * t;
-      const wave = note.square ? Math.sign(Math.sin(phase)) : Math.sin(phase);
-      out[start + i] = (out[start + i] ?? 0) + wave * peak * attack * release;
+      const fade = Math.min(1, (length - i) / fadeSamples);
+      out[start + i] = (out[start + i] ?? 0) + Math.sin(2 * Math.PI * note.hz * t) * peak * attack * release * fade;
     }
   }
   for (let i = 0; i < out.length; i++) {

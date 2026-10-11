@@ -11,7 +11,7 @@ import { appendTurn, Transcript, type Turn } from "../components/Transcript";
 import { debugLog, isDebug, subscribeDebug } from "../lib/debug";
 import { startDemo } from "../lib/demo";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
-import { playEnd, primeSounds, startConnecting } from "../lib/sounds";
+import { playEnd, preloadSounds, primeSounds, startConnecting } from "../lib/sounds";
 import { DEFAULT_OPENAI, VOICES } from "../voices";
 
 const LABELS: Record<LiveStatus | "idle", string> = {
@@ -56,6 +56,7 @@ export function Assistant() {
     setActivity((entries) => [...entries.slice(-49), { at: new Date(), kind, text }]);
 
   useEffect(() => () => session.current?.stop(), []);
+  useEffect(preloadSounds, []);
   useEffect(() => {
     // Anything that blows up in the browser lands in the activity card instead of vanishing
     const onError = (event: ErrorEvent) => log("error", `Browser: ${event.message}`);

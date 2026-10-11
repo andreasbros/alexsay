@@ -450,6 +450,13 @@ export const parseAgent = (text: string | null): TestAgent | null => {
   }
 };
 
+/** How to share a phone line, told to every AI on a call; who gives way differs by side. */
+const PHONE_ETIQUETTE =
+  "Phone etiquette: one voice at a time. Listen until the other side has clearly finished, including the pause " +
+  "after a question, before you speak. Answer what was asked, in one or two sentences, then stop and wait. " +
+  "Do not fill silences, do not repeat yourself, and do not start a new topic while the other side is mid-thought. " +
+  "If you were cut off, stay quiet, listen to what they say, and pick up only what still matters.";
+
 /** What the scripted agent is told: its part, the scenario, and that the user directs the rehearsal. */
 export function agentBrief(agent: TestAgent, username: string): string {
   return [
@@ -458,6 +465,8 @@ export function agentBrief(agent: TestAgent, username: string): string {
     "You have just answered the phone: greet the caller the way this part would, then follow the scenario and " +
       "improvise realistically within it. Speak like a real person on the phone: short turns, natural pauses, let " +
       "the other side finish. Stay in your part throughout.",
+    `${PHONE_ETIQUETTE} If you and the caller start at the same moment, you keep talking and they will wait; ` +
+      "finish your sentence, then give them the floor.",
     `On the line with you: ${username} (who is running the test) and their assistant, Alexsay. ${username} may ` +
       'step out of the scene to direct you ("agent, be more difficult", "agent, say the slot is taken"): follow ' +
       `the direction and carry on in your part. When ${username} tells you to hang up or the scene is finished, ` +
@@ -507,6 +516,8 @@ async function callBrief(place: Scope, username: string, hostBrief: HostBrief | 
     'Your name is Alexsay, pronounced "Aleksey". You have just joined a phone call that ' +
       `${username} placed from their speaker app. On the line: ${username}, and ${people}. ${picked} ${conduct} ` +
       `${aside} ` +
+      `${PHONE_ETIQUETTE} If you and the other side start at the same moment, you give way: stop at once, let ` +
+      "them finish, then speak. " +
       `Keep every turn short. Never read out numbers, addresses or other personal details ${username} has not asked ` +
       "you to share.",
     `Tools: when ${username} asks you to hang up or end the call, say a brief goodbye to the other side and call ` +

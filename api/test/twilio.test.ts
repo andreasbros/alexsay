@@ -730,6 +730,10 @@ describe("twilio", () => {
     expect(session).toMatchObject({ model: "gpt-realtime" });
     expect(session?.instructions).toContain("you may hear ringing first");
     expect(session?.instructions).toContain("Do not introduce yourself and do not speak first");
+    expect(session?.instructions).toContain("you give way: stop at once");
+    expect(accepted).toMatchObject({
+      audio: { input: { turn_detection: { type: "semantic_vad", eagerness: "low", interrupt_response: true } } },
+    });
     const toolNames = session?.tools.map((t) => t.name) ?? [];
     expect(toolNames).toEqual(
       expect.arrayContaining(["end_call", "add_to_call", "find_contact", "remember", "send_text"]),
@@ -911,8 +915,11 @@ describe("twilio", () => {
     expect(legs[2]?.To).not.toContain("X-Alexsay-Agent");
 
     // OpenAI rings back for the agent's leg: it gets the part, the scenario, its voice and only leave_call
-    let accepted: { instructions: string; tools: { name: string }[]; audio: { output: { voice: string } } } | null =
-      null;
+    let accepted: {
+      instructions: string;
+      tools: { name: string }[];
+      audio: { input: { turn_detection: unknown }; output: { voice: string } };
+    } | null = null;
     const openai = mockUpstream({
       "POST https://api.openai.com/v1/realtime/calls/rtc_agent/accept": (_req, body) => {
         accepted = JSON.parse(body);
@@ -934,12 +941,19 @@ describe("twilio", () => {
     const session = accepted as {
       instructions: string;
       tools: { name: string }[];
-      audio: { output: { voice: string } };
+      audio: { input: { turn_detection: unknown }; output: { voice: string } };
     } | null;
     expect(session?.instructions).toContain("Your part: a GP receptionist");
     expect(session?.instructions).toContain("Thursday at 9:40");
     expect(session?.instructions).toContain("call leave_call");
     expect(session?.tools.map((t) => t.name)).toEqual(["leave_call"]);
+    expect(session?.instructions).toContain("you keep talking and they will wait");
+    expect(session?.audio.input.turn_detection).toEqual({
+      type: "semantic_vad",
+      eagerness: "auto",
+      create_response: true,
+      interrupt_response: false,
+    });
     expect(["cedar", "ash", "ballad", "echo", "verse"]).toContain(session?.audio.output.voice);
 
     // The assistant's own briefing names the agent as who is on the line

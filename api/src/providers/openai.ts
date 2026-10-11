@@ -174,11 +174,29 @@ export async function verifyWebhook(
     .some((candidate) => candidate.length === expected.length && candidate === expected);
 }
 
+/**
+ * Who gives way when two voices start at once. The side that yields is cut off by incoming speech
+ * and waits for a long pause before taking a turn; the other keeps talking and takes shorter pauses,
+ * so a collision resolves itself instead of both stopping and restarting together.
+ */
+export type TurnTaking = "yields" | "holds";
+
 export interface CallSession {
   model: string;
   instructions: string;
   voice: string;
   tools: FunctionTool[];
+  turnTaking: TurnTaking;
+}
+
+/** Semantic end-of-turn detection: it waits for the other voice to finish a thought, not just a 500 ms gap. */
+export function turnDetection(turnTaking: TurnTaking): Record<string, unknown> {
+  return {
+    type: "semantic_vad",
+    eagerness: turnTaking === "yields" ? "low" : "auto",
+    create_response: true,
+    interrupt_response: turnTaking === "yields",
+  };
 }
 
 /** Answers a SIP call OpenAI announced through realtime.call.incoming with a configured realtime session. */
@@ -191,7 +209,13 @@ export async function acceptCall(baseUrl: string, apiKey: string, callId: string
       model: session.model,
       instructions: session.instructions,
       // The call's own words come back as transcripts, for the report handed to the page's assistant
-      audio: { input: { transcription: { model: "gpt-4o-mini-transcribe" } }, output: { voice: session.voice } },
+      audio: {
+        input: {
+          transcription: { model: "gpt-4o-mini-transcribe" },
+          turn_detection: turnDetection(session.turnTaking),
+        },
+        output: { voice: session.voice },
+      },
       tools: session.tools,
       tool_choice: "auto",
     }),

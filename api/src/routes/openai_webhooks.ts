@@ -62,6 +62,8 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
       tools: agent
         ? agentToolDefinitions()
         : toolDefinitions(hasLights, true, logAccess, callTest).filter((t) => !notOnCalls(t.name)),
+      // The person called (or the agent playing one) keeps the floor; the assistant gives way, as a caller's helper would
+      turnTaking: agent ? "holds" : "yields",
     });
     const start: CallAgentStart = {
       callId,

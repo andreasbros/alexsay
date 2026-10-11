@@ -127,6 +127,7 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
   let openedAt = 0;
   let diagnosed = false;
   let lastLevelLog = 0;
+  let lastStatus: LiveStatus = "connecting";
   events.onopen = () => {
     openedAt = Date.now();
     debugLog("data channel open");
@@ -173,19 +174,21 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
         `Levels: you via ${statsSeen.mic ? "stats" : "transcript"}; assistant via ${statsSeen.voice ? "stats" : "transcript"}`,
       );
     }
-    // Without a microphone level, your words arriving is the signal that you are talking
-    if (!statsSeen.mic && Date.now() - lastUserWords < SPEAKING_HOLD_MS) {
-      levels.mic = 0.3 + 0.3 * Math.abs(Math.sin(Date.now() / 90));
+    const now = Date.now();
+    // Measured audio is the only thing that extends the assistant's speaking time; the
+    // transcript fallback below must never feed back into it, or it keeps itself alive
+    if (statsSeen.voice && levels.voice > 0.02) {
+      lastAssistantAudio = now;
     }
-    const talkingByTranscript = Date.now() - lastAssistantAudio < SPEAKING_HOLD_MS;
-    // No measurable level at all: let the words themselves move the bars
-    if (talkingByTranscript && levels.voice < 0.02) {
-      levels.voice = 0.3 + 0.3 * Math.abs(Math.sin(Date.now() / 90));
+    const talkingByTranscript = now - lastAssistantAudio < SPEAKING_HOLD_MS;
+    // Only a browser that reports no level at all gets the words-as-level stand-in
+    if (!statsSeen.mic && now - lastUserWords < SPEAKING_HOLD_MS) {
+      levels.mic = 0.3 + 0.3 * Math.abs(Math.sin(now / 90));
+    }
+    if (!statsSeen.voice && talkingByTranscript) {
+      levels.voice = 0.3 + 0.3 * Math.abs(Math.sin(now / 90));
     }
     const speaking = levels.voice > 0.02 || talkingByTranscript;
-    if (speaking) {
-      lastAssistantAudio = Math.max(lastAssistantAudio, levels.voice > 0.02 ? Date.now() : 0);
-    }
     if (Date.now() - lastLevelLog > 250) {
       lastLevelLog = Date.now();
       debugLog(
@@ -198,7 +201,11 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
       session.stop();
       return;
     }
-    handlers.onStatus(speaking ? "speaking" : thinking ? "thinking" : "listening");
+    const next: LiveStatus = speaking ? "speaking" : thinking ? "thinking" : "listening";
+    if (next !== lastStatus) {
+      lastStatus = next;
+      handlers.onStatus(next);
+    }
   }, LEVEL_POLL_MS);
 
   function cleanup() {

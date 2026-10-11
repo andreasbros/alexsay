@@ -85,6 +85,9 @@ export function Assistant() {
         if (next === "closed" || next === "lost") {
           session.current = null;
         }
+        if (next === "closed") {
+          setTurns([]);
+        }
       },
       onTranscript: (role: Turn["role"], delta: string) => setTurns((current) => appendTurn(current, role, delta)),
     };
@@ -102,6 +105,7 @@ export function Assistant() {
     session.current?.stop();
     session.current = null;
     setStatus("idle");
+    setTurns([]);
   };
   const active = status === "connecting" || status === "listening" || status === "thinking" || status === "speaking";
 

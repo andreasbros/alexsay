@@ -102,7 +102,10 @@ describe("conversations and memory", () => {
       .bind("Kitchen lights were switched on.", 4000, id)
       .run();
     const text = contextInstructions(await loadContext(env.DB, "maria"), new Date("2026-10-11T10:00:00Z"));
-    expect(text).toMatch(/^Today is 2026-10-11\./);
+    expect(text).toMatch(/^Today is 2026-10-11 \(Sunday\), 11:00 in Europe\/London/);
+    expect(text).toContain("speak English as spoken in United Kingdom");
+    expect(text).toContain("British Pound (GBP), written like £1,234.50");
+    expect(text).toContain("dates are written like 11/10/2026");
     expect(text).toMatch(/important:\n- Never switch off the hall light at night/);
     expect(text).toMatch(/people:\n- Lives with Maria/);
     expect(text).toMatch(/Recent conversations, newest first:\n- \d{4}-\d{2}-\d{2}: Kitchen lights were switched on\./);

@@ -35,7 +35,7 @@ export const sessionRoutes = new Hono<AppEnv>()
   })
   /** Account-level preferences the server must enforce, unlike the browser-only ones in Settings. */
   .patch("/settings", requireUser, async (c) => {
-    const { ai_log_access, ai_call_test } = await jsonBody(c, schemas.userSettings);
+    const { ai_log_access, ai_call_test, locale, timezone } = await jsonBody(c, schemas.userSettings);
     const username = c.get("user").username;
     if (ai_log_access !== undefined) {
       await users.setLogAccess(c.env.DB, username, ai_log_access);
@@ -43,13 +43,17 @@ export const sessionRoutes = new Hono<AppEnv>()
     if (ai_call_test !== undefined) {
       await users.setCallTest(c.env.DB, username, ai_call_test);
     }
+    if (locale !== undefined || timezone !== undefined) {
+      await users.setLocale(c.env.DB, username, { locale, timezone });
+    }
     return c.json(await accountSettings(c.env.DB, username));
   });
 
 async function accountSettings(db: D1Database, username: string) {
-  const [ai_log_access, ai_call_test] = await Promise.all([
+  const [ai_log_access, ai_call_test, where] = await Promise.all([
     users.logAccess(db, username),
     users.callTest(db, username),
+    users.locale(db, username),
   ]);
-  return { ai_log_access, ai_call_test };
+  return { ai_log_access, ai_call_test, ...where };
 }

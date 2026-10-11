@@ -39,6 +39,7 @@ describe("device heartbeat", () => {
     expect(after).toMatchObject({
       claimed: true,
       assistant: { provider: "openai", api_key: OPENAI_KEY, model: "gpt-live-1", voice: "cedar" },
+      account: { locale: "en-GB", timezone: "Europe/London" },
     });
   });
 });

@@ -1,4 +1,5 @@
-import { conversations, memories } from "./db";
+import { conversations, memories, users } from "./db";
+import { type Locale, localeInstructions } from "./locale";
 import { ProviderError } from "./providers/openai";
 import type { ConversationRow, MemoryCategory, MemoryRow, TurnRow } from "./types";
 import { MEMORY_CATEGORIES } from "./types";
@@ -11,23 +12,25 @@ export interface Context {
   memories: MemoryRow[];
   recent: ConversationRow[];
   lastTurns: TurnRow[];
+  where: Locale;
 }
 
 export async function loadContext(db: D1Database, username: string): Promise<Context> {
-  const [all, recent] = await Promise.all([
+  const [all, recent, where] = await Promise.all([
     memories.list(db, username),
     conversations.list(db, username, RECENT_CONVERSATIONS),
+    users.locale(db, username),
   ]);
   const last = recent.find((r) => r.ended_at !== null);
   const lastTurns = last ? (await conversations.turns(db, last.id, 400)).slice(-LAST_CHAT_TURNS) : [];
-  return { memories: all, recent, lastTurns };
+  return { memories: all, recent, lastTurns, where };
 }
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 /** The memory block that opens every session's instructions, plus how to use the memory tools. */
 export function contextInstructions(context: Context, today = new Date()): string {
-  const parts: string[] = [`Today is ${today.toISOString().slice(0, 10)}.`];
+  const parts: string[] = [localeInstructions(context.where, today)];
   if (context.memories.length > 0) {
     const grouped = MEMORY_CATEGORIES.map((category) => {
       const items = context.memories.filter((m) => m.category === category);

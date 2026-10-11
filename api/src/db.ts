@@ -1,3 +1,4 @@
+import { DEFAULT_LOCALE, type Locale } from "./locale";
 import { purgeLog } from "./log";
 import { searchName } from "./phone";
 import type {
@@ -57,6 +58,16 @@ export const users = {
   remove: (db: D1Database, username: string) => db.prepare("DELETE FROM users WHERE username = ?").bind(username).run(),
 
   /** Whether the user let the assistant read their server log. */
+  locale: async (db: D1Database, username: string): Promise<Locale> =>
+    (await db.prepare("SELECT locale, timezone FROM users WHERE username = ?").bind(username).first<Locale>()) ??
+    DEFAULT_LOCALE,
+
+  setLocale: (db: D1Database, username: string, changes: Partial<Locale>) =>
+    db
+      .prepare("UPDATE users SET locale = COALESCE(?, locale), timezone = COALESCE(?, timezone) WHERE username = ?")
+      .bind(changes.locale ?? null, changes.timezone ?? null, username)
+      .run(),
+
   callTest: async (db: D1Database, username: string) =>
     (
       await db

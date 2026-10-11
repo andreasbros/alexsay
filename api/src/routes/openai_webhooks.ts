@@ -51,13 +51,14 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
   }
   try {
     const hasLights = (await connections.get(c.env.DB, leg.username, "lightwave")) !== null;
-    const [logAccess, callTest] = await Promise.all([
+    const [logAccess, callTest, where] = await Promise.all([
       users.logAccess(c.env.DB, leg.username),
       users.callTest(c.env.DB, leg.username),
+      users.locale(c.env.DB, leg.username),
     ]);
     await acceptCall(c.env.OPENAI_BASE_URL, openai.apiKey, callId, {
       model: openai.settings.call_model,
-      instructions: agent ? agentBrief(agent, leg.username) : (leg.brief ?? ""),
+      instructions: agent ? agentBrief(agent, leg.username, where) : (leg.brief ?? ""),
       voice: agent ? agent.voice : openai.settings.voice,
       tools: agent
         ? agentToolDefinitions()

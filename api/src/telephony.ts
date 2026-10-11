@@ -1,5 +1,6 @@
 import { canJoinCalls, openaiConnection, type TwilioConnection, twilioConnection } from "./connections";
 import { type CallRow, calls, contacts, messages } from "./db";
+import { type Locale, localeInstructions } from "./locale";
 import { logFor } from "./log";
 import { contextInstructions, currentConversation, loadContext } from "./memory";
 import { toWhatsapp } from "./phone";
@@ -458,10 +459,11 @@ const PHONE_ETIQUETTE =
   "If you were cut off, stay quiet, listen to what they say, and pick up only what still matters.";
 
 /** What the scripted agent is told: its part, the scenario, and that the user directs the rehearsal. */
-export function agentBrief(agent: TestAgent, username: string): string {
+export function agentBrief(agent: TestAgent, username: string, where: Locale): string {
   return [
     `You are taking part in a test phone call, playing a part so ${username} can rehearse their assistant. ` +
       `Your part: ${agent.role}. The scenario: ${agent.scenario}`,
+    localeInstructions(where, new Date()),
     "You have just answered the phone: greet the caller the way this part would, then follow the scenario and " +
       "improvise realistically within it. Speak like a real person on the phone: short turns, natural pauses, let " +
       "the other side finish. Stay in your part throughout.",

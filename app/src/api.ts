@@ -10,11 +10,17 @@ export interface User {
   ai_log_access?: boolean;
   /** The assistant may place test calls answered by a scripted AI. */
   ai_call_test?: boolean;
+  /** Language and region, such as en-GB: sets the assistant's language, currency and date conventions. */
+  locale?: string;
+  /** IANA time zone, such as Europe/London: the assistant's clock. */
+  timezone?: string;
 }
 
 export interface AccountSettings {
   ai_log_access: boolean;
   ai_call_test: boolean;
+  locale: string;
+  timezone: string;
 }
 
 export interface Device {

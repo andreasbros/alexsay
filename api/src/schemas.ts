@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LOCALE_PATTERN, validTimezone } from "./locale";
 import { MEMORY_CATEGORIES } from "./types";
 
 export const username = z
@@ -223,4 +224,9 @@ export const sendMessage = z.object({
 export const startConference = z.object({ participants: z.array(recipient).min(1).max(9) });
 export const conferenceName = z.string().regex(/^[a-z0-9-]{4,64}$/);
 
-export const userSettings = z.object({ ai_log_access: z.boolean().optional(), ai_call_test: z.boolean().optional() });
+export const userSettings = z.object({
+  ai_log_access: z.boolean().optional(),
+  ai_call_test: z.boolean().optional(),
+  locale: z.string().regex(LOCALE_PATTERN, "a locale such as en-GB").optional(),
+  timezone: z.string().max(64).refine(validTimezone, "an IANA time zone such as Europe/London").optional(),
+});

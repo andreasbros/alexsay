@@ -60,11 +60,7 @@ export function Layout({ user }: { user: User }) {
                   <Box style={{ color: "var(--accent-9)" }}>
                     <Logo size={24} />
                   </Box>
-                  <Box display={{ initial: "none", xs: "block" }}>
-                    <Text weight="bold" size="4">
-                      Alexsay
-                    </Text>
-                  </Box>
+                  <span className="wordmark">Alexsay</span>
                 </Flex>
               </Link>
               <Box display={{ initial: "none", sm: "block" }}>

@@ -58,12 +58,19 @@
 .hero-media {
   animation-delay: 0.15s;
 }
-/* The render carries its own dark backdrop, so it sits in a rounded frame on both themes */
-.hero-render {
+/* A photo per theme: the night scene on dark, the daylight scene on light */
+.hero-photo {
   width: 100%;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   border: 1px solid var(--border);
+}
+:root[data-theme="dark"] .only-light,
+:root:not([data-theme="light"]) .only-light {
+  display: none;
+}
+:root[data-theme="light"] .only-dark {
+  display: none;
 }
 @media (max-width: 900px) {
   .hero-inner {
@@ -162,41 +169,27 @@
   }
 }
 
-/* Renders */
-.renders {
+/* Hardware: copy beside a tall photo */
+.hardware {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 18px;
+  gap: clamp(28px, 5vw, 80px);
+  align-items: center;
 }
-.render {
+.hardware-copy h2 {
+  margin-bottom: 16px;
+}
+.photo {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
 }
-.render img {
+.photo img {
   width: 100%;
-}
-.render figcaption {
-  padding: 16px 22px 20px;
-  font-size: 14px;
-  color: var(--text-2);
-}
-.render-light {
-  background: #f1f1f4;
-}
-.render-light figcaption {
-  color: rgba(14, 14, 20, 0.7);
-}
-.render-dark {
-  background: #0c0c13;
-}
-.render-dark figcaption {
-  color: rgba(244, 244, 247, 0.7);
+  display: block;
 }
 @media (max-width: 800px) {
-  .renders {
+  .hardware {
     grid-template-columns: 1fr;
   }
 }

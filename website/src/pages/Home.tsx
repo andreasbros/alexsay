@@ -1,12 +1,14 @@
 import { FeatureIcon, IconArrow, IconGitHub } from "../components/Icons";
-import { Picture } from "../components/Picture";
+import { ThemedPicture } from "../components/ThemedPicture";
 import { APP_URL, FEATURES, GITHUB_URL, INTEGRATIONS } from "../content/site";
-import front800 from "../media/speaker-front-800.webp";
-import front1600 from "../media/speaker-front-1600.webp";
-import hero800 from "../media/speaker-hero-800.webp";
-import hero1600 from "../media/speaker-hero-1600.webp";
-import top800 from "../media/speaker-top-800.webp";
-import top1600 from "../media/speaker-top-1600.webp";
+import dayTall600 from "../media/home-day-tall-600.webp";
+import dayTall1200 from "../media/home-day-tall-1200.webp";
+import dayWide800 from "../media/home-day-wide-800.webp";
+import dayWide1600 from "../media/home-day-wide-1600.webp";
+import nightTall600 from "../media/home-night-tall-600.webp";
+import nightTall1200 from "../media/home-night-tall-1200.webp";
+import nightWide800 from "../media/home-night-wide-800.webp";
+import nightWide1600 from "../media/home-night-wide-1600.webp";
 
 export function Home() {
   return (
@@ -18,11 +20,11 @@ export function Home() {
             <p className="eyebrow">Open-source home assistant speaker</p>
             <h1>
               A speaker that listens to you.
-              <span className="serif">Not to a company.</span>
+              <span className="serif">On your terms.</span>
             </h1>
             <p className="lead">
-              Alexsay is a voice assistant you build and own. A Raspberry Pi 5, a four-microphone array, the AI provider
-              you choose on your own key, and a smart home that keeps working offline.
+              Alexsay is a voice assistant you build and own: a Raspberry Pi 5, a four-microphone array and the AI
+              provider you choose, on your own key.
             </p>
             <div className="hero-actions">
               <a className="btn btn-primary btn-lg" href={APP_URL}>
@@ -35,14 +37,14 @@ export function Home() {
             <p className="hero-note">Hardware, firmware and this site are open. Your API keys stay yours.</p>
           </div>
           <div className="hero-media animate-in">
-            <Picture
-              large={hero1600}
-              small={hero800}
-              alt="The Alexsay speaker: a charcoal fabric cylinder with a softly glowing top"
+            <ThemedPicture
+              night={{ large: nightWide1600, small: nightWide800 }}
+              day={{ large: dayWide1600, small: dayWide800 }}
+              alt="The Alexsay speaker, a charcoal fabric cylinder, on a wooden side table at home"
               width={1600}
               height={900}
               eager
-              className="hero-render"
+              className="hero-photo"
             />
           </div>
         </div>
@@ -94,37 +96,31 @@ export function Home() {
       </section>
 
       <section className="section" id="hardware">
-        <div className="container">
-          <div className="section-head">
+        <div className="container hardware">
+          <div className="hardware-copy">
             <h2>
-              Hear it. <span className="serif">See it listening.</span>
+              Made to be heard, <span className="serif">not looked at.</span>
             </h2>
             <p className="lead">
-              A seamless fabric wrap around a 4 inch driver, a glass top that glows while a conversation is open.
+              A seamless fabric wrap around a 4 inch driver, a four-microphone array under the top. No screen, no
+              buttons: you talk to it, and it talks back.
             </p>
+            <ul className="ticks">
+              <li>Raspberry Pi 5 inside</li>
+              <li>Hardware echo cancellation</li>
+              <li>3D-printed enclosure</li>
+              <li>Mains powered, one cable</li>
+            </ul>
           </div>
-          <div className="renders">
-            <figure className="card render render-light">
-              <Picture
-                large={front1600}
-                small={front800}
-                alt="The Alexsay speaker in light grey fabric, seen from the front"
-                width={1600}
-                height={900}
-              />
-              <figcaption>Light fabric, front view</figcaption>
-            </figure>
-            <figure className="card render render-dark">
-              <Picture
-                large={top1600}
-                small={top800}
-                alt="The Alexsay speaker from above, its top glowing while it listens"
-                width={1600}
-                height={900}
-              />
-              <figcaption>The top lights up while it listens</figcaption>
-            </figure>
-          </div>
+          <figure className="card photo">
+            <ThemedPicture
+              night={{ large: nightTall1200, small: nightTall600 }}
+              day={{ large: dayTall1200, small: dayTall600 }}
+              alt="The Alexsay speaker on a table in a living room"
+              width={1200}
+              height={1400}
+            />
+          </figure>
         </div>
       </section>
 

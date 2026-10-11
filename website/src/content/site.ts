@@ -12,7 +12,7 @@ export const FEATURES: Feature[] = [
   {
     icon: "wake",
     title: "Say Alexsay",
-    text: "A wake word trained on the device itself. It ignores Alexa, the TV and people saying Alex.",
+    text: "Say the name and it is listening. The wake word runs on the speaker itself, so nothing leaves the room until you talk to it.",
   },
   {
     icon: "duplex",
@@ -27,12 +27,12 @@ export const FEATURES: Feature[] = [
   {
     icon: "key",
     title: "Your keys, your bill",
-    text: "Bring your own OpenAI, Claude or Gemini key. Nothing is resold and nothing is logged on our side.",
+    text: "Bring your own OpenAI key today, Claude and Gemini next. Nothing is resold and your keys stay encrypted.",
   },
   {
     icon: "home",
-    title: "Home automation stays local",
-    text: "Home Assistant runs on the same Raspberry Pi. Your automations keep working when the internet does not.",
+    title: "Runs your home",
+    text: "Lights and more through the services you connect: Lightwave today, Apple Home and Google Home next.",
   },
   {
     icon: "open",

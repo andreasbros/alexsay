@@ -1,10 +1,11 @@
 /**
- * Conversation earcons, synthesised with Web Audio so nothing is downloaded: a rising chime when
- * the line opens, a falling hang-up and a short end blip when it closes. They only ever play
- * through their own oscillators; the call's streams are never touched.
+ * Conversation earcons, synthesised with Web Audio so nothing is downloaded: a connecting pulse,
+ * a ready tick, a falling hang-up and an end blip. The audio context is only awake while a sound
+ * plays and sleeps for the whole call: a running context next to WebRTC playback clicks on iOS.
  */
 const KEY = "ay-sounds";
 let context: AudioContext | null = null;
+let sleepTimer = 0;
 
 export function soundsEnabled(): boolean {
   try {
@@ -78,6 +79,16 @@ export function startConnecting(): () => void {
   };
 }
 
+/** Puts the context to sleep once the last note has faded, so nothing renders during the call. */
+function sleepAfter(ms: number): void {
+  window.clearTimeout(sleepTimer);
+  sleepTimer = window.setTimeout(() => {
+    if (context?.state === "running") {
+      void context.suspend();
+    }
+  }, ms);
+}
+
 function play(notes: Note[]): void {
   if (!soundsEnabled()) {
     return;
@@ -85,7 +96,13 @@ function play(notes: Note[]): void {
   try {
     context ??= new AudioContext();
     const ctx = context;
+    window.clearTimeout(sleepTimer);
+    if (ctx.state === "suspended") {
+      void ctx.resume();
+    }
     const now = ctx.currentTime + 0.02;
+    const lastEnd = Math.max(...notes.map((n) => n.at + n.length));
+    sleepAfter(lastEnd * 1000 + 150);
     for (const note of notes) {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();

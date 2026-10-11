@@ -81,7 +81,7 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 - Never drive the R 10 S hard while unbaffled on the bench: no box means no air load and the cone over-excurses at low frequencies.
 - The SanDisk High Endurance card came from a marketplace seller (Electrolyx UK): verify capacity with `f3write`/`f3read` before trusting it.
 - Raspberry Pi SSD (all capacities), the SSD Kit and the Pimoroni NVMe Base were **out of stock or discontinued in the UK on 10 Oct 2026**. NAND prices made other NVMe drives £60 to £90+. Start on the SD card.
-- Wake word is **"Alexsay"** (changed from "Alexsay" on 10 Oct 2026). "Alexa, say..." sounds almost the same, so it is the most important negative, with "Alexa", "Alexsay", "Alex says", "Alexei" and TV speech.
+- Wake word is **"Alexsay"** (changed from "Alex" on 10 Oct 2026). "Alexa, say..." sounds almost the same, so it is the most important negative, with "Alexa", "Alex", "Alex says", "Alexei" and TV speech.
 
 ## Open tasks
 

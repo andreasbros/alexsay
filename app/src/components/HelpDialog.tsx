@@ -168,3 +168,23 @@ export const TWILIO_HELP = {
     "people who wrote to the sender in the last 24 hours; anything else needs an approved template, which the " +
     "assistant does not send yet.",
 };
+
+export const CONTACTS_HELP = {
+  title: "Import contacts from your phone",
+  steps: [
+    {
+      text: '"Import from phone" opens the phone\'s own contact picker: you tick the people to share and only their names and numbers reach this app. The button appears only in browsers that offer the picker.',
+    },
+    {
+      text: 'iPhone: Safari hides the picker behind a flag. Open Settings, Apps, Safari, Advanced, Feature Flags (on older iOS: Advanced, Experimental Features) and turn on "Contact Picker API". Reload this page and the button appears.',
+    },
+    { text: "Android: Chrome has the picker switched on. Open this page in Chrome and press Import from phone." },
+    {
+      text: 'Laptop, or everyone at once: export a vCard. iPhone: Contacts app, Lists, press and hold "All Contacts", Export, then AirDrop or mail the .vcf to yourself. Google Contacts: contacts.google.com, Export, vCard. Then press "Import vCard" here and pick the file.',
+    },
+    {
+      text: "Local numbers such as 07700 900123 are stored with the country code from the Twilio card (+44 unless you changed it). Importing again later updates names without duplicating anyone.",
+    },
+  ],
+  note: "Contacts stay in your account only; the assistant reads them to call and message people you name.",
+};

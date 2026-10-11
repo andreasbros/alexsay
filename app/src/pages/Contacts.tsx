@@ -24,6 +24,7 @@ import {
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ChangeEvent, type FormEvent, useRef, useState } from "react";
 import { ApiError, api, type Channel, type Contact, type NewContact } from "../api";
+import { CONTACTS_HELP, HelpDialog } from "../components/HelpDialog";
 import { ago } from "../format";
 import { canPickContacts, parseVcf, pickContacts } from "../lib/contacts";
 
@@ -122,6 +123,7 @@ export function Contacts() {
           </Text>
         </Flex>
         <Flex align="center" gap="2" wrap="wrap">
+          <HelpDialog {...CONTACTS_HELP} />
           {canPickContacts() && (
             <Button variant="soft" onClick={pick} loading={imported.isPending}>
               <MobileIcon /> Import from phone

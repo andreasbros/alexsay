@@ -214,7 +214,9 @@ export function Assistant() {
             Start talking
           </Button>
         )}
-        <Activity entries={activity} />
+        <div className="activity-slot">
+          <Activity entries={activity} />
+        </div>
       </Flex>
     </div>
   );

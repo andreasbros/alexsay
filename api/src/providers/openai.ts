@@ -189,11 +189,16 @@ export interface CallSession {
   turnTaking: TurnTaking;
 }
 
-/** Semantic end-of-turn detection: it waits for the other voice to finish a thought, not just a 500 ms gap. */
+/** A pause this long ends the other side's turn; the side that yields waits a little longer, so the two never tie. */
+const HOLDS_SILENCE_MS = 550;
+const YIELDS_SILENCE_MS = 850;
+
+/** Silence-based end of turn (fast; semantic detection added seconds), with the collision rule in interrupt_response. */
 export function turnDetection(turnTaking: TurnTaking): Record<string, unknown> {
   return {
-    type: "semantic_vad",
-    eagerness: turnTaking === "yields" ? "low" : "auto",
+    type: "server_vad",
+    silence_duration_ms: turnTaking === "yields" ? YIELDS_SILENCE_MS : HOLDS_SILENCE_MS,
+    prefix_padding_ms: 300,
     create_response: true,
     interrupt_response: turnTaking === "yields",
   };

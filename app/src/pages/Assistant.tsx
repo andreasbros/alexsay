@@ -11,6 +11,7 @@ import { appendTurn, Transcript, type Turn } from "../components/Transcript";
 import { debugLog, isDebug, subscribeDebug } from "../lib/debug";
 import { startDemo } from "../lib/demo";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
+import { playEnd, playStart, primeSounds } from "../lib/sounds";
 import { DEFAULT_OPENAI, VOICES } from "../voices";
 
 const LABELS: Record<LiveStatus | "idle", string> = {
@@ -69,6 +70,7 @@ export function Assistant() {
   }, []);
 
   const start = async (resume = false) => {
+    primeSounds();
     setDetail(null);
     if (!resume) {
       setTurns([]);
@@ -78,7 +80,15 @@ export function Assistant() {
       onActivity: log,
       onStatus: (next: LiveStatus, info?: string) => {
         debugLog(`status ${next}${info ? ` (${info})` : ""}`);
-        setStatus(next);
+        setStatus((previous) => {
+          if (previous === "connecting" && next === "listening") {
+            playStart();
+          }
+          if (next === "closed" && previous !== "closed" && previous !== "idle") {
+            playEnd();
+          }
+          return next;
+        });
         if (info) {
           setDetail(info);
         }
@@ -102,8 +112,12 @@ export function Assistant() {
     }
   };
   const stop = () => {
+    const wasActive = session.current !== null;
     session.current?.stop();
     session.current = null;
+    if (wasActive) {
+      playEnd();
+    }
     setStatus("idle");
     setTurns([]);
   };

@@ -91,7 +91,7 @@ export const twilioRoutes = new Hono<AppEnv>()
     const username = c.get("user").username;
     return telephony(c, async () => {
       const recipient = await recipientOrThrow(c, username, ref);
-      return c.json(await placeCall(c, username, recipient, { message, task, voice: "mobile" }), 201);
+      return c.json(await placeCall(c, username, recipient, { message, task, host: "mobile" }), 201);
     });
   })
   .post("/calls/end", async (c) => {

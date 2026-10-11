@@ -719,7 +719,7 @@ function describeVoiceUrl(url: string): string {
 
 /** What happened to the last calls, including where an incoming one rang, so a silent phone has an answer. */
 function RecentCalls() {
-  const recent = useQuery({ queryKey: ["recent-calls"], queryFn: api.recentCalls, refetchInterval: 20_000 });
+  const recent = useQuery({ queryKey: ["recent-calls"], queryFn: api.recentCalls, refetchInterval: 60_000 });
   if (!recent.data || recent.data.length === 0) {
     return null;
   }

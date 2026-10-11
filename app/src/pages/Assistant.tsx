@@ -1,4 +1,4 @@
-import { SpeakerLoudIcon, SpeakerOffIcon } from "@radix-ui/react-icons";
+import { MobileIcon, SpeakerLoudIcon, SpeakerOffIcon } from "@radix-ui/react-icons";
 import { Badge, Button, Callout, Flex, Select, Text } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -52,6 +52,7 @@ export function Assistant() {
   const lineStatusRef = useRef<LineStatus>("off");
   const stopRing = useRef<(() => void) | null>(null);
   const [lineStatus, setLineStatus] = useState<LineStatus>("off");
+  const [lineError, setLineError] = useState<string | null>(null);
   const [caller, setCaller] = useState<string | null>(null);
   const hasPhone = connections.data?.some((c) => c.provider === "twilio") ?? false;
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -146,6 +147,7 @@ export function Assistant() {
   };
   /** Registers this page as the user's phone, so calls ring here while the conversation is open. */
   const openLine = async () => {
+    setLineError(null);
     try {
       line.current = await openPhoneLine(
         {
@@ -172,6 +174,8 @@ export function Assistant() {
         () => session.current?.micTrack() ?? null,
       );
     } catch (err) {
+      line.current = null;
+      setLineError(describe(err));
       log("error", `Phone line unavailable: ${describe(err)}`);
     }
   };
@@ -243,6 +247,18 @@ export function Assistant() {
           {lineStatus === "connected" ? "On a call" : LABELS[status]}
         </Badge>
         <Flex align="center" gap="2" wrap="nowrap">
+          {hasPhone && !demo && (
+            <Badge
+              color={lineStatus === "off" ? "amber" : "grass"}
+              size="2"
+              variant="soft"
+              className="assistant-line"
+              aria-label={lineStatus === "off" ? "Phone line off" : "Phone line ready"}
+              title={lineStatus === "off" ? "Calls cannot open here until the line is up" : "Calls open on this page"}
+            >
+              <MobileIcon />
+            </Badge>
+          )}
           <Select.Root
             size="2"
             value={settings.voice}
@@ -286,6 +302,16 @@ export function Assistant() {
           <Callout.Text>
             Add your OpenAI API key under <Link to="/connections">Connections</Link> first.
           </Callout.Text>
+        </Callout.Root>
+      )}
+      {lineError && (
+        <Callout.Root color="amber" size="1" role="alert">
+          <Flex align="center" justify="between" gap="3" wrap="wrap">
+            <Callout.Text>Phone line unavailable: {lineError}. Calls cannot open on this page.</Callout.Text>
+            <Button size="1" variant="soft" onClick={() => void openLine()}>
+              Retry
+            </Button>
+          </Flex>
         </Callout.Root>
       )}
       {lineStatus === "ringing" && (

@@ -35,8 +35,9 @@ const WEB_SEARCH_INSTRUCTIONS =
 const PHONE_INSTRUCTIONS =
   "You can phone, text and WhatsApp people through the user's own Twilio number. Resolve names with find_contact; " +
   "when several people match, ask which. Before any call or message, say who it goes to (and the exact text of a " +
-  "message) and wait for a yes. From the app a call opens in the browser with you on the line; give place_call a " +
-  "task when the user wants you to do the talking. With a message it phones them and reads it out instead. " +
+  "message) and wait for a yes. A call opens in the Assistant page the user is talking from, with you on the line; " +
+  "give place_call a task when the user wants you to do the talking. Ring the user's mobile only when they ask " +
+  "for it (via mobile). With a message it phones them and reads it out instead. " +
   "start_conference makes a group call, add_to_call brings in one more person, end_call hangs up. " +
   "recent_messages reads back texts the user received or sent.";
 

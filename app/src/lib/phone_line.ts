@@ -80,7 +80,17 @@ export async function openPhoneLine(
     }
   });
   device.on("error", (err: Error) => handlers.onActivity("error", `Phone line: ${err.message}`));
-  device.on("unregistered", () => set("off"));
+  // The SDK re-registers by itself after a network blip; follow it both ways so calls keep finding the page
+  device.on("registered", () => {
+    if (status !== "connected" && status !== "ringing") {
+      set("ready");
+    }
+  });
+  device.on("unregistered", () => {
+    if (status !== "connected") {
+      set("off");
+    }
+  });
   await device.register();
   set("ready");
   return {

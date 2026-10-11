@@ -342,27 +342,41 @@ describe("twilio", () => {
     expect(captured.body?.session.instructions).toContain("wait for a yes");
   });
 
-  it("phones Mum by ringing the user's own phone first, then bridging", async () => {
+  it("refuses to ring the mobile unasked when the page has no phone line", async () => {
     await connectTwilio(maria);
-    let form: Record<string, string> = {};
+    const quiet = mockUpstream({});
+    const result = (await tool(maria, "place_call", { name: "mum" })) as { error: string };
+    quiet.done();
+    expect(result.error).toContain("phone line is not ready");
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM calls").first<{ n: number }>()).toEqual({ n: 0 });
+  });
+
+  it("rings the user's mobile into a conference with Mum when asked for the mobile", async () => {
+    await connectTwilio(maria);
+    const legs: Record<string, string>[] = [];
     const upstream = mockUpstream({
-      [`POST ${TWILIO}/Calls.json`]: (_req, body) => {
-        form = formOf(body);
-        return reply(201, { sid: "CA1", status: "queued" });
+      [`POST ${TWILIO}/Conferences/*`]: (_req, body) => {
+        legs.push(formOf(body));
+        return reply(201, { call_sid: `CA${legs.length}`, status: "queued" });
       },
     });
-    const result = await tool(maria, "place_call", { name: "mum" });
+    const result = await tool(maria, "place_call", { name: "mum", via: "mobile" });
     upstream.done();
-    expect(result).toMatchObject({ ok: true, sid: "CA1", contact: "Mum", phone: MUM });
-    expect(form).toMatchObject({ To: MY_NUMBER, From: TWILIO_NUMBER, StatusCallback: `${APP}/v1/twilio/status` });
-    expect(form.Twiml).toContain(`<Dial callerId="${TWILIO_NUMBER}"><Number>${MUM}</Number></Dial>`);
+    expect(result).toMatchObject({ ok: true, host: "mobile", assistant: false });
+    expect((result as { note: string }).note).toContain("the user's mobile is ringing");
+    expect(legs.map((l) => l.To)).toEqual([MY_NUMBER, MUM]);
+    expect(legs[0]).toMatchObject({
+      Label: "host",
+      EndConferenceOnExit: "true",
+      StatusCallback: `${APP}/v1/twilio/status`,
+    });
     const contact = await env.DB.prepare("SELECT last_called_at FROM contacts WHERE phone = ?").bind(MUM).first();
     expect(contact?.last_called_at).toBeTypeOf("number");
 
     const done = await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "completed" });
     expect(done.status).toBe(204);
-    const row = await env.DB.prepare("SELECT status, kind FROM calls WHERE sid = 'CA1'").first();
-    expect(row).toEqual({ status: "completed", kind: "call" });
+    const row = await env.DB.prepare("SELECT status, kind, role FROM calls WHERE sid = 'CA1'").first();
+    expect(row).toEqual({ status: "completed", kind: "conference", role: "host" });
   });
 
   it("reads a message out instead when one is given", async () => {
@@ -386,9 +400,11 @@ describe("twilio", () => {
   });
 
   it("tells the model what is missing instead of failing", async () => {
-    expect(await tool(maria, "place_call", { name: "mum" })).toEqual({ error: "Twilio is not connected" });
+    expect(await tool(maria, "place_call", { name: "mum", via: "mobile" })).toEqual({
+      error: "Twilio is not connected",
+    });
     await connectTwilio(maria, { my_number: "" });
-    expect(await tool(maria, "place_call", { name: "mum" })).toEqual({
+    expect(await tool(maria, "place_call", { name: "mum", via: "mobile" })).toEqual({
       error: "the user's own mobile number is not set in Connections",
     });
     expect(await tool(maria, "send_whatsapp", { name: "mum", body: "hi" })).toEqual({
@@ -453,7 +469,10 @@ describe("twilio", () => {
         return reply(201, { call_sid: `CA${legs.length}`, status: "queued" });
       },
     });
-    const started = (await tool(maria, "start_conference", { participants: [{ name: "Mum" }, { name: "Dad" }] })) as {
+    const started = (await tool(maria, "start_conference", {
+      participants: [{ name: "Mum" }, { name: "Dad" }],
+      via: "mobile",
+    })) as {
       ok: boolean;
       conference: string;
       joined: { contact: string }[];

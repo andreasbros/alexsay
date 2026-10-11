@@ -8,7 +8,7 @@ import { type Recipient, type RecipientRef, resolveRecipient } from "./recipient
 import { applyContactChanges, publicContact } from "./routes/contacts";
 import { memoryCategory } from "./schemas";
 import { addToConference, endCall, placeCall, sendText, startConference, TelephonyError } from "./telephony";
-import type { AppEnv, ContactRow, MemoryCategory } from "./types";
+import type { AppEnv, ContactRow, MemoryCategory, VoiceClient } from "./types";
 import { MEMORY_CATEGORIES } from "./types";
 
 /**
@@ -60,6 +60,24 @@ async function recipientOf(c: Context<AppEnv>, args: Record<string, unknown>): P
   const username = c.get("user").username;
   const resolved = await resolveRecipient(c.env.DB, username, await countryCode(c, username), refOf(args));
   return resolved.ok ? resolved : { error: resolved.error, ...(resolved.options ? { options: resolved.options } : {}) };
+}
+
+/**
+ * Where the user takes a call. The page they are talking from, when it has its phone line up; their
+ * mobile only when they asked for it. A page without a line gets an error rather than a surprise call.
+ */
+function callHost(c: Context<AppEnv>, args: Record<string, unknown>): { host: VoiceClient } | { error: string } {
+  if (string(args, "via") === "mobile") {
+    return { host: "mobile" };
+  }
+  if (c.get("voice") === "browser") {
+    return { host: "browser" };
+  }
+  return {
+    error:
+      "the Assistant page's phone line is not ready, so the call cannot open there. Tell the user: keep the " +
+      "Assistant page open and check the phone line notice, or say 'on my mobile' to take the call on their phone.",
+  };
 }
 
 /** Telephony preconditions are told to the model as plain errors it can relay, not thrown. */
@@ -503,17 +521,23 @@ export const TOOLS: Tool[] = [
       type: "function",
       name: "place_call",
       description:
-        "Phones someone for the user. From the app the call opens right here in the browser, with you on the " +
-        "line too when the user's OpenAI project allows it: give a task when the user wants you to speak for " +
-        "them (ask something, book, explain), otherwise you listen and only speak when addressed. From a " +
-        "speaker the user's own phone rings first and is then connected. A message phones the person and reads " +
-        "it out without the user. Confirm who, and the task or message, before calling.",
+        "Phones someone for the user. The call opens in the Assistant page the user is talking from, so they hear " +
+        "and speak through it, and you are on the line as well when their OpenAI project allows it: give a task " +
+        "when the user wants you to speak for them (ask something, book, explain), otherwise you listen and only " +
+        "speak when addressed. Only when the user explicitly asks for it on their mobile, set via to mobile. " +
+        "A message phones the person and reads it out without the user. Confirm who, and the task or message, " +
+        "before calling.",
       parameters: {
         type: "object",
         properties: {
           ...RECIPIENT_PROPERTIES,
           task: { type: "string", description: "What you should get done on the call, in the user's words" },
           message: { type: "string", description: "Spoken to the person instead of connecting anyone" },
+          via: {
+            type: "string",
+            enum: ["app", "mobile"],
+            description: "Where the user takes the call; app unless asked",
+          },
         },
         additionalProperties: false,
       },
@@ -525,17 +549,23 @@ export const TOOLS: Tool[] = [
       }
       const message = string(args, "message").slice(0, 500) || undefined;
       const task = string(args, "task").slice(0, 1000) || undefined;
-      const voice = c.get("voice") ?? "mobile";
+      // A spoken message needs nobody on the user's side, so the page's line is only required for a real call
+      const host = message ? { host: "mobile" as const } : callHost(c, args);
+      if ("error" in host) {
+        return host;
+      }
       return telephony(async () => {
-        const result = await placeCall(c, c.get("user").username, recipient, { message, task, voice });
+        const result = await placeCall(c, c.get("user").username, recipient, { message, task, host: host.host });
         const note = message
           ? "the message is being delivered"
           : "conference" in result
-            ? result.assistant
-              ? "the call is opening in the app and you are on the line: " +
-                (task ? "carry out the task once they answer" : "speak only when addressed")
-              : "the call is opening in the app; you are not on the line, the user talks directly"
-            : "the user's phone is ringing; when answered it connects";
+            ? [
+                result.host === "browser" ? "the call is opening in the app" : "the user's mobile is ringing",
+                result.assistant
+                  ? `and you are on the line: ${task ? "carry out the task once they answer" : "speak only when addressed"}`
+                  : "but you are not on the line (OpenAI phone calls are not set up); the user talks directly",
+              ].join(" ")
+            : "placed";
         return { ok: true, ...result, note };
       });
     },
@@ -557,6 +587,11 @@ export const TOOLS: Tool[] = [
             maxItems: 9,
             items: { type: "object", properties: RECIPIENT_PROPERTIES, additionalProperties: false },
           },
+          via: {
+            type: "string",
+            enum: ["app", "mobile"],
+            description: "Where the user takes the call; app unless asked",
+          },
         },
         required: ["participants"],
         additionalProperties: false,
@@ -575,9 +610,13 @@ export const TOOLS: Tool[] = [
         }
         recipients.push(recipient);
       }
+      const host = callHost(c, args);
+      if ("error" in host) {
+        return host;
+      }
       return telephony(async () => ({
         ok: true,
-        ...(await startConference(c, c.get("user").username, recipients, c.get("voice") ?? "mobile")),
+        ...(await startConference(c, c.get("user").username, recipients, host.host)),
       }));
     },
   },

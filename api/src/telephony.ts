@@ -12,7 +12,7 @@ import {
   type Webhooks,
 } from "./providers/twilio";
 import type { Recipient } from "./recipients";
-import { announceTwiml, bridgeTwiml } from "./twiml";
+import { announceTwiml } from "./twiml";
 import type { AppEnv, Channel, VoiceClient } from "./types";
 
 /** A precondition the user can fix in Connections, told apart from a Twilio failure. */
@@ -42,7 +42,8 @@ export interface CallOptions {
   message?: string;
   /** What the assistant should get done on the call. */
   task?: string;
-  voice: VoiceClient;
+  /** Where the user takes the call: the page's own phone line, or their mobile when they asked for it. */
+  host: VoiceClient;
 }
 
 export interface Conference {
@@ -87,10 +88,9 @@ function myNumber(connection: TwilioConnection): string {
 }
 
 /**
- * A call for the user. From the browser it is a conference the Assistant page joins at once, with
- * the person asked for and, when OpenAI's SIP endpoint is set up, the assistant on the line too.
- * From elsewhere the user's own phone rings first and is then bridged. With a message, the person
- * is phoned and the message read out instead.
+ * A call for the user: a conference the user joins from the Assistant page (or their mobile, when
+ * they asked for that), with the person asked for and, when OpenAI's SIP endpoint is set up, the
+ * assistant on the line too. With a message, the person is phoned and the message read out instead.
  */
 export async function placeCall(
   c: Context<AppEnv>,
@@ -102,29 +102,7 @@ export async function placeCall(
   if (options.message) {
     return announce(c, username, connection, recipient, options.message);
   }
-  if (options.voice === "browser") {
-    return openConference(c, username, connection, [recipient], "browser", options.task);
-  }
-  const now = Date.now();
-  const sent = await createCall(connection.client, {
-    to: myNumber(connection),
-    from: connection.from,
-    twiml: bridgeTwiml(recipient.phone, connection.from),
-    statusCallback: statusCallbackUrl(c),
-  });
-  await calls.create(c.env.DB, {
-    username,
-    contact_id: recipient.contact?.id ?? null,
-    direction: "out",
-    kind: "call",
-    phone: recipient.phone,
-    conference: null,
-    sid: sent.sid,
-    status: sent.status,
-    at: now,
-  });
-  await contacts.stamp(c.env.DB, username, recipient.phone, "last_called_at", now);
-  return placed(sent, recipient);
+  return openConference(c, username, connection, [recipient], options.host, options.task);
 }
 
 async function announce(

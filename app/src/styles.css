@@ -287,3 +287,7 @@ body {
   user-select: text;
   -webkit-user-select: text;
 }
+
+.assistant-line {
+  padding-inline: 8px;
+}

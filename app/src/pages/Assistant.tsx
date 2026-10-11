@@ -12,7 +12,7 @@ import { debugLog, isDebug, subscribeDebug } from "../lib/debug";
 import { startDemo } from "../lib/demo";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
 import { type LineStatus, openPhoneLine, type PhoneLine } from "../lib/phone_line";
-import { playEnd, preloadSounds, primeSounds, startConnecting } from "../lib/sounds";
+import { callSink, playEnd, preloadSounds, primeCallAudio, primeSounds, startConnecting } from "../lib/sounds";
 import { DEFAULT_OPENAI, VOICES } from "../voices";
 
 const QUIET_BEFORE_CALL_MS = 800;
@@ -57,6 +57,7 @@ export function Assistant() {
   const stopRing = useRef<(() => void) | null>(null);
   const [lineStatus, setLineStatus] = useState<LineStatus>("off");
   const [lineError, setLineError] = useState<string | null>(null);
+  const [resumeAudio, setResumeAudio] = useState<(() => void) | null>(null);
   const [caller, setCaller] = useState<string | null>(null);
   const hasPhone = connections.data?.some((c) => c.provider === "twilio") ?? false;
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -111,6 +112,7 @@ export function Assistant() {
 
   const start = async (resume = false) => {
     primeSounds();
+    primeCallAudio();
     // Rings from the tap until the line is ready; stopped by the first listening status or a failure
     const stopRinging = startConnecting();
     setDetail(null);
@@ -170,11 +172,15 @@ export function Assistant() {
       line.current = await openPhoneLine(
         {
           onActivity: log,
+          onPlaybackBlocked: (resume) => setResumeAudio(() => resume),
           onStatus: (next, who) => {
             const wasOnCall = lineStatusRef.current === "connected";
             lineStatusRef.current = next;
             setLineStatus(next);
             setCaller(who ?? null);
+            if (next !== "connected") {
+              setResumeAudio(null);
+            }
             stopRing.current?.();
             stopRing.current = next === "ringing" ? startConnecting() : null;
             if (next === "connected") {
@@ -192,6 +198,7 @@ export function Assistant() {
         () => session.current?.micTrack() ?? null,
         // Let the page's assistant finish "Calling now" before the line opens, or it talks over the call
         () => statusRef.current !== "speaking" && Date.now() - lastSpokeAt.current > QUIET_BEFORE_CALL_MS,
+        callSink(),
       );
     } catch (err) {
       line.current = null;
@@ -363,6 +370,18 @@ export function Assistant() {
           <Flex align="center" justify="between" gap="3" wrap="wrap">
             <Callout.Text>On a call with {caller}</Callout.Text>
             <Flex gap="2">
+              {resumeAudio && (
+                <Button
+                  size="1"
+                  color="amber"
+                  onClick={() => {
+                    resumeAudio();
+                    setResumeAudio(null);
+                  }}
+                >
+                  Tap to hear the call
+                </Button>
+              )}
               <AddToCall onAdded={(name) => log("info", `Dialling ${name} into the call`)} />
               <Button size="1" color="red" onClick={hangUpCall}>
                 Hang up

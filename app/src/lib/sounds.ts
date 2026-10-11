@@ -174,3 +174,35 @@ export function renderNotes(notes: Note[], seconds: number): Float32Array {
   }
   return out;
 }
+
+let sink: HTMLAudioElement | null = null;
+
+/**
+ * The element a phone call plays through. Browsers, iPhones above all, only start sound on an element
+ * that a tap once started, so it is created and played (silently) in the Start tap and reused for
+ * every call; the call's remote stream is attached to it when the call connects.
+ */
+export function callSink(): HTMLAudioElement {
+  if (!sink) {
+    sink = new Audio(wavUrl([], 0.05));
+    sink.setAttribute("playsinline", "");
+    sink.style.display = "none";
+    document.body.appendChild(sink);
+  }
+  return sink;
+}
+
+/** Unlocks the call element inside a user gesture, so a later call can play through it unprompted. */
+export function primeCallAudio(): void {
+  const element = callSink();
+  element.muted = true;
+  element
+    .play()
+    .then(() => {
+      element.pause();
+      element.muted = false;
+    })
+    .catch(() => {
+      element.muted = false;
+    });
+}

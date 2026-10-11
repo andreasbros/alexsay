@@ -7,6 +7,8 @@ export type LineStatus = "off" | "ready" | "ringing" | "connected";
 export interface LineHandlers {
   onStatus: (status: LineStatus, who?: string) => void;
   onActivity: (kind: ActivityKind, text: string) => void;
+  /** The browser refused to start the call's sound; `resume` must be called from a tap. */
+  onPlaybackBlocked?: (resume: () => void) => void;
 }
 
 export interface PhoneLine {
@@ -31,6 +33,8 @@ export async function openPhoneLine(
   micTrack: () => MediaStreamTrack | null,
   /** False while the page's own assistant is still speaking, so its words do not spill into the call. */
   canAccept: () => boolean = () => true,
+  /** An audio element a tap has already started, which the call's sound is routed through. */
+  sink: HTMLAudioElement | null = null,
 ): Promise<PhoneLine> {
   const { token } = await api.voiceToken();
   withoutWebAudio();
@@ -58,9 +62,17 @@ export async function openPhoneLine(
   };
   const attach = (call: Call) => {
     current = call;
-    call.on("accept", () => set("connected", callerOf(call)));
+    call.on("accept", () => {
+      set("connected", callerOf(call));
+      if (sink) {
+        playThrough(sink, call, handlers);
+      }
+    });
     call.on("disconnect", () => {
       current = null;
+      if (sink) {
+        sink.srcObject = null;
+      }
       set("ready");
     });
     call.on("cancel", () => {
@@ -115,6 +127,29 @@ export async function openPhoneLine(
       set("off");
     },
   };
+}
+
+/**
+ * Routes the call's remote audio through the primed element and silences the SDK's own, so the call
+ * is heard once, through an element the browser already lets play.
+ */
+function playThrough(sink: HTMLAudioElement, call: Call, handlers: LineHandlers): void {
+  const remote = call.getRemoteStream();
+  if (!remote) {
+    return;
+  }
+  for (const other of document.querySelectorAll("audio")) {
+    if (other !== sink && other.srcObject === remote) {
+      other.muted = true;
+    }
+  }
+  sink.srcObject = remote;
+  sink.muted = false;
+  const start = () => sink.play();
+  start().catch(() => {
+    handlers.onActivity("error", "The browser blocked the call's sound until you tap");
+    handlers.onPlaybackBlocked?.(() => void start().catch(() => undefined));
+  });
 }
 
 /** Answers the assistant's own conference leg as soon as the page's assistant has finished its sentence. */

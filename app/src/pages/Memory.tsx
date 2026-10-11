@@ -7,6 +7,7 @@ import {
   Flex,
   Heading,
   IconButton,
+  SegmentedControl,
   Select,
   Text,
   TextArea,
@@ -14,8 +15,10 @@ import {
 } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
+import { useSearchParams } from "react-router";
 import { api, type Conversation, MEMORY_CATEGORIES, type Memory, type MemoryCategory } from "../api";
 import { ago } from "../format";
+import { Contacts } from "./Contacts";
 
 const CATEGORY_COLOURS: Record<MemoryCategory, "red" | "indigo" | "grass" | "amber" | "cyan" | "pink" | "gray"> = {
   important: "red",
@@ -27,12 +30,26 @@ const CATEGORY_COLOURS: Record<MemoryCategory, "red" | "indigo" | "grass" | "amb
   facts: "gray",
 };
 
-/** What the assistant knows about the user, and every conversation it had with them. */
+type Section = "memories" | "conversations" | "contacts";
+
+/** What the assistant knows about the user: memories, every conversation, and the phone book. */
 export function MemoryPage() {
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab");
+  const section: Section = tab === "contacts" || tab === "conversations" ? tab : "memories";
   return (
-    <Flex direction="column" gap="6">
-      <Memories />
-      <Conversations />
+    <Flex direction="column" gap="5">
+      <Flex align="center" justify="between" gap="3" wrap="wrap">
+        <Heading size="7">Memory</Heading>
+        <SegmentedControl.Root value={section} onValueChange={(v) => setParams(v === "memories" ? {} : { tab: v })}>
+          <SegmentedControl.Item value="memories">Memories</SegmentedControl.Item>
+          <SegmentedControl.Item value="conversations">Conversations</SegmentedControl.Item>
+          <SegmentedControl.Item value="contacts">Contacts</SegmentedControl.Item>
+        </SegmentedControl.Root>
+      </Flex>
+      {section === "memories" && <Memories />}
+      {section === "conversations" && <Conversations />}
+      {section === "contacts" && <Contacts />}
     </Flex>
   );
 }
@@ -48,14 +65,13 @@ function Memories() {
   });
   return (
     <Flex direction="column" gap="4">
-      <Flex align="center" justify="between">
-        <Heading size="7">Memory</Heading>
+      <Flex align="center" justify="between" gap="3">
+        <Text size="2" color="gray">
+          Written by the assistant after each conversation and by you here. It reads all of this when a conversation
+          starts.
+        </Text>
         <AddMemory onAdded={refresh} />
       </Flex>
-      <Text size="2" color="gray">
-        Written by the assistant after each conversation and by you here. It reads all of this when a conversation
-        starts.
-      </Text>
       {memories.data?.length === 0 && (
         <Card size="3">
           <Text color="gray">Nothing remembered yet. Talk to the assistant, or add a note.</Text>
@@ -198,8 +214,7 @@ function Conversations() {
   });
   return (
     <Flex direction="column" gap="4">
-      <Flex align="center" justify="between" gap="3" wrap="wrap">
-        <Heading size="6">Conversations</Heading>
+      <Flex align="center" justify="end" gap="3" wrap="wrap">
         <TextField.Root
           placeholder="Search"
           aria-label="Search conversations"
@@ -266,10 +281,9 @@ function ConversationCard({ conversation, onRemove }: { conversation: Conversati
         </Text>
         {open && detail.data && (
           <Flex direction="column" gap="1" mt="2" className="activity-list">
-            {detail.data.turns.map((t, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: an ordered transcript
+            {detail.data.turns.map((t) => (
               <Text
-                key={i}
+                key={`${t.at}-${t.role}-${t.text.slice(0, 40)}`}
                 size="1"
                 className={t.role === "tool" ? "mono" : undefined}
                 color={t.role === "user" ? undefined : "gray"}

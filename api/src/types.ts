@@ -1,5 +1,5 @@
 export type Role = "admin" | "user";
-export type Provider = "openai" | "lightwave";
+export type Provider = "openai" | "lightwave" | "twilio";
 
 export interface User {
   username: string;
@@ -76,4 +76,48 @@ export interface MemoryRow {
   source_conversation_id: string | null;
   created_at: number;
   updated_at: number;
+}
+
+export interface ContactRow {
+  id: string;
+  username: string;
+  name: string;
+  search_name: string;
+  phone: string;
+  label: string;
+  favourite: number;
+  last_called_at: number | null;
+  last_messaged_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export type Channel = "sms" | "whatsapp";
+export type Direction = "out" | "in";
+export type CallKind = "call" | "announcement" | "conference";
+
+export interface MessageRow {
+  id: string;
+  username: string;
+  contact_id: string | null;
+  channel: Channel;
+  direction: Direction;
+  phone: string;
+  body: string;
+  sid: string | null;
+  status: string;
+  at: number;
+}
+
+export interface CallRow {
+  id: string;
+  username: string;
+  contact_id: string | null;
+  direction: Direction;
+  kind: CallKind;
+  phone: string;
+  conference: string | null;
+  sid: string | null;
+  status: string;
+  at: number;
 }

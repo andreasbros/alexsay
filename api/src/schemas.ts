@@ -8,7 +8,7 @@ export const username = z
   .regex(/^[a-z0-9_.-]{2,32}$/, "2 to 32 of a-z, 0-9, _ . -");
 const password = z.string().min(8).max(256);
 export const role = z.enum(["admin", "user"]);
-export const provider = z.enum(["openai", "lightwave"]);
+export const provider = z.enum(["openai", "lightwave", "twilio"]);
 
 export const deviceId = z.string().trim().toLowerCase().uuid();
 const deviceName = z.string().trim().max(64);
@@ -100,3 +100,83 @@ export const toolCall = z.object({
   arguments: z.record(z.string(), z.unknown()).default({}),
   conversation_id: id.optional(),
 });
+
+const e164 = z
+  .string()
+  .trim()
+  .regex(/^\+[1-9]\d{7,14}$/, "an international number such as +447700900123");
+export const twilioSettings = z.object({
+  /** The Twilio number calls and texts go out from; its webhooks point at this app. */
+  from_number: e164.or(z.literal("")).default(""),
+  /** A WhatsApp-enabled sender, with or without the whatsapp: prefix; the sandbox number works for testing. */
+  whatsapp_from: z
+    .string()
+    .trim()
+    .regex(/^(whatsapp:)?\+[1-9]\d{7,14}$/)
+    .or(z.literal(""))
+    .default(""),
+  /** The user's own mobile: calls ring it first, then connect the other person. */
+  my_number: e164.or(z.literal("")).default(""),
+  /** A Twilio SIP domain the speakers register with, so incoming calls can ring them. */
+  sip_domain: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[a-z0-9-]+\.sip\.twilio\.com$/)
+    .or(z.literal(""))
+    .default(""),
+  /** Dialling code assumed for numbers written without one, such as 07700 900123. */
+  country_code: z
+    .string()
+    .trim()
+    .regex(/^\+[1-9]\d{0,3}$/)
+    .default("+44"),
+});
+export type TwilioSettings = z.infer<typeof twilioSettings>;
+
+/** Empty credentials keep the stored pair, so the number and settings can change on their own. */
+export const twilioConnection = z.object({
+  account_sid: z
+    .string()
+    .trim()
+    .regex(/^AC[0-9a-fA-F]{32}$/, "an account SID starts with AC")
+    .or(z.literal(""))
+    .optional(),
+  auth_token: z
+    .string()
+    .trim()
+    .regex(/^[0-9a-fA-F]{32}$/, "an auth token is 32 hex characters")
+    .or(z.literal(""))
+    .optional(),
+  settings: twilioSettings.prefault({}),
+});
+
+export const contactId = memoryId;
+const contactName = z.string().trim().min(1).max(120);
+const contactLabel = z.string().trim().max(40).default("");
+const rawPhone = z.string().trim().min(3).max(40);
+export const createContact = z.object({ name: contactName, phone: rawPhone, label: contactLabel });
+export const importContacts = z.object({
+  contacts: z
+    .array(z.object({ name: contactName, phone: rawPhone, label: contactLabel }))
+    .min(1)
+    .max(1000),
+});
+export const updateContact = z.object({ name: contactName, label: contactLabel, favourite: z.boolean() }).partial();
+export const contactList = z.object({
+  q: z.string().trim().max(100).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  favourites: z.enum(["1", "0"]).default("0"),
+});
+
+/** Who a call or message goes to: a contact from the phone book or a number as written. */
+const recipientFields = { contact_id: contactId.optional(), to: rawPhone.optional() };
+export const recipient = z.object(recipientFields);
+export const placeCall = z.object({ ...recipientFields, message: z.string().trim().min(1).max(500).optional() });
+export const sendMessage = z.object({
+  ...recipientFields,
+  body: z.string().trim().min(1).max(1600),
+  channel: z.enum(["sms", "whatsapp"]).default("sms"),
+});
+export const startConference = z.object({ participants: z.array(recipient).min(1).max(9) });
+export const conferenceName = z.string().regex(/^[a-z0-9-]{4,64}$/);

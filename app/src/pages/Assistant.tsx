@@ -1,7 +1,7 @@
 import { SpeakerLoudIcon, SpeakerOffIcon } from "@radix-ui/react-icons";
 import { Badge, Button, Callout, Flex, Select, Text } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { ApiError, api, type OpenAiSettings } from "../api";
 import { Activity, type ActivityEntry } from "../components/Activity";
@@ -52,8 +52,11 @@ export function Assistant() {
   useEffect(() => subscribeDebug(() => setDebugOn(isDebug())), []);
   // The last GPT-Live session, kept so a dropped call can be forked and carried on
   const lastSessionId = useRef<string | null>(null);
-  const log = (kind: ActivityEntry["kind"], text: string) =>
-    setActivity((entries) => [...entries.slice(-49), { at: new Date(), kind, text }]);
+  const log = useCallback(
+    (kind: ActivityEntry["kind"], text: string) =>
+      setActivity((entries) => [...entries.slice(-49), { at: new Date(), kind, text }]),
+    [],
+  );
 
   useEffect(() => () => session.current?.stop(), []);
   useEffect(preloadSounds, []);
@@ -68,7 +71,7 @@ export function Assistant() {
       window.removeEventListener("error", onError);
       window.removeEventListener("unhandledrejection", onRejection);
     };
-  }, []);
+  }, [log]);
 
   const start = async (resume = false) => {
     primeSounds();

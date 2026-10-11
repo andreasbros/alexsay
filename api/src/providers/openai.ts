@@ -32,6 +32,13 @@ const WEB_SEARCH_INSTRUCTIONS =
   "You can search the web for current information such as news, weather, opening hours or facts you are unsure of; " +
   "say briefly that you are checking, then answer with the essentials and name the source when it matters.";
 
+const PHONE_INSTRUCTIONS =
+  "You can phone, text and WhatsApp people through the user's own Twilio number. Resolve names with find_contact; " +
+  "when several people match, ask which. Before any call or message, say who it goes to (and the exact text of a " +
+  "message) and wait for a yes. A call rings the user's own phone first and then connects the other person; with a " +
+  "message it phones them and reads it out instead. start_conference makes a group call, add_to_call brings in one " +
+  "more person. recent_messages reads back texts the user received or sent.";
+
 const ADDRESSED_INSTRUCTIONS =
   "You are in a room with background sound: a television, music, other people talking to each other. " +
   "Only respond when someone addresses you by name (Alexsay, Aleksey, Alexei) or clearly continues an exchange " +
@@ -50,10 +57,12 @@ export interface SessionInput {
 
 /** The session body GPT-Live expects: voice layer plus a Responses backend that owns the tools. */
 export function sessionConfig(settings: OpenAiSettings, functions: LiveTool[], context = ""): Record<string, unknown> {
+  const hasPhone = functions.some((t) => t.type === "function" && t.name === "place_call");
   const instructions = [
     SPEAKER_INSTRUCTIONS,
     settings.respond_when_addressed ? ADDRESSED_INSTRUCTIONS : "",
     settings.web_search ? WEB_SEARCH_INSTRUCTIONS : "",
+    hasPhone ? PHONE_INSTRUCTIONS : "",
     settings.instructions,
     context,
   ]

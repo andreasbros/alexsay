@@ -74,7 +74,8 @@ describe("assistant sessions", () => {
       expect.arrayContaining(["list_lights", "set_light", "set_lights", "dim_light", "dim_lights"]),
     );
     const switchTool = toolDefinitions(true).find((t) => t.name === "set_lights");
-    expect(Object.keys((switchTool?.parameters as { properties: object }).properties)).toEqual(["match", "on"]);
+    const parameters = switchTool ? (switchTool.parameters as { properties: object }) : { properties: {} };
+    expect(Object.keys(parameters.properties)).toEqual(["match", "on"]);
     expect(toolDefinitions(false).map((t) => t.name)).not.toContain("set_lights");
   });
 
@@ -127,6 +128,9 @@ describe("assistant sessions", () => {
       "list_memories",
       "recall_conversations",
       "read_conversation",
+      "find_contact",
+      "list_contacts",
+      "favourite_contact",
     ]);
     expect(config.instructions).not.toMatch(/search the web/);
   });

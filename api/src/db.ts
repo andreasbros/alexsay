@@ -1,10 +1,16 @@
+import { searchName } from "./phone";
 import type {
+  CallRow,
+  Channel,
   ConnectionRow,
+  ContactRow,
   ConversationRow,
   ConversationSource,
   DeviceRow,
+  Direction,
   MemoryCategory,
   MemoryRow,
+  MessageRow,
   Provider,
   Role,
   TurnRole,
@@ -185,6 +191,17 @@ export const connections = {
 
   remove: (db: D1Database, username: string, provider: Provider) =>
     db.prepare("DELETE FROM connections WHERE username = ? AND provider = ?").bind(username, provider).run(),
+
+  /** Whose Twilio number (or WhatsApp sender) an incoming call or message was addressed to. */
+  twilioByNumber: (db: D1Database, number: string) =>
+    db
+      .prepare(
+        `SELECT * FROM connections WHERE provider = 'twilio' AND (
+           json_extract(settings, '$.from_number') = ?1 OR
+           json_extract(settings, '$.whatsapp_from') IN (?1, 'whatsapp:' || ?1))`,
+      )
+      .bind(number)
+      .first<ConnectionRow>(),
 };
 
 /** Nightly: drops expired sessions and old login failures. */
@@ -296,4 +313,209 @@ export const memories = {
 
   remove: (db: D1Database, username: string, id: string) =>
     db.prepare("DELETE FROM memories WHERE id = ? AND username = ?").bind(id, username).run(),
+};
+
+export interface ContactPage {
+  rows: ContactRow[];
+  total: number;
+}
+
+export interface NewContact {
+  name: string;
+  phone: string;
+  label: string;
+}
+
+/** Fields the assistant stamps when it reaches someone; a fixed set, so the column name is safe to splice. */
+export type ContactStamp = "last_called_at" | "last_messaged_at";
+
+export const contacts = {
+  /** Favourites first, then by name; `query` matches a name fragment or the digits of a number. */
+  list: async (
+    db: D1Database,
+    username: string,
+    options: { query?: string; favourites?: boolean; page: number; pageSize: number },
+  ): Promise<ContactPage> => {
+    const name = options.query ? `%${searchName(options.query)}%` : null;
+    const digits = options.query?.replace(/\D/g, "") ?? "";
+    const phone = digits.length >= 3 ? `%${digits}%` : null;
+    const where = `username = ?1 AND (?2 IS NULL OR search_name LIKE ?2 OR (?3 IS NOT NULL AND phone LIKE ?3))
+      AND (?4 = 0 OR favourite = 1)`;
+    const args = [username, name, phone, options.favourites ? 1 : 0];
+    const [rows, count] = await Promise.all([
+      db
+        .prepare(`SELECT * FROM contacts WHERE ${where} ORDER BY favourite DESC, search_name, label LIMIT ?5 OFFSET ?6`)
+        .bind(...args, options.pageSize, (options.page - 1) * options.pageSize)
+        .all<ContactRow>(),
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM contacts WHERE ${where}`)
+        .bind(...args)
+        .first<{ n: number }>(),
+    ]);
+    return { rows: rows.results, total: count?.n ?? 0 };
+  },
+
+  get: (db: D1Database, username: string, id: string) =>
+    db.prepare("SELECT * FROM contacts WHERE id = ? AND username = ?").bind(id, username).first<ContactRow>(),
+
+  byPhone: (db: D1Database, username: string, phone: string) =>
+    db.prepare("SELECT * FROM contacts WHERE username = ? AND phone = ?").bind(username, phone).first<ContactRow>(),
+
+  phones: async (db: D1Database, username: string) =>
+    new Set(
+      (
+        await db.prepare("SELECT phone FROM contacts WHERE username = ?").bind(username).all<{ phone: string }>()
+      ).results.map((r) => r.phone),
+    ),
+
+  /** Inserts new numbers and renames known ones; a blank imported label never wipes a kept one. */
+  upsert: (db: D1Database, username: string, rows: NewContact[], now: number) =>
+    db.batch(
+      rows.map((row) =>
+        db
+          .prepare(
+            `INSERT INTO contacts (id, username, name, search_name, phone, label, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (username, phone) DO UPDATE SET name = excluded.name, search_name = excluded.search_name,
+               label = CASE WHEN excluded.label = '' THEN contacts.label ELSE excluded.label END,
+               updated_at = excluded.updated_at`,
+          )
+          .bind(crypto.randomUUID(), username, row.name, searchName(row.name), row.phone, row.label, now, now),
+      ),
+    ),
+
+  update: (
+    db: D1Database,
+    username: string,
+    id: string,
+    changes: { name?: string; label?: string; favourite?: boolean },
+  ) =>
+    db
+      .prepare(
+        `UPDATE contacts SET name = COALESCE(?, name), search_name = COALESCE(?, search_name),
+           label = COALESCE(?, label), favourite = COALESCE(?, favourite), updated_at = ?
+         WHERE id = ? AND username = ?`,
+      )
+      .bind(
+        changes.name ?? null,
+        changes.name ? searchName(changes.name) : null,
+        changes.label ?? null,
+        changes.favourite === undefined ? null : changes.favourite ? 1 : 0,
+        Date.now(),
+        id,
+        username,
+      )
+      .run(),
+
+  remove: (db: D1Database, username: string, id: string) =>
+    db.prepare("DELETE FROM contacts WHERE id = ? AND username = ?").bind(id, username).run(),
+
+  stamp: (db: D1Database, username: string, phone: string, field: ContactStamp, at: number) =>
+    db.prepare(`UPDATE contacts SET ${field} = ? WHERE username = ? AND phone = ?`).bind(at, username, phone).run(),
+};
+
+export const messages = {
+  create: (
+    db: D1Database,
+    row: {
+      username: string;
+      contact_id: string | null;
+      channel: Channel;
+      direction: Direction;
+      phone: string;
+      body: string;
+      sid: string | null;
+      status: string;
+      at: number;
+    },
+  ) =>
+    db
+      .prepare(
+        `INSERT INTO messages (id, username, contact_id, channel, direction, phone, body, sid, status, at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        row.username,
+        row.contact_id,
+        row.channel,
+        row.direction,
+        row.phone,
+        row.body,
+        row.sid,
+        row.status,
+        row.at,
+      )
+      .run(),
+
+  /** Newest first, for one contact or across the phone book. */
+  list: async (db: D1Database, username: string, contactId: string | null, limit: number) =>
+    (
+      await db
+        .prepare(`SELECT * FROM messages WHERE username = ? AND (? IS NULL OR contact_id = ?) ORDER BY at DESC LIMIT ?`)
+        .bind(username, contactId, contactId, limit)
+        .all<MessageRow>()
+    ).results,
+};
+
+const TERMINAL_CALL_STATUSES = "('completed', 'busy', 'failed', 'no-answer', 'canceled')";
+
+export const calls = {
+  create: (
+    db: D1Database,
+    row: {
+      username: string;
+      contact_id: string | null;
+      direction: Direction;
+      kind: CallRow["kind"];
+      phone: string;
+      conference: string | null;
+      sid: string | null;
+      status: string;
+      at: number;
+    },
+  ) =>
+    db
+      .prepare(
+        `INSERT INTO calls (id, username, contact_id, direction, kind, phone, conference, sid, status, at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        row.username,
+        row.contact_id,
+        row.direction,
+        row.kind,
+        row.phone,
+        row.conference,
+        row.sid,
+        row.status,
+        row.at,
+      )
+      .run(),
+
+  list: async (db: D1Database, username: string, contactId: string | null, limit: number) =>
+    (
+      await db
+        .prepare(`SELECT * FROM calls WHERE username = ? AND (? IS NULL OR contact_id = ?) ORDER BY at DESC LIMIT ?`)
+        .bind(username, contactId, contactId, limit)
+        .all<CallRow>()
+    ).results,
+
+  bySid: (db: D1Database, sid: string) => db.prepare("SELECT * FROM calls WHERE sid = ?").bind(sid).first<CallRow>(),
+
+  setStatus: (db: D1Database, sid: string, status: string) =>
+    db.prepare("UPDATE calls SET status = ? WHERE sid = ?").bind(status, sid).run(),
+
+  /** The conference the user is in right now, if any leg started recently and has not ended. */
+  openConference: async (db: D1Database, username: string, since: number) =>
+    (
+      await db
+        .prepare(
+          `SELECT conference FROM calls WHERE username = ? AND kind = 'conference' AND at > ?
+             AND status NOT IN ${TERMINAL_CALL_STATUSES} ORDER BY at DESC LIMIT 1`,
+        )
+        .bind(username, since)
+        .first<{ conference: string }>()
+    )?.conference ?? null,
 };

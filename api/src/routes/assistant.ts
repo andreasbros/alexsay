@@ -18,10 +18,13 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
   if (!connection) {
     return c.json({ error: "no_openai_connection" }, 412);
   }
-  const hasLights = (await connections.get(c.env.DB, me.username, "lightwave")) !== null;
+  const [hasLights, hasPhone] = await Promise.all([
+    connections.get(c.env.DB, me.username, "lightwave").then((row) => row !== null),
+    connections.get(c.env.DB, me.username, "twilio").then((row) => row !== null),
+  ]);
   try {
     const context = contextInstructions(await loadContext(c.env.DB, me.username));
-    const input = { settings: connection.settings, tools: toolDefinitions(hasLights), context, sdp };
+    const input = { settings: connection.settings, tools: toolDefinitions(hasLights, hasPhone), context, sdp };
     const session = await createLiveSession(c.env.OPENAI_BASE_URL, connection.apiKey, {
       ...input,
       resumeFrom: resume_from,
@@ -35,7 +38,7 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
     return c.json({
       session_id: session.sessionId,
       sdp: session.sdp,
-      tools: hasLights ? ["lights"] : [],
+      tools: [...(hasLights ? ["lights"] : []), ...(hasPhone ? ["phone"] : [])],
       resumed: !!resume_from && !("fresh" in session),
     });
   } catch (err) {

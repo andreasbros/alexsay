@@ -1,10 +1,13 @@
 import type { Context } from "hono";
-import { lightwaveToken, lightwaveUrls } from "./connections";
-import { conversations, memories } from "./db";
+import { countryCode, lightwaveToken, lightwaveUrls } from "./connections";
+import { contacts, conversations, memories, messages } from "./db";
 import { type Light, lights, writeFeatures } from "./providers/lightwave";
 import type { FunctionTool } from "./providers/openai";
+import { type Recipient, type RecipientRef, resolveRecipient } from "./recipients";
+import { publicContact } from "./routes/contacts";
 import { memoryCategory } from "./schemas";
-import type { AppEnv, MemoryCategory } from "./types";
+import { addToConference, placeCall, sendText, startConference, TelephonyError } from "./telephony";
+import type { AppEnv, ContactRow, MemoryCategory } from "./types";
 import { MEMORY_CATEGORIES } from "./types";
 
 /**
@@ -13,8 +16,8 @@ import { MEMORY_CATEGORIES } from "./types";
  */
 export interface Tool {
   definition: FunctionTool;
-  /** Lightwave tools only make sense once the user connected Lightwave. */
-  needs?: "lightwave";
+  /** Provider tools only make sense once the user connected that provider. */
+  needs?: "lightwave" | "twilio";
   run: (c: Context<AppEnv>, args: Record<string, unknown>, conversationId: string | null) => Promise<unknown>;
 }
 
@@ -24,6 +27,46 @@ const num = (args: Record<string, unknown>, key: string): number | null =>
   typeof args[key] === "number" ? (args[key] as number) : null;
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const dayOrNull = (ms: number | null) => (ms === null ? null : day(ms));
+
+const CONTACT_PAGE = 25;
+
+/** How the model sees a contact: ids to act on, dates instead of timestamps. */
+const contactForModel = (row: ContactRow) => {
+  const { last_called_at, last_messaged_at, updated_at, ...rest } = publicContact(row);
+  return { ...rest, last_called: dayOrNull(last_called_at), last_messaged: dayOrNull(last_messaged_at) };
+};
+
+/** The recipient fields every phone tool shares: a contact id, a name as heard, or a number. */
+const RECIPIENT_PROPERTIES = {
+  contact_id: { type: "string", description: "The id from find_contact or list_contacts" },
+  name: { type: "string", description: "The person's name as the user said it, when the id is unknown" },
+  number: { type: "string", description: "A phone number the user dictated, when they are not a contact" },
+};
+
+const refOf = (args: Record<string, unknown>): RecipientRef => ({
+  contact_id: string(args, "contact_id") || undefined,
+  name: string(args, "name") || undefined,
+  number: string(args, "number") || undefined,
+});
+
+async function recipientOf(c: Context<AppEnv>, args: Record<string, unknown>): Promise<Recipient | { error: string }> {
+  const username = c.get("user").username;
+  const resolved = await resolveRecipient(c.env.DB, username, await countryCode(c, username), refOf(args));
+  return resolved.ok ? resolved : { error: resolved.error, ...(resolved.options ? { options: resolved.options } : {}) };
+}
+
+/** Telephony preconditions are told to the model as plain errors it can relay, not thrown. */
+async function telephony<T>(action: () => Promise<T>): Promise<T | { error: string }> {
+  try {
+    return await action();
+  } catch (err) {
+    if (err instanceof TelephonyError) {
+      return { error: err.message };
+    }
+    throw err;
+  }
+}
 
 export const TOOLS: Tool[] = [
   {
@@ -292,12 +335,270 @@ export const TOOLS: Tool[] = [
       return { ok: true, lights: matched.map((l) => l.name), level: args.level };
     },
   },
+  {
+    definition: {
+      type: "function",
+      name: "find_contact",
+      description:
+        "Looks people up in the user's phone book by name or by digits of a number. Returns matches with ids, " +
+        "labels (mobile, home), favourite flag and when they were last called or messaged.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string", description: "A name, part of a name, or digits" } },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const query = string(args, "query");
+      if (!query) {
+        return { error: "query is required" };
+      }
+      const { rows } = await contacts.list(c.env.DB, c.get("user").username, { query, page: 1, pageSize: 10 });
+      return rows.map(contactForModel);
+    },
+  },
+  {
+    definition: {
+      type: "function",
+      name: "list_contacts",
+      description: `Pages through the phone book, favourites first then alphabetical, ${CONTACT_PAGE} per page.`,
+      parameters: {
+        type: "object",
+        properties: {
+          page: { type: "integer", minimum: 1 },
+          favourites_only: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const page = Math.max(1, num(args, "page") ?? 1);
+      const result = await contacts.list(c.env.DB, c.get("user").username, {
+        favourites: args.favourites_only === true,
+        page,
+        pageSize: CONTACT_PAGE,
+      });
+      return {
+        contacts: result.rows.map(contactForModel),
+        page,
+        pages: Math.max(1, Math.ceil(result.total / CONTACT_PAGE)),
+        total: result.total,
+      };
+    },
+  },
+  {
+    definition: {
+      type: "function",
+      name: "favourite_contact",
+      description: "Marks a contact as a favourite, or removes the mark, when the user asks.",
+      parameters: {
+        type: "object",
+        properties: { ...RECIPIENT_PROPERTIES, favourite: { type: "boolean" } },
+        required: ["favourite"],
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const recipient = await recipientOf(c, args);
+      if ("error" in recipient) {
+        return recipient;
+      }
+      if (!recipient.contact) {
+        return { error: "that number is not in the phone book" };
+      }
+      const favourite = args.favourite === true;
+      await contacts.update(c.env.DB, c.get("user").username, recipient.contact.id, { favourite });
+      return { ok: true, contact: recipient.contact.name, favourite };
+    },
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "place_call",
+      description:
+        "Phones someone for the user. Without a message, the user's own phone rings first and is then connected " +
+        "to the person. With a message, the person is phoned and the message is read out to them instead. " +
+        "Confirm who (and the message) with the user before calling.",
+      parameters: {
+        type: "object",
+        properties: {
+          ...RECIPIENT_PROPERTIES,
+          message: { type: "string", description: "Spoken to the person instead of connecting the user" },
+        },
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const recipient = await recipientOf(c, args);
+      if ("error" in recipient) {
+        return recipient;
+      }
+      const message = string(args, "message").slice(0, 500) || undefined;
+      return telephony(async () => ({
+        ok: true,
+        ...(await placeCall(c, c.get("user").username, recipient, message)),
+        note: message ? "the message is being delivered" : "the user's phone is ringing; when answered it connects",
+      }));
+    },
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "start_conference",
+      description:
+        "Starts a group call: the user's phone rings and joins as host, then every listed person is dialled in. " +
+        "Confirm the list with the user first.",
+      parameters: {
+        type: "object",
+        properties: {
+          participants: {
+            type: "array",
+            minItems: 1,
+            maxItems: 9,
+            items: { type: "object", properties: RECIPIENT_PROPERTIES, additionalProperties: false },
+          },
+        },
+        required: ["participants"],
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const refs = Array.isArray(args.participants) ? (args.participants as Record<string, unknown>[]) : [];
+      if (refs.length === 0) {
+        return { error: "participants are required" };
+      }
+      const recipients: Recipient[] = [];
+      for (const ref of refs) {
+        const recipient = await recipientOf(c, ref);
+        if ("error" in recipient) {
+          return recipient;
+        }
+        recipients.push(recipient);
+      }
+      return telephony(async () => ({ ok: true, ...(await startConference(c, c.get("user").username, recipients)) }));
+    },
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "add_to_call",
+      description: "Dials one more person into the group call the user is in right now.",
+      parameters: { type: "object", properties: RECIPIENT_PROPERTIES, additionalProperties: false },
+    },
+    run: async (c, args) => {
+      const recipient = await recipientOf(c, args);
+      if ("error" in recipient) {
+        return recipient;
+      }
+      return telephony(async () => ({ ok: true, ...(await addToConference(c, c.get("user").username, recipient)) }));
+    },
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "send_text",
+      description:
+        "Sends an SMS text message from the user's number. Read the recipient and the exact text back and wait " +
+        "for a yes before sending.",
+      parameters: {
+        type: "object",
+        properties: { ...RECIPIENT_PROPERTIES, body: { type: "string", description: "The message text" } },
+        required: ["body"],
+        additionalProperties: false,
+      },
+    },
+    run: (c, args) => sendTool(c, args, "sms"),
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "send_whatsapp",
+      description:
+        "Sends a WhatsApp message from the user's WhatsApp sender. Plain text only reaches people who wrote to " +
+        "this number in the last 24 hours; otherwise WhatsApp refuses it. Confirm recipient and text first.",
+      parameters: {
+        type: "object",
+        properties: { ...RECIPIENT_PROPERTIES, body: { type: "string", description: "The message text" } },
+        required: ["body"],
+        additionalProperties: false,
+      },
+    },
+    run: (c, args) => sendTool(c, args, "whatsapp"),
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "recent_messages",
+      description:
+        "The latest text and WhatsApp messages, newest first: everything, or those with one person. Use it to " +
+        "read the user their messages or recall what someone wrote.",
+      parameters: {
+        type: "object",
+        properties: { ...RECIPIENT_PROPERTIES, limit: { type: "integer", minimum: 1, maximum: 50 } },
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const limit = Math.min(50, Math.max(1, num(args, "limit") ?? 10));
+      const ref = refOf(args);
+      let contactId: string | null = null;
+      if (ref.contact_id || ref.name || ref.number) {
+        const recipient = await recipientOf(c, args);
+        if ("error" in recipient) {
+          return recipient;
+        }
+        if (!recipient.contact) {
+          return { error: "that number is not in the phone book" };
+        }
+        contactId = recipient.contact.id;
+      }
+      const rows = await messages.list(c.env.DB, c.get("user").username, contactId, limit);
+      const names = new Map<string, string>();
+      for (const row of rows) {
+        if (row.contact_id && !names.has(row.contact_id)) {
+          const contact = await contacts.get(c.env.DB, c.get("user").username, row.contact_id);
+          names.set(row.contact_id, contact?.name ?? row.phone);
+        }
+      }
+      return rows.map((m) => ({
+        at: new Date(m.at).toISOString().slice(0, 16).replace("T", " "),
+        direction: m.direction === "out" ? "sent" : "received",
+        channel: m.channel,
+        with: (m.contact_id && names.get(m.contact_id)) || m.phone,
+        text: m.body,
+        status: m.status,
+      }));
+    },
+  },
 ];
+
+async function sendTool(c: Context<AppEnv>, args: Record<string, unknown>, channel: "sms" | "whatsapp") {
+  const body = string(args, "body").slice(0, 1600);
+  if (!body) {
+    return { error: "body is required" };
+  }
+  const recipient = await recipientOf(c, args);
+  if ("error" in recipient) {
+    return recipient;
+  }
+  return telephony(async () => ({
+    ok: true,
+    ...(await sendText(c, c.get("user").username, recipient, body, channel)),
+  }));
+}
 
 export const toolByName = (name: string) => TOOLS.find((t) => t.definition.name === name);
 
-export function toolDefinitions(hasLightwave: boolean): FunctionTool[] {
-  return TOOLS.filter((t) => !t.needs || (t.needs === "lightwave" && hasLightwave)).map((t) => t.definition);
+export function toolDefinitions(hasLightwave: boolean, hasTwilio = false): FunctionTool[] {
+  const available = { lightwave: hasLightwave, twilio: hasTwilio };
+  return TOOLS.filter((t) => !t.needs || available[t.needs]).map((t) => t.definition);
 }
 
 async function userLights(c: Context<AppEnv>): Promise<Light[]> {

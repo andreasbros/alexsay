@@ -28,7 +28,7 @@ export function Transcript({ turns, thinking }: { turns: Turn[]; thinking: boole
         );
       })}
       {thinking && (
-        <div className="bubble bubble-assistant bubble-thinking" aria-label="Thinking">
+        <div className="bubble bubble-assistant bubble-thinking" role="status" aria-label="Thinking">
           <span />
           <span />
           <span />

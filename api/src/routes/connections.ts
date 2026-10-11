@@ -1,12 +1,14 @@
 import { Hono } from "hono";
-import { exchangeLightwave, lightwaveToken, lightwaveUrls, openaiConnection } from "../connections";
+import { exchangeLightwave, lightwaveToken, lightwaveUrls, openaiConnection, twilioConnection } from "../connections";
 import { connections } from "../db";
 import { providerFailure } from "../provider_errors";
 import { structureIds } from "../providers/lightwave";
 import { listModels, ProviderError } from "../providers/openai";
+import { configureNumber, listNumbers, type TwilioClient, verifyAccount } from "../providers/twilio";
 import * as schemas from "../schemas";
-import { seal } from "../secrets";
+import { open, seal } from "../secrets";
 import type { AppEnv } from "../types";
+
 import { jsonBody } from "../validate";
 
 /** Each provider is one card in the app: stored sealed, listed without secrets, testable on demand. */
@@ -51,6 +53,45 @@ export const connectionRoutes = new Hono<AppEnv>()
     await connections.put(c.env.DB, c.get("user").username, "lightwave", sealed, "{}");
     return c.json({ provider: "lightwave", settings: {} });
   })
+  .put("/twilio", async (c) => {
+    const { account_sid, auth_token, settings } = await jsonBody(c, schemas.twilioConnection);
+    const username = c.get("user").username;
+    const existing = await connections.get(c.env.DB, username, "twilio");
+    const pasted = account_sid && auth_token ? { account_sid, auth_token } : null;
+    if (!pasted && !existing) {
+      return c.json({ error: "credentials_required" }, 400);
+    }
+    const secret = pasted ?? (existing ? await open<TwilioClient["secret"]>(c.env.SECRETS_KEY, existing.secret) : null);
+    if (!secret) {
+      return c.json({ error: "credentials_required" }, 400);
+    }
+    const client: TwilioClient = { baseUrl: c.env.TWILIO_BASE_URL, secret };
+    try {
+      if (pasted) {
+        await verifyAccount(client);
+      }
+      if (settings.from_number) {
+        const number = (await listNumbers(client)).find((n) => n.phone_number === settings.from_number);
+        if (!number) {
+          return c.json({ error: "number_not_found" }, 400);
+        }
+        const origin = new URL(c.req.url).origin;
+        await configureNumber(client, number.sid, {
+          voiceUrl: `${origin}/v1/twilio/voice`,
+          smsUrl: `${origin}/v1/twilio/messages`,
+          statusCallback: `${origin}/v1/twilio/status`,
+        });
+      }
+    } catch (err) {
+      if (err instanceof ProviderError) {
+        return c.json({ error: "twilio_rejected", status: err.status, detail: err.detail }, 400);
+      }
+      throw err;
+    }
+    const sealed = pasted ? await seal(c.env.SECRETS_KEY, pasted) : (existing?.secret ?? "");
+    await connections.put(c.env.DB, username, "twilio", sealed, JSON.stringify(settings));
+    return c.json({ provider: "twilio", settings });
+  })
   .post("/openai/test", async (c) => {
     const connection = await openaiConnection(c, c.get("user").username);
     if (!connection) {
@@ -79,6 +120,18 @@ export const connectionRoutes = new Hono<AppEnv>()
       return c.json({ ok: true, structures: structures.length });
     } catch (err) {
       return providerFailure(c, "lightwave", err);
+    }
+  })
+  .post("/twilio/test", async (c) => {
+    const connection = await twilioConnection(c, c.get("user").username);
+    if (!connection) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    try {
+      const [account, numbers] = await Promise.all([verifyAccount(connection.client), listNumbers(connection.client)]);
+      return c.json({ ok: true, account: account.friendly_name, numbers: numbers.length });
+    } catch (err) {
+      return providerFailure(c, "twilio", err);
     }
   })
   .delete("/:provider", async (c) => {

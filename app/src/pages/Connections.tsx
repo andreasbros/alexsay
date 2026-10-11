@@ -21,8 +21,10 @@ import {
   type OpenAiSettings,
   type Provider,
   type ProviderTest,
+  type TwilioSettings,
 } from "../api";
-import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP } from "../components/HelpDialog";
+import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP, TWILIO_HELP } from "../components/HelpDialog";
+import { toE164 } from "../lib/phone";
 import { DEFAULT_OPENAI as DEFAULTS, VOICES, voiceTypeOf } from "../voices";
 
 export function Connections() {
@@ -36,6 +38,7 @@ export function Connections() {
       </Text>
       <OpenAiCard connection={byProvider.get("openai")} />
       <LightwaveCard connection={byProvider.get("lightwave")} />
+      <TwilioCard connection={byProvider.get("twilio")} />
       <Card size="3" style={{ opacity: 0.7 }}>
         <Flex justify="between" align="center">
           <Heading size="4">Apple Home, Google Home, Claude, Gemini</Heading>
@@ -88,6 +91,13 @@ function TestResult({ result, provider }: { result: ProviderTest; provider: Prov
       <Text size="2" color="grass">
         Key works: {result.models} models visible
         {result.live_model ? ", gpt-live-1 available" : ", gpt-live-1 not listed"}.
+      </Text>
+    );
+  }
+  if (provider === "twilio") {
+    return (
+      <Text size="2" color="grass">
+        Account {result.account} works: {result.numbers} {result.numbers === 1 ? "number" : "numbers"}.
       </Text>
     );
   }
@@ -396,4 +406,192 @@ function explain(err: unknown): string {
     return err.status >= 500 ? "Lightwave did not respond." : `The request was refused (${err.code}).`;
   }
   return err instanceof Error ? err.message : "Something went wrong.";
+}
+
+const DEFAULT_TWILIO: TwilioSettings = {
+  from_number: "",
+  whatsapp_from: "",
+  my_number: "",
+  sip_domain: "",
+  country_code: "+44",
+};
+const NO_NUMBER = "none";
+
+function TwilioCard({ connection }: { connection: Connection | undefined }) {
+  const [sid, setSid] = useState("");
+  const [token, setToken] = useState("");
+  const [settings, setSettings] = useState<TwilioSettings>({ ...DEFAULT_TWILIO, ...connection?.settings });
+  const [editing, setEditing] = useState(false);
+  const numbers = useQuery({
+    queryKey: ["twilio-numbers"],
+    queryFn: api.twilioNumbers,
+    enabled: !!connection,
+    retry: false,
+  });
+  const save = useSave(() =>
+    api.connectTwilio(sid.trim(), token.trim(), {
+      ...settings,
+      my_number: settings.my_number ? (toE164(settings.my_number, settings.country_code) ?? settings.my_number) : "",
+      whatsapp_from: settings.whatsapp_from.replace(/^whatsapp:/, "").trim()
+        ? `whatsapp:${toE164(settings.whatsapp_from.replace(/^whatsapp:/, ""), settings.country_code) ?? settings.whatsapp_from}`
+        : "",
+    }),
+  );
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const first = !connection;
+    save.mutate(undefined, {
+      onSuccess: () => {
+        setSid("");
+        setToken("");
+        // The first save stores the credentials; the number and your mobile come next, in the same card
+        setEditing(first);
+      },
+    });
+  };
+  const open = editing || !connection;
+  const set = (patch: Partial<TwilioSettings>) => setSettings({ ...settings, ...patch });
+  return (
+    <Card size="3">
+      <Flex direction="column" gap="3">
+        <Flex justify="between" align="center" wrap="wrap" gap="2">
+          <Heading size="4">Twilio</Heading>
+          <Status connection={connection} provider="twilio" />
+        </Flex>
+        <Text size="2" color="gray">
+          Calls, group calls, texts and WhatsApp from your own number, and incoming calls to the speaker.
+        </Text>
+        {connection && !open && (
+          <Flex gap="3" align="center" wrap="wrap">
+            <Text size="2">
+              {connection.settings.from_number
+                ? `Calls and texts from ${connection.settings.from_number}`
+                : "No number chosen yet"}
+              {connection.settings.my_number
+                ? `, your phone ${connection.settings.my_number}`
+                : ", your mobile not set"}
+              {connection.settings.whatsapp_from ? ", WhatsApp on" : ""}
+              {connection.settings.sip_domain ? ", speakers take calls" : ""}
+            </Text>
+            <Button size="1" variant="soft" onClick={() => setEditing(true)}>
+              Change
+            </Button>
+          </Flex>
+        )}
+        {open && (
+          <form onSubmit={submit}>
+            <Flex direction="column" gap="3">
+              <TextField.Root
+                placeholder={connection ? "Account SID (leave empty to keep)" : "Account SID"}
+                aria-label="Twilio account SID"
+                autoComplete="off"
+                value={sid}
+                onChange={(e) => setSid(e.target.value)}
+                required={!connection}
+              />
+              <TextField.Root
+                placeholder={connection ? "Auth token (leave empty to keep)" : "Auth token"}
+                aria-label="Twilio auth token"
+                type="password"
+                autoComplete="off"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                required={!connection}
+              />
+              {connection && (
+                <>
+                  <Flex direction="column" gap="1">
+                    <Text size="2" weight="medium">
+                      Phone number
+                    </Text>
+                    <Select.Root
+                      value={settings.from_number || NO_NUMBER}
+                      onValueChange={(v) => set({ from_number: v === NO_NUMBER ? "" : v })}
+                    >
+                      <Select.Trigger aria-label="Twilio phone number" />
+                      <Select.Content>
+                        <Select.Item value={NO_NUMBER}>No number</Select.Item>
+                        {numbers.data?.map((n) => (
+                          <Select.Item key={n.sid} value={n.phone_number}>
+                            {n.phone_number} ({n.friendly_name || `${n.voice ? "voice" : ""}${n.sms ? " sms" : ""}`})
+                          </Select.Item>
+                        ))}
+                      </Select.Content>
+                    </Select.Root>
+                    {numbers.data?.length === 0 && (
+                      <Text size="1" color="gray">
+                        This account owns no numbers yet: buy one in the Twilio console (see Help).
+                      </Text>
+                    )}
+                    {numbers.error && (
+                      <Text size="1" color="red">
+                        {errorText(numbers.error)}
+                      </Text>
+                    )}
+                  </Flex>
+                  <TextField.Root
+                    placeholder="Your mobile number, e.g. 07700 900123"
+                    aria-label="Your mobile number"
+                    type="tel"
+                    value={settings.my_number}
+                    onChange={(e) => set({ my_number: e.target.value })}
+                  />
+                  <TextField.Root
+                    placeholder="WhatsApp sender, e.g. +14155238886 for the sandbox"
+                    aria-label="WhatsApp sender"
+                    value={settings.whatsapp_from}
+                    onChange={(e) => set({ whatsapp_from: e.target.value })}
+                  />
+                  <TextField.Root
+                    placeholder="Speaker SIP domain, e.g. alexsay.sip.twilio.com"
+                    aria-label="Speaker SIP domain"
+                    value={settings.sip_domain}
+                    onChange={(e) => set({ sip_domain: e.target.value })}
+                  />
+                  <TextField.Root
+                    placeholder="Country code for local numbers"
+                    aria-label="Default country code"
+                    value={settings.country_code}
+                    onChange={(e) => set({ country_code: e.target.value })}
+                    style={{ maxWidth: 220 }}
+                  />
+                </>
+              )}
+              {save.error && (
+                <Text size="2" color="red">
+                  {twilioError(save.error)}
+                </Text>
+              )}
+              <Flex gap="2" justify="end">
+                <HelpDialog {...TWILIO_HELP} />
+                {connection && (
+                  <Button type="button" variant="soft" color="gray" onClick={() => setEditing(false)}>
+                    Cancel
+                  </Button>
+                )}
+                <Button type="submit" loading={save.isPending}>
+                  Save
+                </Button>
+              </Flex>
+            </Flex>
+          </form>
+        )}
+      </Flex>
+    </Card>
+  );
+}
+
+function twilioError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === "twilio_rejected") {
+      return `Twilio refused the credentials (${err.detail ?? "no detail"}). Copy the Account SID and Auth Token from the console home page and try again.`;
+    }
+    if (err.code === "number_not_found") {
+      return "That number is not in this Twilio account any more.";
+    }
+    if (err.code === "bad_request") {
+      return "Check the numbers: international form such as +447700900123, the SIP domain ending in .sip.twilio.com.";
+    }
+  }
+  return errorText(err);
 }

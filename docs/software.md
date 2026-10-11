@@ -147,6 +147,21 @@ Ending a session. GPT-Live has no idle timeout of its own and bills open voice t
 - Home Assistant at `http://127.0.0.1:8123` with a long-lived access token.
 - Tool arguments are validated in `core` before any HTTP call; the model never gets raw HA errors with tokens or URLs in them.
 
+## Telephony (Twilio)
+
+| Flow | Path |
+|---|---|
+| Assistant calls someone | `place_call` tool, Worker `POST Calls.json` to `my_number` with `<Dial callerId=from_number><Number>to</Number></Dial>`; with `message`, calls `to` with `<Say>` |
+| Group call | `start_conference`: `POST Conferences/{name}/Participants.json` for the host (`EndConferenceOnExit`) then each person; `add_to_call` adds to the latest open conference |
+| Text, WhatsApp | `send_text`, `send_whatsapp`: `POST Messages.json`, `whatsapp:` prefix on both ends; free text only inside the 24 h window |
+| Incoming call | Twilio `POST /v1/twilio/voice`, owner found by `To`; TwiML `<Dial>` with `<Sip>sip:{deviceId}@{sip_domain}</Sip>` per claimed speaker plus `<Number>my_number</Number>` |
+| Speaker dials out | SIP INVITE to the Twilio SIP domain, Twilio `POST /v1/twilio/voice/outbound`, `<Dial callerId=from_number>` |
+| Incoming text | `POST /v1/twilio/messages`, stored against the contact by number |
+| Status | `POST /v1/twilio/status` updates `calls.status` by CallSid |
+
+- Every webhook is verified with the owner's auth token (HMAC-SHA1 over URL + sorted params) before anything is written.
+- Daemon side (to do): baresip registers `sip:{deviceId}@{sip_domain}` with the credentials from `/etc/alexsay/env`; the heartbeat carries `telephony {sip_domain, sip_username, from_number}`. Call audio goes through the same XVF3800 path as the assistant, so AEC holds.
+
 ## Configuration
 
 `/etc/alexsay/config.toml` (no secrets):

@@ -1,5 +1,5 @@
 export type Role = "admin" | "user";
-export type Provider = "openai" | "lightwave";
+export type Provider = "openai" | "lightwave" | "twilio";
 
 export interface User {
   username: string;
@@ -28,9 +28,25 @@ export interface OpenAiSettings {
   respond_when_addressed: boolean;
 }
 
+export interface TwilioSettings {
+  from_number: string;
+  whatsapp_from: string;
+  my_number: string;
+  sip_domain: string;
+  country_code: string;
+}
+
+export interface PhoneNumber {
+  sid: string;
+  phone_number: string;
+  friendly_name: string;
+  voice: boolean;
+  sms: boolean;
+}
+
 export interface Connection {
   provider: Provider;
-  settings: Partial<OpenAiSettings>;
+  settings: Partial<OpenAiSettings> & Partial<TwilioSettings>;
   created_at: number;
   updated_at: number;
 }
@@ -51,6 +67,8 @@ export interface ProviderTest {
   live_model?: boolean;
   backend_model?: boolean;
   structures?: number;
+  account?: string;
+  numbers?: number;
   status?: number;
   detail?: string;
 }
@@ -87,6 +105,50 @@ export interface ConversationTurn {
   at: number;
   role: "user" | "assistant" | "tool";
   text: string;
+}
+
+export interface Contact {
+  id: string;
+  name: string;
+  phone: string;
+  label: string;
+  favourite: boolean;
+  last_called_at: number | null;
+  last_messaged_at: number | null;
+  updated_at: number;
+}
+
+export interface ContactPage {
+  contacts: Contact[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export type Channel = "sms" | "whatsapp";
+
+export interface ContactDetail extends Contact {
+  messages: { id: string; channel: Channel; direction: "out" | "in"; body: string; status: string; at: number }[];
+  calls: {
+    id: string;
+    direction: "out" | "in";
+    kind: "call" | "announcement" | "conference";
+    status: string;
+    at: number;
+  }[];
+}
+
+export interface NewContact {
+  name: string;
+  phone: string;
+  label: string;
+}
+
+export interface Placed {
+  sid: string;
+  status: string;
+  phone: string;
+  contact: string | null;
 }
 
 export class ApiError extends Error {
@@ -132,6 +194,14 @@ export const api = {
     request<Connection>("PUT", "/api/connections/openai", { api_key: api_key || undefined, settings }),
   connectLightwave: (basic_token: string, refresh_token: string) =>
     request<Connection>("PUT", "/api/connections/lightwave", { basic_token, refresh_token }),
+  /** Empty credentials keep the stored pair; saving with a number points its webhooks at this app. */
+  connectTwilio: (account_sid: string, auth_token: string, settings: TwilioSettings) =>
+    request<Connection>("PUT", "/api/connections/twilio", {
+      account_sid: account_sid || undefined,
+      auth_token: auth_token || undefined,
+      settings,
+    }),
+  twilioNumbers: () => request<PhoneNumber[]>("GET", "/api/twilio/numbers"),
   testConnection: (provider: Provider) => request<ProviderTest>("POST", `/api/connections/${provider}/test`),
   removeConnection: (provider: Provider) => request<void>("DELETE", `/api/connections/${provider}`),
 
@@ -170,6 +240,23 @@ export const api = {
   updateMemory: (id: string, changes: { category?: MemoryCategory; content?: string }) =>
     request<void>("PATCH", `/api/memories/${encodeURIComponent(id)}`, changes),
   removeMemory: (id: string) => request<void>("DELETE", `/api/memories/${encodeURIComponent(id)}`),
+
+  contacts: (q: string, page: number, favourites: boolean) =>
+    request<ContactPage>(
+      "GET",
+      `/api/contacts?page=${page}&favourites=${favourites ? 1 : 0}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+    ),
+  contact: (id: string) => request<ContactDetail>("GET", `/api/contacts/${encodeURIComponent(id)}`),
+  addContact: (contact: NewContact) => request<Contact>("POST", "/api/contacts", contact),
+  importContacts: (contacts: NewContact[]) =>
+    request<{ imported: number; updated: number; skipped: number }>("POST", "/api/contacts/import", { contacts }),
+  updateContact: (id: string, changes: { name?: string; label?: string; favourite?: boolean }) =>
+    request<void>("PATCH", `/api/contacts/${encodeURIComponent(id)}`, changes),
+  removeContact: (id: string) => request<void>("DELETE", `/api/contacts/${encodeURIComponent(id)}`),
+  placeCall: (contact_id: string, message?: string) =>
+    request<Placed>("POST", "/api/twilio/calls", { contact_id, message }),
+  sendMessage: (contact_id: string, body: string, channel: Channel) =>
+    request<Placed>("POST", "/api/twilio/messages", { contact_id, body, channel }),
 
   users: () => request<User[]>("GET", "/api/users"),
   setRole: (username: string, role: Role) =>

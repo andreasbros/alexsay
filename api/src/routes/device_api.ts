@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { openaiConnection } from "../connections";
+import { openaiConnection, twilioConnection } from "../connections";
 import { devices } from "../db";
 import * as schemas from "../schemas";
 import type { AppEnv } from "../types";
@@ -29,12 +29,17 @@ export const deviceApiRoutes = new Hono<AppEnv>()
     if (!row?.owner) {
       return c.json({ claimed: false, time: now, poll_s: 30 });
     }
-    const connection = await openaiConnection(c, row.owner);
+    const [connection, twilio] = await Promise.all([openaiConnection(c, row.owner), twilioConnection(c, row.owner)]);
+    const telephony =
+      twilio?.settings.sip_domain && twilio.settings.from_number
+        ? { sip_domain: twilio.settings.sip_domain, sip_username: id, from_number: twilio.settings.from_number }
+        : null;
     return c.json({
       claimed: true,
       name: row.name,
       time: now,
       poll_s: 60,
       assistant: connection ? { provider: "openai", api_key: connection.apiKey, ...connection.settings } : null,
+      telephony,
     });
   });

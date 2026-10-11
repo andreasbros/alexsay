@@ -48,7 +48,9 @@ export function contextInstructions(context: Context, today = new Date()): strin
     "Memory tools: remember stores a new fact (categories: important, preferences, people, home, routines, reminders, " +
       "facts), list_memories shows them with ids, forget deletes one. History tools: recall_conversations lists past " +
       "conversations by date with summaries and can search a topic, read_conversation reads one transcript. Use them " +
-      "when the user refers to earlier talks or asks you to remember or forget something; do not announce them otherwise.",
+      "when the user refers to earlier talks or asks you to remember or forget something; do not announce them otherwise. " +
+      "Phone book tools: find_contact looks someone up by name or digits, list_contacts pages through everyone " +
+      "(favourites first), favourite_contact stars or unstars a person.",
   );
   return parts.join("\n\n");
 }

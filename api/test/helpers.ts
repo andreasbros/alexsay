@@ -8,6 +8,9 @@ export const DEVICE_ID = "7d1d6e2e-7c7b-4f6a-9d0a-1d2e3f4a5b6c";
 export async function resetDb(): Promise<void> {
   await env.DB.batch(
     [
+      "messages",
+      "calls",
+      "contacts",
       "conversation_turns",
       "conversations",
       "memories",
@@ -31,7 +34,7 @@ export function call(url: string, init: RequestInit = {}, cookie?: string): Prom
   if (cookie) {
     headers.set("cookie", cookie);
   }
-  if (init.body) {
+  if (init.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
   return exports.default.fetch(new Request(url, { ...init, headers }));
@@ -87,13 +90,16 @@ export function mockUpstream(routes: Record<string, UpstreamHandler>): { calls: 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const req = new Request(input, init);
     const key = `${req.method} ${req.url}`;
-    const handler = routes[key];
-    if (!handler) {
+    // A trailing * matches any suffix, for URLs that carry a generated id such as a conference name
+    const matched =
+      key in routes ? key : Object.keys(routes).find((k) => k.endsWith("*") && key.startsWith(k.slice(0, -1)));
+    const handler = matched ? routes[matched] : undefined;
+    if (!handler || !matched) {
       throw new Error(`unexpected upstream call ${key}`);
     }
-    pending.delete(key);
+    pending.delete(matched);
     calls.push(req.clone());
-    return handler(req, await req.text());
+    return handler(req, new TextDecoder().decode(await req.arrayBuffer()));
   }) as typeof fetch;
   return {
     calls,
@@ -108,3 +114,64 @@ export function mockUpstream(routes: Record<string, UpstreamHandler>): { calls: 
 
 export const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+export const TWILIO_SID = "AC0123456789abcdef0123456789abcdef";
+export const TWILIO_TOKEN = "fedcba9876543210fedcba9876543210";
+export const TWILIO = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}`;
+export const TWILIO_NUMBER = "+447700900000";
+export const MY_NUMBER = "+447700900999";
+
+/** Saving Twilio verifies the account and points the chosen number's webhooks here, so both are mocked. */
+export async function connectTwilio(cookie: string, settings: Record<string, unknown> = {}): Promise<Response> {
+  const upstream = mockUpstream({
+    [`GET ${TWILIO}.json`]: () => reply(200, { friendly_name: "Alexsay", status: "active" }),
+    [`GET ${TWILIO}/IncomingPhoneNumbers.json?PageSize=100`]: () =>
+      reply(200, {
+        incoming_phone_numbers: [
+          { sid: "PN1", phone_number: TWILIO_NUMBER, friendly_name: "Home", capabilities: { voice: true, sms: true } },
+        ],
+      }),
+    [`POST ${TWILIO}/IncomingPhoneNumbers/PN1.json`]: () => reply(200, { sid: "PN1" }),
+  });
+  const res = await json(
+    `${APP}/api/connections/twilio`,
+    "PUT",
+    {
+      account_sid: TWILIO_SID,
+      auth_token: TWILIO_TOKEN,
+      settings: { from_number: TWILIO_NUMBER, my_number: MY_NUMBER, ...settings },
+    },
+    cookie,
+  );
+  upstream.done();
+  return res;
+}
+
+/** A Twilio webhook as Twilio sends it: form encoded and signed with the account's auth token. */
+export async function twilioWebhook(path: string, params: Record<string, string>, token = TWILIO_TOKEN) {
+  const url = `${APP}${path}`;
+  const payload =
+    url +
+    Object.keys(params)
+      .sort()
+      .map((k) => k + params[k])
+      .join("");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(token),
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return call(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "x-twilio-signature": btoa(String.fromCharCode(...new Uint8Array(mac))),
+    },
+    body: new URLSearchParams(params).toString(),
+  });
+}
+
+export const formOf = (body: string) => Object.fromEntries(new URLSearchParams(body));

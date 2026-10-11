@@ -147,7 +147,9 @@ export function wavUrl(notes: Note[], seconds: number): string {
   view.setUint16(34, 16, true);
   text(36, "data");
   view.setUint32(40, samples.length * 2, true);
-  samples.forEach((sample, i) => view.setInt16(44 + i * 2, Math.round(sample * 32767), true));
+  samples.forEach((sample, i) => {
+    view.setInt16(44 + i * 2, Math.round(sample * 32767), true);
+  });
   return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
 }
 

@@ -22,7 +22,9 @@ export function startDemo(handlers: LiveHandlers): LiveSession {
       role = who;
       handlers.onStatus(who === "assistant" ? "speaking" : "listening");
     });
-    words.forEach((word, i) => at(startMs + i * 260, () => handlers.onTranscript(who, `${i ? " " : ""}${word}`)));
+    words.forEach((word, i) => {
+      at(startMs + i * 260, () => handlers.onTranscript(who, `${i ? " " : ""}${word}`));
+    });
     const end = startMs + words.length * 260 + 300;
     at(end, () => {
       role = null;

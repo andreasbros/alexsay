@@ -95,9 +95,54 @@ describe("App", () => {
     });
     renderApp("/connections");
     const help = await screen.findAllByRole("button", { name: "Help" });
-    expect(help).toHaveLength(2);
+    expect(help).toHaveLength(3);
     fireEvent.click(help[0] as HTMLElement);
     expect(await screen.findByRole("heading", { name: "Get an OpenAI API key" })).toBeDefined();
     expect(screen.getByText(/Create new secret key/)).toBeDefined();
+  });
+
+  it("imports a vCard into the phone book under Memory", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        calls.push(`${init?.method ?? "GET"} ${path}`);
+        if (path === "/api/session/me") {
+          return new Response(JSON.stringify({ username: "maria", role: "user" }), { status: 200 });
+        }
+        if (path === "/api/contacts/import") {
+          return new Response(JSON.stringify({ imported: 1, updated: 0, skipped: 0 }), { status: 200 });
+        }
+        if (path.startsWith("/api/contacts")) {
+          const contacts = calls.some((c) => c.startsWith("POST /api/contacts/import"))
+            ? [
+                {
+                  id: "c1",
+                  name: "Mum",
+                  phone: "+447700900123",
+                  label: "mobile",
+                  favourite: false,
+                  last_called_at: null,
+                  last_messaged_at: null,
+                  updated_at: 0,
+                },
+              ]
+            : [];
+          return new Response(JSON.stringify({ contacts, total: contacts.length, page: 1, page_size: 50 }), {
+            status: 200,
+          });
+        }
+        return new Response("{}", { status: 404 });
+      }),
+    );
+    renderApp("/memory?tab=contacts");
+    expect(await screen.findByText(/No contacts yet/)).toBeDefined();
+    const file = new File(["BEGIN:VCARD\nFN:Mum\nTEL;type=CELL:07700 900123\nEND:VCARD\n"], "mum.vcf", {
+      type: "text/vcard",
+    });
+    fireEvent.change(screen.getByLabelText("vCard file"), { target: { files: [file] } });
+    expect(await screen.findByText(/Imported 1, updated 0\./)).toBeDefined();
+    expect(await screen.findByText("+447700900123")).toBeDefined();
+    expect(calls).toContain("POST /api/contacts/import");
   });
 });

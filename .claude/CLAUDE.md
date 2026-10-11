@@ -45,6 +45,8 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 - Provider credentials are AES-GCM sealed in D1 under `SECRETS_KEY` (Worker secret, also in `.env` for `just dev`). Lightwave refresh tokens rotate on every use and are re-sealed.
 - Passwords are salted PBKDF2-SHA256 (100k) hashed on the server; `scripts/hash-password.mjs` makes the same format for `just add-user`.
 - Both `alexsay.com` and `www.alexsay.com` serve the website (no redirect; canonical is www).
+- Telephony (11 Oct 2026): Twilio is a third connection (account SID + auth token sealed; settings: `from_number`, `my_number`, `whatsapp_from`, `sip_domain`, `country_code`). Saving with a number sets that number's Voice/SMS/status webhooks to `/v1/twilio/{voice,messages,status}` on this app; every webhook is checked against the owner's auth token (X-Twilio-Signature). The assistant's phone tools run server-side through `api/src/telephony.ts`: `place_call` rings `my_number` and bridges with `<Dial>`, or reads a message out with `<Say>`; conferences use the Participants API with a friendly name (host leg `EndConferenceOnExit`); texts and WhatsApp go through `Messages.json`. Incoming calls ring every claimed speaker as `sip:{deviceId}@{sip_domain}` plus `my_number` at once; the speaker will register with a SIP client (baresip) using its UUID as the SIP username (credential list still manual). The Twilio MCP server (`mcp.twilio.com/docs`) is docs-only, so there is nothing to wire into the assistant.
+- Contacts live in D1 (`contacts`, unique per user and E.164 number, indexed on `search_name` and favourites; `messages` and `calls` keep the history). The app imports them with the Contact Picker API (Android Chrome, iOS Safari) or a `.vcf` file; numbers are normalised with the user's `country_code` (default +44).
 - `@cloudflare/vitest-pool-workers` 0.22 has no `fetchMock`: API tests stub `globalThis.fetch` through `mockUpstream` in `api/test/helpers.ts`.
 - Vite 8 (rolldown) rejects object-form `manualChunks`.
 - The flake references the aarch64 cross gcc by path (not on PATH) so host C builds keep the host gcc; the Pi binary links against `/lib/ld-linux-aarch64.so.1` (see `device/.cargo/config.toml`).
@@ -89,6 +91,8 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 - [ ] Record wake-word positives/negatives on the device; train an openWakeWord "Alexsay" model.
 - [x] Scaffold the repo: Nix flake, justfile, Rust workspace (`core` host-tested, `daemon`), systemd unit. HA compose file still to do.
 - [ ] Daemon audio: ALSA capture/playback through the Flex, GPT-Live WebSocket client in `daemon` on top of `core::live` and `core::session`.
+- [ ] Daemon telephony: SIP registration (baresip) against the Twilio SIP domain from the heartbeat's `telephony` block; create the credential list entry per speaker through Twilio's API instead of by hand.
+- [ ] WhatsApp templates (Content API) for messages outside the 24 h window; message status callbacks.
 - [ ] App: email instead of username, password reset, Apple Home / Google Home / Claude / Gemini connections.
 - [ ] Enclosure CAD from Seeed's STEP files (circular mic board, core board) + Pi 5 mechanical drawing; get a PETG print quote.
 - [ ] Buy the Phase 2 bits in `docs/procurement.md` "Still to buy" once the bench works.

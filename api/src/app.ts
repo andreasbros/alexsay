@@ -2,17 +2,21 @@ import { Hono } from "hono";
 import { requireAdmin, requireUser } from "./auth";
 import { assistantRoutes, lightwaveRoutes } from "./routes/assistant";
 import { connectionRoutes } from "./routes/connections";
+import { contactRoutes } from "./routes/contacts";
 import { conversationRoutes, memoryRoutes } from "./routes/conversations";
 import { deviceApiRoutes } from "./routes/device_api";
 import { deviceRoutes } from "./routes/devices";
 import { sessionRoutes } from "./routes/session";
 import { toolRoutes } from "./routes/tools";
+import { twilioRoutes } from "./routes/twilio";
+import { twilioWebhookRoutes } from "./routes/twilio_webhooks";
 import { userRoutes } from "./routes/users";
 import type { AppEnv } from "./types";
 import { BadRequest } from "./validate";
 
 export const app = new Hono<AppEnv>()
   .route("/v1/device", deviceApiRoutes)
+  .route("/v1/twilio", twilioWebhookRoutes)
   .route("/api/session", sessionRoutes)
   .use("/api/devices/*", requireUser)
   .use("/api/devices", requireUser)
@@ -30,6 +34,11 @@ export const app = new Hono<AppEnv>()
   .use("/api/memories/*", requireUser)
   .use("/api/memories", requireUser)
   .route("/api/memories", memoryRoutes)
+  .use("/api/contacts/*", requireUser)
+  .use("/api/contacts", requireUser)
+  .route("/api/contacts", contactRoutes)
+  .use("/api/twilio/*", requireUser)
+  .route("/api/twilio", twilioRoutes)
   .use("/api/tools/*", requireUser)
   .route("/api/tools", toolRoutes)
   .use("/api/users/*", requireUser, requireAdmin)

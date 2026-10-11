@@ -110,3 +110,61 @@ export const LIGHTWAVE_HELP = {
     'A refresh token works once. If Lightwave answers "Unknown refresh token", the pasted one was already used (by an ' +
     "earlier save or another integration): press Get Token again and paste the new pair.",
 };
+
+export const TWILIO_HELP = {
+  title: "Connect Twilio",
+  steps: [
+    {
+      text: (
+        <>
+          Sign in at {external("https://console.twilio.com/", "console.twilio.com")}. A trial account can only call and
+          text numbers you have verified there; upgrade (add funds) to reach everyone.
+        </>
+      ),
+    },
+    {
+      text: 'On the console home page, under "Account Info", copy the Account SID (starts with AC) and the Auth Token (press the eye icon to reveal it). Paste both above and press Save.',
+    },
+    {
+      text: (
+        <>
+          Buy a number with Voice and SMS under{" "}
+          {external(
+            "https://console.twilio.com/us1/develop/phone-numbers/manage/search",
+            "Phone Numbers, Buy a number",
+          )}
+          . UK numbers need an address, some a regulatory bundle. Then press Change here and pick it: saving points the
+          number&apos;s call and message webhooks at this app.
+        </>
+      ),
+    },
+    {
+      text: "Enter your own mobile number. A call from the assistant rings it first and then connects the other person.",
+    },
+    {
+      text: (
+        <>
+          WhatsApp: to try it, open{" "}
+          {external("https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn", "Messaging, Try it out")}{" "}
+          and enter the sandbox sender (whatsapp:+14155238886); every phone first texts the sandbox its join code. For
+          real use, register a WhatsApp sender under Messaging, Senders and enter its number.
+        </>
+      ),
+    },
+    {
+      text: (
+        <>
+          For a speaker to take calls, create a SIP domain under{" "}
+          {external("https://console.twilio.com/us1/develop/voice/manage/sip-domains", "Voice, SIP Domains")} with SIP
+          registration on and a credential list, set its voice webhook to
+          https://app.alexsay.com/v1/twilio/voice/outbound, and enter the domain here (for example
+          alexsay.sip.twilio.com). Each speaker registers with its UUID as the username.
+        </>
+      ),
+    },
+  ],
+  note:
+    "Calls are billed by Twilio for both legs: your phone and the person called. Plain WhatsApp text only reaches " +
+    "people who wrote to the sender in the last 24 hours; anything else needs an approved template, which the " +
+    "assistant does not send yet.",
+};

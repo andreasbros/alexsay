@@ -2,9 +2,10 @@ import type { Context } from "hono";
 import { connections } from "./db";
 import { accessToken, type LightwaveSecret, type LightwaveUrls } from "./providers/lightwave";
 import { ProviderError } from "./providers/openai";
-import { type OpenAiSettings, openaiSettings } from "./schemas";
+import type { TwilioClient, TwilioSecret } from "./providers/twilio";
+import { type OpenAiSettings, openaiSettings, type TwilioSettings, twilioSettings } from "./schemas";
 import { open, seal } from "./secrets";
-import type { AppEnv } from "./types";
+import type { AppEnv, ConnectionRow } from "./types";
 
 export interface OpenAiConnection {
   apiKey: string;
@@ -57,4 +58,31 @@ async function refreshAndStore(c: Context<AppEnv>, username: string, sealed: str
 /** Exchanges freshly pasted Lightwave tokens right away, so a dead refresh token is caught before it is stored. */
 export async function exchangeLightwave(c: Context<AppEnv>, secret: LightwaveSecret): Promise<LightwaveSecret> {
   return (await accessToken(lightwaveUrls(c), secret)).secret;
+}
+
+export interface TwilioConnection {
+  client: TwilioClient;
+  settings: TwilioSettings;
+}
+
+/** The user's Twilio account and telephony settings, or null when they have not connected one. */
+export async function twilioConnection(c: Context<AppEnv>, username: string): Promise<TwilioConnection | null> {
+  const row = await connections.get(c.env.DB, username, "twilio");
+  return row ? twilioFromRow(c, row) : null;
+}
+
+export async function twilioFromRow(c: Context<AppEnv>, row: ConnectionRow): Promise<TwilioConnection> {
+  const secret = await open<TwilioSecret>(c.env.SECRETS_KEY, row.secret);
+  return {
+    client: { baseUrl: c.env.TWILIO_BASE_URL, secret },
+    settings: twilioSettings.parse(JSON.parse(row.settings)),
+  };
+}
+
+const DEFAULT_COUNTRY_CODE = "+44";
+
+/** The dialling code assumed for local numbers: the Twilio setting when there is one. */
+export async function countryCode(c: Context<AppEnv>, username: string): Promise<string> {
+  const row = await connections.get(c.env.DB, username, "twilio");
+  return row ? twilioSettings.parse(JSON.parse(row.settings)).country_code : DEFAULT_COUNTRY_CODE;
 }

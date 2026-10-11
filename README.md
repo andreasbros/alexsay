@@ -37,7 +37,8 @@ All tooling comes from the Nix flake (`nix develop`, or `direnv allow` once). `j
 
 - Anyone registers with a username and password. Admins (role set in the Users page or with `just add-user <name> admin`) see every account and speaker.
 - A speaker identifies itself with the UUID from `alexsay id`. Its owner adds that UUID in the app; from then on the speaker's heartbeat (`POST /v1/device/heartbeat`, header `X-Device-Id`) returns the owner's assistant settings.
-- Connections hold provider credentials, AES-GCM sealed under the `SECRETS_KEY` Worker secret: OpenAI (key, live model, backend model, voice, extra instructions) and Lightwave (basic + refresh token, rotated on every refresh).
+- Connections hold provider credentials, AES-GCM sealed under the `SECRETS_KEY` Worker secret: OpenAI (key, live model, backend model, voice, extra instructions), Lightwave (basic + refresh token, rotated on every refresh) and Twilio (account SID + auth token; a number, your mobile, a WhatsApp sender and an optional SIP domain for the speaker).
+- Contacts (Memory, Contacts) are imported from the phone or a vCard; the assistant can call, text and WhatsApp them, start group calls, and the speaker can receive calls.
 - The Assistant tab opens a WebRTC call straight to GPT-Live: the browser posts its SDP offer to the Worker, the Worker creates the session with the owner's key (`POST /v1/live/sessions`) and returns the answer. Events flow over the `oai-events` data channel; with Lightwave connected, the backend model gets `list_lights` and `set_light` tools that the browser runs against the Worker.
 
 ## Cloudflare access

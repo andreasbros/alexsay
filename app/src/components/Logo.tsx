@@ -10,6 +10,7 @@ export function Logo({ size = 24 }: { size?: number }) {
       strokeLinecap="round"
       fill="none"
       aria-hidden="true"
+      style={{ display: "block" }}
     >
       <line x1="17" y1="40.375" x2="17" y2="59.625" />
       <line x1="28" y1="32.125" x2="28" y2="67.875" />

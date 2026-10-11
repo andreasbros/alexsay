@@ -296,12 +296,15 @@ async function readLevels(
  */
 export class NoiseGate {
   private floor = 0.02;
+  private above = 0;
 
   pass(raw: number): number {
     // The floor drops at once to a quieter reading and creeps up slowly, so speech never raises it
     this.floor = raw < this.floor ? raw : Math.min(raw, this.floor + 0.0005);
-    const threshold = this.floor * 1.8 + 0.025;
-    if (raw <= threshold) {
+    const threshold = Math.max(this.floor * 2.2 + 0.03, 0.06);
+    // A single reading above the line is a click or a breath, not speech
+    this.above = raw > threshold ? this.above + 1 : 0;
+    if (this.above < 2) {
       return 0;
     }
     return Math.min(1, ((raw - threshold) / (0.35 - threshold)) * 1.1);

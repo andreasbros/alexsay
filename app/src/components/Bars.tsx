@@ -26,7 +26,7 @@ const COLOURS: Record<string, string> = {
 };
 
 /**
- * The logo bars as a live meter. At rest they hold the logo's shape and breathe. Sound makes them
+ * The logo bars as a live meter. At rest they hold the logo's shape and stay still. Sound makes them
  * jump at once and settle slowly, the middle bars most, each with its own flutter; thinking sends a
  * wave travelling across them; the whole mark swells with the energy. Plain strokes only: gradients
  * and filters did not render on every phone.
@@ -49,18 +49,19 @@ export function Bars({ status, level }: Props) {
       const target = live ? level() : 0;
       // Instant attack, slow release: the bars jump on a syllable and sink between words
       state.current.energy += (target - state.current.energy) * (target > state.current.energy ? 0.9 : 0.1);
-      const energy = state.current.energy;
+      // Below a hair of energy the bars snap to rest rather than hovering around it
+      const energy = state.current.energy < 0.015 ? 0 : state.current.energy;
       const thinking = status === "thinking";
       bars.current.forEach((bar, i) => {
         if (!bar) {
           return;
         }
         const centreness = 1 - Math.abs(i - 3) / 3.5;
-        const breathing = 1 + Math.sin(t * 1.6 + i * 0.7) * 0.03;
+        // Silence is the logo, exactly: motion comes only from sound (or the thinking wave)
         const flutter = 0.7 + 0.3 * Math.sin(t * 11 + i * 1.9) * Math.sin(t * 6.3 + i);
         const wave = thinking ? 0.45 * (0.5 + 0.5 * Math.sin(t * 6 - i * 0.9)) : 0;
         const grow = energy * (0.5 + 1.3 * centreness) * flutter + wave;
-        const height = Math.min(MAX_HEIGHT, (REST_HEIGHTS[i] ?? 0) * breathing * (1 + grow));
+        const height = Math.min(MAX_HEIGHT, (REST_HEIGHTS[i] ?? 0) * (1 + grow));
         bar.setAttribute("y1", (50 - height / 2 + WIDTH / 2).toFixed(2));
         bar.setAttribute("y2", (50 + height / 2 - WIDTH / 2).toFixed(2));
       });

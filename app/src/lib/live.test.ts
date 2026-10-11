@@ -7,8 +7,15 @@ describe("NoiseGate", () => {
     for (let i = 0; i < 50; i++) {
       expect(gate.pass(0.04 + (i % 3) * 0.003)).toBe(0);
     }
+    expect(gate.pass(0.25)).toBe(0);
     expect(gate.pass(0.25)).toBeGreaterThan(0.4);
     expect(gate.pass(0.04)).toBe(0);
+  });
+
+  it("ignores a single spike such as a click", () => {
+    const gate = new NoiseGate();
+    expect(gate.pass(0.5)).toBe(0);
+    expect(gate.pass(0.02)).toBe(0);
   });
 
   it("does not learn speech as the floor", () => {

@@ -36,6 +36,15 @@ export const openaiSettings = z.object({
   web_search: z.boolean().default(true),
   /** Only answer when the user says the name, so a TV or other people in the room are ignored. */
   respond_when_addressed: z.boolean().default(false),
+  /** The OpenAI project whose SIP endpoint joins phone calls; empty keeps the assistant off the line. */
+  project_id: z
+    .string()
+    .trim()
+    .regex(/^proj_[A-Za-z0-9_-]{6,}$/)
+    .or(z.literal(""))
+    .default(""),
+  /** The realtime model that answers the SIP leg of a phone call. */
+  call_model: z.string().trim().min(1).max(64).default("gpt-realtime"),
 });
 export type OpenAiSettings = z.infer<typeof openaiSettings>;
 
@@ -45,6 +54,13 @@ export const openaiConnection = z.object({
     .string()
     .trim()
     .regex(/^sk-[A-Za-z0-9_-]{20,}$/, "an OpenAI API key starts with sk-")
+    .or(z.literal(""))
+    .optional(),
+  /** The signing secret of the project's webhook for realtime.call.incoming; empty keeps the stored one. */
+  webhook_secret: z
+    .string()
+    .trim()
+    .regex(/^whsec_[A-Za-z0-9+/=_-]{8,}$/, "a webhook secret starts with whsec_")
     .or(z.literal(""))
     .optional(),
   settings: openaiSettings.prefault({}),
@@ -72,6 +88,7 @@ export const featureWrites = z.object({
     .max(50),
 });
 
+export const voiceClient = z.enum(["browser", "mobile"]);
 export const memoryId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const id = memoryId;
 export const memoryCategory = z.enum(MEMORY_CATEGORIES);
@@ -99,6 +116,8 @@ export const toolCall = z.object({
   name: z.string().regex(/^[a-z_]{1,40}$/),
   arguments: z.record(z.string(), z.unknown()).default({}),
   conversation_id: id.optional(),
+  /** What the page running the tool can do: a browser with a phone line takes calls itself. */
+  client: z.object({ voice: voiceClient }).optional(),
 });
 
 const e164 = z
@@ -175,7 +194,11 @@ export const contactList = z.object({
 /** Who a call or message goes to: a contact from the phone book or a number as written. */
 const recipientFields = { contact_id: contactId.optional(), to: rawPhone.optional() };
 export const recipient = z.object(recipientFields);
-export const placeCall = z.object({ ...recipientFields, message: z.string().trim().min(1).max(500).optional() });
+export const placeCall = z.object({
+  ...recipientFields,
+  message: z.string().trim().min(1).max(500).optional(),
+  task: z.string().trim().min(1).max(1000).optional(),
+});
 export const sendMessage = z.object({
   ...recipientFields,
   body: z.string().trim().min(1).max(1600),

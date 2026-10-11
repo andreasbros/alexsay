@@ -1,10 +1,18 @@
 import { ProviderError } from "./openai";
 
-/** What sits sealed in D1 for Twilio: the account and its auth token, both from the console. */
+/**
+ * What sits sealed in D1 for Twilio: the account and its auth token from the console, plus an API
+ * key this app creates on first use to sign the browser's voice tokens.
+ */
 export interface TwilioSecret {
   account_sid: string;
   auth_token: string;
+  api_key_sid?: string;
+  api_key_secret?: string;
 }
+
+/** The Twilio Client identity every browser of a user registers as; one per user's Twilio account. */
+export const CLIENT_IDENTITY = "alexsay-app";
 
 export interface TwilioClient {
   baseUrl: string;
@@ -193,4 +201,53 @@ function timingSafeEqual(a: string, b: string): boolean {
     diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return diff === 0;
+}
+
+/** An API key for signing access tokens; the secret is only ever returned on creation. */
+export async function createApiKey(client: TwilioClient): Promise<{ sid: string; secret: string }> {
+  return request(client, "/Keys.json", { FriendlyName: "alexsay app" });
+}
+
+/** Hangs up one leg; for a conference host that ends the whole call. */
+export async function completeCall(client: TwilioClient, callSid: string): Promise<void> {
+  await request(client, `/Calls/${encodeURIComponent(callSid)}.json`, { Status: "completed" });
+}
+
+const base64url = (bytes: Uint8Array) =>
+  btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+const encodeSegment = (value: unknown) => base64url(new TextEncoder().encode(JSON.stringify(value)));
+
+/**
+ * A Twilio Access Token with a Voice grant: lets the browser register as CLIENT_IDENTITY and take
+ * incoming calls. Signed HS256 with the API key, as twilio.com/docs/iam/access-tokens specifies.
+ */
+export async function voiceToken(
+  secret: Required<Pick<TwilioSecret, "account_sid" | "api_key_sid" | "api_key_secret">>,
+  identity: string,
+  ttlSeconds: number,
+  now = Date.now(),
+): Promise<string> {
+  const issuedAt = Math.floor(now / 1000);
+  const header = { typ: "JWT", alg: "HS256", cty: "twilio-fpa;v=1" };
+  const payload = {
+    jti: `${secret.api_key_sid}-${issuedAt}`,
+    iss: secret.api_key_sid,
+    sub: secret.account_sid,
+    iat: issuedAt,
+    exp: issuedAt + ttlSeconds,
+    grants: { identity, voice: { incoming: { allow: true } } },
+  };
+  const signingInput = `${encodeSegment(header)}.${encodeSegment(payload)}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret.api_key_secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signingInput));
+  return `${signingInput}.${base64url(new Uint8Array(mac))}`;
 }

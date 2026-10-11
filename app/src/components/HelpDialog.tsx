@@ -82,8 +82,21 @@ export const OPENAI_HELP = {
     },
     { text: "Copy the key straight away: it starts with sk- and is shown only once." },
     { text: "Paste it above, press Save, then Test. The test lists the models the key can see." },
+    {
+      text: (
+        <>
+          For the assistant to join phone calls (needs Twilio below): open{" "}
+          {external("https://platform.openai.com/settings/organization/general", "Settings, General")} and copy the
+          project ID (proj_...). Then under Settings, Project, Webhooks create a webhook with URL
+          https://app.alexsay.com/v1/openai/webhook and the event realtime.call.incoming; copy its signing secret
+          (whsec_...). Paste both under Phone calls above.
+        </>
+      ),
+    },
   ],
-  note: "Only this app and your claimed speakers ever use the key. Delete it on the API keys page to revoke it.",
+  note:
+    "Only this app and your claimed speakers ever use the key. Delete it on the API keys page to revoke it. " +
+    "Calls the assistant joins are billed by OpenAI per minute of realtime audio on top of Twilio's rates.",
 };
 
 export const LIGHTWAVE_HELP = {

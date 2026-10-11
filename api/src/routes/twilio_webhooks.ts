@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { type TwilioConnection, twilioFromRow } from "../connections";
 import { calls, connections, contacts, devices, messages } from "../db";
 import { bareNumber, normalisePhone, WHATSAPP_PREFIX } from "../phone";
-import { validSignature } from "../providers/twilio";
+import { CLIENT_IDENTITY, validSignature } from "../providers/twilio";
 import { dialOutTwiml, emptyTwiml, rejectTwiml, ringTwiml } from "../twiml";
 import type { AppEnv } from "../types";
 
@@ -50,7 +50,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       at: now,
     });
     await contacts.stamp(c.env.DB, owner.username, from, "last_called_at", now);
-    return xml(c, ringTwiml(speakers, settings.my_number || null));
+    return xml(c, ringTwiml(speakers, settings.my_number || null, CLIENT_IDENTITY));
   })
   .post("/voice/outbound", async (c) => {
     const params = await form(c);

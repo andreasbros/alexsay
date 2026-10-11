@@ -1,13 +1,15 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { countryCode, twilioConnection } from "../connections";
+import { countryCode, twilioConnection, twilioSigningKey } from "../connections";
 import { providerFailure } from "../provider_errors";
-import { listNumbers } from "../providers/twilio";
+import { CLIENT_IDENTITY, listNumbers, voiceToken } from "../providers/twilio";
 import { type Recipient, resolveRecipient } from "../recipients";
 import * as schemas from "../schemas";
-import { addToConference, placeCall, sendText, startConference, TelephonyError } from "../telephony";
+import { addToConference, endCall, placeCall, sendText, startConference, TelephonyError } from "../telephony";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
+
+const VOICE_TOKEN_TTL_S = 3600;
 
 /** Telephony actions the app triggers directly: the same code paths the assistant's tools run. */
 export const twilioRoutes = new Hono<AppEnv>()
@@ -22,13 +24,32 @@ export const twilioRoutes = new Hono<AppEnv>()
       return providerFailure(c, "twilio", err);
     }
   })
+  /** A short-lived token the Assistant page registers with, so calls can ring in the browser. */
+  .get("/voice-token", async (c) => {
+    const username = c.get("user").username;
+    const connection = await twilioConnection(c, username);
+    if (!connection) {
+      return c.json({ error: "no_twilio_connection" }, 412);
+    }
+    try {
+      const key = await twilioSigningKey(c, username, connection);
+      const token = await voiceToken(key, CLIENT_IDENTITY, VOICE_TOKEN_TTL_S);
+      return c.json({ token, identity: CLIENT_IDENTITY, ttl: VOICE_TOKEN_TTL_S });
+    } catch (err) {
+      return providerFailure(c, "twilio", err);
+    }
+  })
   .post("/calls", async (c) => {
-    const { message, ...ref } = await jsonBody(c, schemas.placeCall);
+    const { message, task, ...ref } = await jsonBody(c, schemas.placeCall);
     const username = c.get("user").username;
     return telephony(c, async () => {
       const recipient = await recipientOrThrow(c, username, ref);
-      return c.json(await placeCall(c, username, recipient, message), 201);
+      return c.json(await placeCall(c, username, recipient, { message, task, voice: "mobile" }), 201);
     });
+  })
+  .post("/calls/end", async (c) => {
+    const username = c.get("user").username;
+    return telephony(c, async () => c.json(await endCall(c, username)));
   })
   .post("/messages", async (c) => {
     const { body, channel, ...ref } = await jsonBody(c, schemas.sendMessage);
@@ -46,7 +67,7 @@ export const twilioRoutes = new Hono<AppEnv>()
       for (const ref of participants) {
         recipients.push(await recipientOrThrow(c, username, ref));
       }
-      return c.json(await startConference(c, username, recipients), 201);
+      return c.json(await startConference(c, username, recipients, "mobile"), 201);
     });
   })
   .post("/conferences/participants", async (c) => {

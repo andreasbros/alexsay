@@ -6,6 +6,7 @@ import { contactRoutes } from "./routes/contacts";
 import { conversationRoutes, memoryRoutes } from "./routes/conversations";
 import { deviceApiRoutes } from "./routes/device_api";
 import { deviceRoutes } from "./routes/devices";
+import { openaiWebhookRoutes } from "./routes/openai_webhooks";
 import { sessionRoutes } from "./routes/session";
 import { toolRoutes } from "./routes/tools";
 import { twilioRoutes } from "./routes/twilio";
@@ -17,6 +18,7 @@ import { BadRequest } from "./validate";
 export const app = new Hono<AppEnv>()
   .route("/v1/device", deviceApiRoutes)
   .route("/v1/twilio", twilioWebhookRoutes)
+  .route("/v1/openai", openaiWebhookRoutes)
   .route("/api/session", sessionRoutes)
   .use("/api/devices/*", requireUser)
   .use("/api/devices", requireUser)

@@ -35,9 +35,10 @@ const WEB_SEARCH_INSTRUCTIONS =
 const PHONE_INSTRUCTIONS =
   "You can phone, text and WhatsApp people through the user's own Twilio number. Resolve names with find_contact; " +
   "when several people match, ask which. Before any call or message, say who it goes to (and the exact text of a " +
-  "message) and wait for a yes. A call rings the user's own phone first and then connects the other person; with a " +
-  "message it phones them and reads it out instead. start_conference makes a group call, add_to_call brings in one " +
-  "more person. recent_messages reads back texts the user received or sent.";
+  "message) and wait for a yes. From the app a call opens in the browser with you on the line; give place_call a " +
+  "task when the user wants you to do the talking. With a message it phones them and reads it out instead. " +
+  "start_conference makes a group call, add_to_call brings in one more person, end_call hangs up. " +
+  "recent_messages reads back texts the user received or sent.";
 
 const ADDRESSED_INSTRUCTIONS =
   "You are in a room with background sound: a television, music, other people talking to each other. " +
@@ -131,4 +132,68 @@ async function errorDetail(res: Response): Promise<string> {
   } catch {
     return text.slice(0, 200) || res.statusText;
   }
+}
+
+const WEBHOOK_TOLERANCE_S = 300;
+
+/**
+ * OpenAI signs webhooks the Standard Webhooks way: base64 HMAC-SHA256 of "id.timestamp.body" with
+ * the secret that follows whsec_, sent as "v1,<signature>" (several may be space separated).
+ */
+export async function verifyWebhook(
+  secret: string,
+  headers: { id: string | undefined; timestamp: string | undefined; signature: string | undefined },
+  body: string,
+  now = Date.now(),
+): Promise<boolean> {
+  if (!headers.id || !headers.timestamp || !headers.signature) {
+    return false;
+  }
+  const sentAt = Number(headers.timestamp) * 1000;
+  if (!Number.isFinite(sentAt) || Math.abs(now - sentAt) > WEBHOOK_TOLERANCE_S * 1000) {
+    return false;
+  }
+  const raw = Uint8Array.from(atob(secret.replace(/^whsec_/, "")), (ch) => ch.charCodeAt(0));
+  const key = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${headers.id}.${headers.timestamp}.${body}`),
+  );
+  const expected = btoa(String.fromCharCode(...new Uint8Array(mac)));
+  return headers.signature
+    .split(" ")
+    .map((part) => part.split(",")[1] ?? "")
+    .some((candidate) => candidate.length === expected.length && candidate === expected);
+}
+
+export interface CallSession {
+  model: string;
+  instructions: string;
+  voice: string;
+}
+
+/** Answers a SIP call OpenAI announced through realtime.call.incoming with a configured realtime session. */
+export async function acceptCall(baseUrl: string, apiKey: string, callId: string, session: CallSession): Promise<void> {
+  const res = await fetch(`${baseUrl}/realtime/calls/${encodeURIComponent(callId)}/accept`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "realtime",
+      model: session.model,
+      instructions: session.instructions,
+      audio: { output: { voice: session.voice } },
+    }),
+  });
+  if (!res.ok) {
+    throw new ProviderError(res.status, await errorDetail(res));
+  }
+}
+
+export async function rejectCall(baseUrl: string, apiKey: string, callId: string): Promise<void> {
+  await fetch(`${baseUrl}/realtime/calls/${encodeURIComponent(callId)}/reject`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    body: JSON.stringify({ status_code: 603 }),
+  });
 }

@@ -1,5 +1,12 @@
 import { Hono } from "hono";
-import { exchangeLightwave, lightwaveToken, lightwaveUrls, openaiConnection, twilioConnection } from "../connections";
+import {
+  exchangeLightwave,
+  lightwaveToken,
+  lightwaveUrls,
+  type OpenAiSecret,
+  openaiConnection,
+  twilioConnection,
+} from "../connections";
 import { connections } from "../db";
 import { providerFailure } from "../provider_errors";
 import { structureIds } from "../providers/lightwave";
@@ -25,18 +32,23 @@ export const connectionRoutes = new Hono<AppEnv>()
     );
   })
   .put("/openai", async (c) => {
-    const { api_key, settings } = await jsonBody(c, schemas.openaiConnection);
+    const { api_key, webhook_secret, settings } = await jsonBody(c, schemas.openaiConnection);
     const username = c.get("user").username;
     const existing = await connections.get(c.env.DB, username, "openai");
-    if (!api_key && !existing) {
+    const stored = existing ? await open<OpenAiSecret>(c.env.SECRETS_KEY, existing.secret) : null;
+    const apiKey = api_key || stored?.api_key;
+    if (!apiKey) {
       return c.json({ error: "key_required" }, 400);
     }
-    const sealed = api_key ? await seal(c.env.SECRETS_KEY, { api_key }) : existing?.secret;
-    if (!sealed) {
-      return c.json({ error: "key_required" }, 400);
+    const secret: OpenAiSecret = { api_key: apiKey };
+    const webhookSecret = webhook_secret || stored?.webhook_secret;
+    if (webhookSecret) {
+      secret.webhook_secret = webhookSecret;
     }
+    // Only a new key or secret re-seals; a settings-only save leaves the stored ciphertext alone
+    const sealed = !api_key && !webhook_secret && existing ? existing.secret : await seal(c.env.SECRETS_KEY, secret);
     await connections.put(c.env.DB, username, "openai", sealed, JSON.stringify(settings));
-    return c.json({ provider: "openai", settings });
+    return c.json({ provider: "openai", settings, calls: !!(webhookSecret && settings.project_id) });
   })
   .put("/lightwave", async (c) => {
     const pasted = await jsonBody(c, schemas.lightwaveConnection);

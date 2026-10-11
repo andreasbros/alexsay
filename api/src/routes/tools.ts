@@ -10,7 +10,8 @@ import { jsonBody } from "../validate";
  * hear. Failures come back as a result too, so the model can tell the user instead of hanging.
  */
 export const toolRoutes = new Hono<AppEnv>().post("/call", async (c) => {
-  const { name, arguments: args, conversation_id } = await jsonBody(c, schemas.toolCall);
+  const { name, arguments: args, conversation_id, client } = await jsonBody(c, schemas.toolCall);
+  c.set("voice", client?.voice ?? "mobile");
   const tool = toolByName(name);
   if (!tool) {
     return c.json({ output: { error: `unknown tool ${name}` } });

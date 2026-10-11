@@ -31,9 +31,12 @@ export interface ConnectionRow {
   updated_at: number;
 }
 
+/** Where the user takes phone calls: the Assistant page's own line, or their mobile. */
+export type VoiceClient = "browser" | "mobile";
+
 export interface AppEnv {
   Bindings: Env;
-  Variables: { user: User };
+  Variables: { user: User; voice?: VoiceClient };
 }
 
 export type ConversationSource = "app" | "device";
@@ -118,6 +121,8 @@ export interface CallRow {
   kind: CallKind;
   phone: string;
   conference: string | null;
+  role: "host" | "guest" | "assistant" | "";
+  brief: string | null;
   sid: string | null;
   status: string;
   at: number;

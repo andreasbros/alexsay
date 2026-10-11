@@ -26,7 +26,11 @@ export interface OpenAiSettings {
   instructions: string;
   web_search: boolean;
   respond_when_addressed: boolean;
+  project_id: string;
+  call_model: string;
 }
+
+export type VoiceClient = "browser" | "mobile";
 
 export interface TwilioSettings {
   from_number: string;
@@ -199,9 +203,13 @@ export const api = {
   removeDevice: (id: string) => request<void>("DELETE", `/api/devices/${encodeURIComponent(id)}`),
 
   connections: () => request<Connection[]>("GET", "/api/connections"),
-  /** An empty key keeps the one already stored and only updates the settings. */
-  connectOpenai: (api_key: string, settings: OpenAiSettings) =>
-    request<Connection>("PUT", "/api/connections/openai", { api_key: api_key || undefined, settings }),
+  /** An empty key or webhook secret keeps the one already stored and only updates the settings. */
+  connectOpenai: (api_key: string, settings: OpenAiSettings, webhook_secret = "") =>
+    request<Connection>("PUT", "/api/connections/openai", {
+      api_key: api_key || undefined,
+      webhook_secret: webhook_secret || undefined,
+      settings,
+    }),
   connectLightwave: (basic_token: string, refresh_token: string) =>
     request<Connection>("PUT", "/api/connections/lightwave", { basic_token, refresh_token }),
   /** Empty credentials keep the stored pair; saving with a number points its webhooks at this app. */
@@ -227,11 +235,12 @@ export const api = {
   setFeatures: (features: { featureId: string; value: number }[]) =>
     request<void>("POST", "/api/lightwave/features", { features }),
 
-  callTool: (name: string, args: Record<string, unknown>, conversationId: string | null) =>
+  callTool: (name: string, args: Record<string, unknown>, conversationId: string | null, voice?: VoiceClient) =>
     request<{ output: unknown }>("POST", "/api/tools/call", {
       name,
       arguments: args,
       conversation_id: conversationId ?? undefined,
+      client: voice ? { voice } : undefined,
     }),
 
   startConversation: () => request<{ id: string }>("POST", "/api/conversations", { source: "app" }),
@@ -267,6 +276,8 @@ export const api = {
     request<Placed>("POST", "/api/twilio/calls", { contact_id, message }),
   sendMessage: (contact_id: string, body: string, channel: Channel) =>
     request<Placed>("POST", "/api/twilio/messages", { contact_id, body, channel }),
+  voiceToken: () => request<{ token: string; identity: string; ttl: number }>("GET", "/api/twilio/voice-token"),
+  endCall: () => request<{ conference: string }>("POST", "/api/twilio/calls/end"),
 
   users: () => request<User[]>("GET", "/api/users"),
   setRole: (username: string, role: Role) =>

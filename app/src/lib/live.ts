@@ -1,4 +1,4 @@
-import { api } from "../api";
+import { api, type VoiceClient } from "../api";
 import { brief, debugLog } from "./debug";
 import { functionCallOf, runTool } from "./tools";
 
@@ -10,6 +10,8 @@ export interface LiveHandlers {
   onTranscript: (role: "user" | "assistant", delta: string) => void;
   /** One entry per notable event: tool calls, their results, session end. */
   onActivity: (kind: ActivityKind, text: string) => void;
+  /** Whether this page can take phone calls itself right now; tells the server where a call should ring. */
+  voiceClient?: () => VoiceClient;
 }
 
 export interface LiveSession {
@@ -23,6 +25,8 @@ export interface LiveSession {
   voiceLevel: () => number;
   /** Silences the microphone locally and tells GPT-Live, so it stops listening too. */
   setMuted: (muted: boolean) => void;
+  /** The live microphone track, for a phone call to share instead of opening the microphone again. */
+  micTrack: () => MediaStreamTrack | null;
   stop: () => void;
 }
 
@@ -266,6 +270,7 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
     conversationId,
     micLevel: () => levels.mic,
     voiceLevel: () => levels.voice,
+    micTrack: () => mic.getAudioTracks()[0] ?? null,
     setMuted: (muted) => {
       for (const track of mic.getAudioTracks()) {
         track.enabled = !muted;
@@ -324,7 +329,7 @@ class ToolRunner {
     if (call.name === "end_conversation") {
       this.onHangUp();
     }
-    void runTool(call, api, this.conversationId).then((output) => {
+    void runTool(call, api, this.conversationId, this.handlers.voiceClient?.()).then((output) => {
       this.handlers.onActivity(
         output.includes('"error"') ? "error" : "result",
         `${call.name}: ${output.slice(0, 160)}`,

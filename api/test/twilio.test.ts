@@ -383,6 +383,201 @@ describe("twilio", () => {
     ]);
   });
 
+  it("signs a voice token for the browser, creating the API key once", async () => {
+    await connectTwilio(maria);
+    const first = mockUpstream({
+      [`POST ${TWILIO}/Keys.json`]: () => reply(201, { sid: "SK1", secret: "key-secret-0123456789" }),
+    });
+    const res = await call(`${APP}/api/twilio/voice-token`, {}, maria);
+    first.done();
+    const { token, identity } = (await res.json()) as { token: string; identity: string };
+    expect(identity).toBe("alexsay-app");
+    const [header, payload] = token
+      .split(".")
+      .slice(0, 2)
+      .map((part) => JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/"))));
+    expect(header).toMatchObject({ alg: "HS256", cty: "twilio-fpa;v=1" });
+    expect(payload).toMatchObject({
+      iss: "SK1",
+      sub: TWILIO_SID,
+      grants: { identity: "alexsay-app", voice: { incoming: { allow: true } } },
+    });
+    const second = mockUpstream({});
+    expect((await call(`${APP}/api/twilio/voice-token`, {}, maria)).status).toBe(200);
+    second.done();
+  });
+
+  it("opens a browser call as a conference with the assistant dialled in over SIP", async () => {
+    await connectTwilio(maria);
+    await connectOpenaiForCalls();
+    const legs: { url: string; form: Record<string, string> }[] = [];
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: (req, body) => {
+        legs.push({ url: req.url, form: formOf(body) });
+        return reply(201, { call_sid: `CA${legs.length}`, status: "queued" });
+      },
+    });
+    const result = (await (
+      await json(
+        `${APP}/api/tools/call`,
+        "POST",
+        {
+          name: "place_call",
+          arguments: { name: "Mum", task: "ask whether Sunday lunch is still on" },
+          client: { voice: "browser" },
+        },
+        maria,
+      )
+    ).json()) as { output: { ok: boolean; conference: string; assistant: boolean; host: string; note: string } };
+    upstream.done();
+    expect(result.output).toMatchObject({ ok: true, assistant: true, host: "browser" });
+    expect(result.output.note).toContain("carry out the task");
+    const name = result.output.conference;
+    expect(legs.map((l) => l.form.To)).toEqual([
+      `client:alexsay-app?conference=${name}`,
+      MUM,
+      `sip:proj_abc12345@sip.api.openai.com;transport=tls?X-Alexsay-Conference=${name}`,
+    ]);
+    expect(legs[0]?.form).toMatchObject({ Label: "host", EndConferenceOnExit: "true" });
+    expect(legs[2]?.form).toMatchObject({ Label: "assistant", From: "alexsay" });
+    const brief = await env.DB.prepare("SELECT brief FROM calls WHERE role = 'assistant'").first<{ brief: string }>();
+    expect(brief?.brief).toContain("Mum (+447700900123)");
+    expect(brief?.brief).toContain("ask whether Sunday lunch is still on");
+
+    // Without the OpenAI SIP setup, the same call still opens in the browser, just without the assistant
+    await json(`${APP}/api/connections/openai`, "PUT", { settings: { project_id: "" } }, maria);
+    const plain = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: `CA${crypto.randomUUID()}`, status: "queued" }),
+    });
+    const second = (await (
+      await json(
+        `${APP}/api/tools/call`,
+        "POST",
+        { name: "place_call", arguments: { name: "Mum" }, client: { voice: "browser" } },
+        maria,
+      )
+    ).json()) as { output: { assistant: boolean; note: string } };
+    plain.done();
+    expect(second.output).toMatchObject({ assistant: false });
+    expect(second.output.note).toContain("you are not on the line");
+  });
+
+  it("accepts OpenAI's SIP webhook for a known conference with the stored briefing", async () => {
+    await connectTwilio(maria);
+    await connectOpenaiForCalls();
+    const legs = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: `CA${Math.random()}`, status: "queued" }),
+    });
+    const placedCall = (await (
+      await json(
+        `${APP}/api/tools/call`,
+        "POST",
+        { name: "place_call", arguments: { name: "Mum" }, client: { voice: "browser" } },
+        maria,
+      )
+    ).json()) as { output: { conference: string } };
+    legs.done();
+    const conference = placedCall.output.conference;
+    const event = {
+      type: "realtime.call.incoming",
+      data: { call_id: "rtc_1", sip_headers: [{ name: "x-alexsay-conference", value: conference }] },
+    };
+    let accepted: Record<string, unknown> = {};
+    const upstream = mockUpstream({
+      "POST https://api.openai.com/v1/realtime/calls/rtc_1/accept": (_req, body) => {
+        accepted = JSON.parse(body) as Record<string, unknown>;
+        return reply(200, {});
+      },
+    });
+    const res = await openaiWebhook(event);
+    upstream.done();
+    expect(res.status).toBe(200);
+    expect(accepted).toMatchObject({ type: "realtime", model: "gpt-realtime", audio: { output: { voice: "cedar" } } });
+    expect(accepted.instructions).toContain("Stay silent unless maria addresses you by name");
+
+    expect((await openaiWebhook(event, `whsec_${btoa("wrong-secret-0123456789")}`)).status).toBe(403);
+    expect(
+      (
+        await openaiWebhook({
+          ...event,
+          data: { ...event.data, sip_headers: [{ name: "X-Alexsay-Conference", value: "ay-nope" }] },
+        })
+      ).status,
+    ).toBe(404);
+    expect((await openaiWebhook({ type: "realtime.something.else" })).status).toBe(200);
+  });
+
+  it("hangs up the call in progress by ending the host leg", async () => {
+    await connectTwilio(maria);
+    const legs = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: (_req, body) =>
+        reply(201, { call_sid: `CA-${formOf(body).Label}`, status: "in-progress" }),
+    });
+    await json(
+      `${APP}/api/tools/call`,
+      "POST",
+      { name: "place_call", arguments: { name: "Mum" }, client: { voice: "browser" } },
+      maria,
+    );
+    legs.done();
+    const ended = mockUpstream({
+      [`POST ${TWILIO}/Calls/CA-host.json`]: (_req, body) => {
+        expect(formOf(body)).toEqual({ Status: "completed" });
+        return reply(200, { status: "completed" });
+      },
+    });
+    expect(await tool(maria, "end_call", {})).toMatchObject({ ok: true });
+    ended.done();
+    const open = await env.DB.prepare("SELECT COUNT(*) AS n FROM calls WHERE status != 'completed'").first<{
+      n: number;
+    }>();
+    expect(open?.n).toBe(0);
+    expect(await tool(maria, "end_call", {})).toEqual({ error: "there is no call in progress" });
+  });
+
+  it("rings the browser as well when someone calls the number", async () => {
+    await connectTwilio(maria);
+    const res = await twilioWebhook("/v1/twilio/voice", { To: TWILIO_NUMBER, From: MUM, CallSid: "CA12" });
+    expect(await res.text()).toContain(
+      `<Dial timeout="25"><Client>alexsay-app</Client><Number>${MY_NUMBER}</Number></Dial>`,
+    );
+  });
+
+  const WEBHOOK_SECRET = `whsec_${btoa("openai-webhook-secret-0123456789")}`;
+
+  async function connectOpenaiForCalls(): Promise<void> {
+    const res = await json(
+      `${APP}/api/connections/openai`,
+      "PUT",
+      {
+        api_key: "sk-test-0123456789abcdefghijklmnop",
+        webhook_secret: WEBHOOK_SECRET,
+        settings: { project_id: "proj_abc12345" },
+      },
+      maria,
+    );
+    expect(await res.json()).toMatchObject({ calls: true });
+  }
+
+  async function openaiWebhook(event: unknown, secret = WEBHOOK_SECRET): Promise<Response> {
+    const body = JSON.stringify(event);
+    const id = "wh_1";
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const raw = Uint8Array.from(atob(secret.replace(/^whsec_/, "")), (ch) => ch.charCodeAt(0));
+    const key = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${id}.${timestamp}.${body}`));
+    return call(`${APP}/v1/openai/webhook`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "webhook-id": id,
+        "webhook-timestamp": timestamp,
+        "webhook-signature": `v1,${btoa(String.fromCharCode(...new Uint8Array(mac)))}`,
+      },
+      body,
+    });
+  }
+
   async function mumId(): Promise<string> {
     const row = await env.DB.prepare("SELECT id FROM contacts WHERE phone = ?").bind(MUM).first<{ id: string }>();
     return row?.id ?? "";

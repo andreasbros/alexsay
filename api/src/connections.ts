@@ -2,13 +2,20 @@ import type { Context } from "hono";
 import { connections } from "./db";
 import { accessToken, type LightwaveSecret, type LightwaveUrls } from "./providers/lightwave";
 import { ProviderError } from "./providers/openai";
-import type { TwilioClient, TwilioSecret } from "./providers/twilio";
+import { createApiKey, type TwilioClient, type TwilioSecret } from "./providers/twilio";
 import { type OpenAiSettings, openaiSettings, type TwilioSettings, twilioSettings } from "./schemas";
 import { open, seal } from "./secrets";
 import type { AppEnv, ConnectionRow } from "./types";
 
+export interface OpenAiSecret {
+  api_key: string;
+  webhook_secret?: string;
+}
+
 export interface OpenAiConnection {
   apiKey: string;
+  /** Signs the project's realtime.call.incoming webhooks; present once phone calls are set up. */
+  webhookSecret: string | null;
   settings: OpenAiSettings;
 }
 
@@ -18,9 +25,17 @@ export async function openaiConnection(c: Context<AppEnv>, username: string): Pr
   if (!row) {
     return null;
   }
-  const { api_key } = await open<{ api_key: string }>(c.env.SECRETS_KEY, row.secret);
-  return { apiKey: api_key, settings: openaiSettings.parse(JSON.parse(row.settings)) };
+  const secret = await open<OpenAiSecret>(c.env.SECRETS_KEY, row.secret);
+  return {
+    apiKey: secret.api_key,
+    webhookSecret: secret.webhook_secret ?? null,
+    settings: openaiSettings.parse(JSON.parse(row.settings)),
+  };
 }
+
+/** The assistant can join phone calls once the project id and the webhook secret are both in place. */
+export const canJoinCalls = (openai: OpenAiConnection | null): openai is OpenAiConnection =>
+  !!openai && !!openai.settings.project_id && !!openai.webhookSecret;
 
 export function lightwaveUrls(c: Context<AppEnv>): LightwaveUrls {
   return { auth: c.env.LIGHTWAVE_AUTH_URL, base: c.env.LIGHTWAVE_BASE_URL };
@@ -85,4 +100,20 @@ const DEFAULT_COUNTRY_CODE = "+44";
 export async function countryCode(c: Context<AppEnv>, username: string): Promise<string> {
   const row = await connections.get(c.env.DB, username, "twilio");
   return row ? twilioSettings.parse(JSON.parse(row.settings)).country_code : DEFAULT_COUNTRY_CODE;
+}
+
+/** The API key that signs browser voice tokens, created and sealed on first use. */
+export async function twilioSigningKey(
+  c: Context<AppEnv>,
+  username: string,
+  connection: TwilioConnection,
+): Promise<Required<Pick<TwilioSecret, "account_sid" | "api_key_sid" | "api_key_secret">>> {
+  const { secret } = connection.client;
+  if (secret.api_key_sid && secret.api_key_secret) {
+    return { account_sid: secret.account_sid, api_key_sid: secret.api_key_sid, api_key_secret: secret.api_key_secret };
+  }
+  const key = await createApiKey(connection.client);
+  const next: TwilioSecret = { ...secret, api_key_sid: key.sid, api_key_secret: key.secret };
+  await connections.setSecret(c.env.DB, username, "twilio", await seal(c.env.SECRETS_KEY, next));
+  return { account_sid: secret.account_sid, api_key_sid: key.sid, api_key_secret: key.secret };
 }

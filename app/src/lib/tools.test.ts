@@ -23,7 +23,7 @@ describe("tools", () => {
       "conv-1",
     );
     expect(JSON.parse(output)).toEqual({ ok: true, light: "Kitchen" });
-    expect(api.callTool).toHaveBeenCalledWith("set_light", { name: "kitchen", on: true }, "conv-1");
+    expect(api.callTool).toHaveBeenCalledWith("set_light", { name: "kitchen", on: true }, "conv-1", undefined);
   });
 
   it("turns a failed relay into an error the model can read", async () => {
@@ -31,6 +31,6 @@ describe("tools", () => {
     expect(JSON.parse(await runTool({ call_id: "c", name: "remember", arguments: "nope" }, api, null))).toEqual({
       error: "offline",
     });
-    expect(api.callTool).toHaveBeenCalledWith("remember", {}, null);
+    expect(api.callTool).toHaveBeenCalledWith("remember", {}, null, undefined);
   });
 });

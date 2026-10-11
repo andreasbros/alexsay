@@ -117,6 +117,7 @@ function errorText(err: unknown): string {
 
 function OpenAiCard({ connection }: { connection: Connection | undefined }) {
   const [apiKey, setApiKey] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
   const [settings, setSettings] = useState<OpenAiSettings>({ ...DEFAULTS, ...connection?.settings });
   const [editing, setEditing] = useState(false);
   const voiceType = voiceTypeOf(settings.voice);
@@ -124,12 +125,13 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
     const next = type === "female" ? "female" : "male";
     setSettings({ ...settings, voice: VOICES[next][0] ?? DEFAULTS.voice });
   };
-  const save = useSave(() => api.connectOpenai(apiKey.trim(), settings));
+  const save = useSave(() => api.connectOpenai(apiKey.trim(), settings, webhookSecret.trim()));
   const submit = (event: FormEvent) => {
     event.preventDefault();
     save.mutate(undefined, {
       onSuccess: () => {
         setApiKey("");
+        setWebhookSecret("");
         setEditing(false);
       },
     });
@@ -150,6 +152,7 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
             <Text size="2">
               {connection.settings.model} via {connection.settings.backend_model}, voice {connection.settings.voice}
               {connection.settings.web_search === false ? ", no web search" : ", web search on"}
+              {connection.settings.project_id ? ", joins phone calls" : ""}
             </Text>
             <Button size="1" variant="soft" onClick={() => setEditing(true)}>
               Change
@@ -222,6 +225,35 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
                 placeholder="Extra instructions for the assistant (optional)"
                 value={settings.instructions}
                 onChange={(e) => setSettings({ ...settings, instructions: e.target.value })}
+              />
+              <Text size="2" weight="medium" mt="1">
+                Phone calls
+              </Text>
+              <Text size="1" color="gray">
+                With a project ID and the webhook secret the assistant joins calls placed from the Assistant page.
+              </Text>
+              <TextField.Root
+                aria-label="OpenAI project ID"
+                placeholder="Project ID, proj_..."
+                autoComplete="off"
+                value={settings.project_id}
+                onChange={(e) => setSettings({ ...settings, project_id: e.target.value })}
+              />
+              <TextField.Root
+                aria-label="OpenAI webhook secret"
+                placeholder={
+                  connection ? "Webhook secret, whsec_... (leave empty to keep)" : "Webhook secret, whsec_..."
+                }
+                type="password"
+                autoComplete="off"
+                value={webhookSecret}
+                onChange={(e) => setWebhookSecret(e.target.value)}
+              />
+              <TextField.Root
+                aria-label="Call model"
+                placeholder="Call model"
+                value={settings.call_model}
+                onChange={(e) => setSettings({ ...settings, call_model: e.target.value })}
               />
               {save.error && (
                 <Text size="2" color="red">

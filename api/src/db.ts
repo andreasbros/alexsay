@@ -485,6 +485,8 @@ export const calls = {
       kind: CallRow["kind"];
       phone: string;
       conference: string | null;
+      role?: CallRow["role"];
+      brief?: string | null;
       sid: string | null;
       status: string;
       at: number;
@@ -492,8 +494,8 @@ export const calls = {
   ) =>
     db
       .prepare(
-        `INSERT INTO calls (id, username, contact_id, direction, kind, phone, conference, sid, status, at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO calls (id, username, contact_id, direction, kind, phone, conference, role, brief, sid, status, at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         crypto.randomUUID(),
@@ -503,6 +505,8 @@ export const calls = {
         row.kind,
         row.phone,
         row.conference,
+        row.role ?? "",
+        row.brief ?? null,
         row.sid,
         row.status,
         row.at,
@@ -521,6 +525,25 @@ export const calls = {
 
   setStatus: (db: D1Database, sid: string, status: string) =>
     db.prepare("UPDATE calls SET status = ? WHERE sid = ?").bind(status, sid).run(),
+
+  /** The leg OpenAI's SIP endpoint is dialled on, found from the header Twilio carries into the INVITE. */
+  assistantLeg: (db: D1Database, conference: string) =>
+    db
+      .prepare("SELECT * FROM calls WHERE conference = ? AND role = 'assistant' ORDER BY at DESC LIMIT 1")
+      .bind(conference)
+      .first<CallRow>(),
+
+  hostLeg: (db: D1Database, username: string, conference: string) =>
+    db
+      .prepare("SELECT * FROM calls WHERE username = ? AND conference = ? AND role = 'host' ORDER BY at DESC LIMIT 1")
+      .bind(username, conference)
+      .first<CallRow>(),
+
+  endConference: (db: D1Database, conference: string) =>
+    db
+      .prepare(`UPDATE calls SET status = 'completed' WHERE conference = ? AND status NOT IN ${TERMINAL_CALL_STATUSES}`)
+      .bind(conference)
+      .run(),
 
   /** The conference the user is in right now, if any leg started recently and has not ended. */
   openConference: async (db: D1Database, username: string, since: number) =>

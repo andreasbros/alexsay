@@ -1,4 +1,4 @@
-import type { api as Api } from "../api";
+import type { api as Api, VoiceClient } from "../api";
 
 type ToolApi = Pick<typeof Api, "callTool">;
 
@@ -33,9 +33,14 @@ export function functionCallOf(event: unknown): FunctionCall | null {
  * Every tool runs on the server, which owns the user's connections and memory; the browser only
  * relays the call and hands the result back to the model as JSON text.
  */
-export async function runTool(call: FunctionCall, api: ToolApi, conversationId: string | null): Promise<string> {
+export async function runTool(
+  call: FunctionCall,
+  api: ToolApi,
+  conversationId: string | null,
+  voice?: VoiceClient,
+): Promise<string> {
   try {
-    const { output } = await api.callTool(call.name, parseArguments(call.arguments), conversationId);
+    const { output } = await api.callTool(call.name, parseArguments(call.arguments), conversationId, voice);
     return JSON.stringify(output);
   } catch (err) {
     return JSON.stringify({ error: err instanceof Error ? err.message : "tool failed" });

@@ -11,6 +11,7 @@ import { appendTurn, Transcript, type Turn } from "../components/Transcript";
 import { debugLog, isDebug, subscribeDebug } from "../lib/debug";
 import { startDemo } from "../lib/demo";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
+import { type LineStatus, openPhoneLine, type PhoneLine } from "../lib/phone_line";
 import { playEnd, preloadSounds, primeSounds, startConnecting } from "../lib/sounds";
 import { DEFAULT_OPENAI, VOICES } from "../voices";
 
@@ -46,6 +47,10 @@ export function Assistant() {
   const [status, setStatus] = useState<LiveStatus | "idle">("idle");
   const [detail, setDetail] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  const line = useRef<PhoneLine | null>(null);
+  const [lineStatus, setLineStatus] = useState<LineStatus>("off");
+  const [caller, setCaller] = useState<string | null>(null);
+  const hasPhone = connections.data?.some((c) => c.provider === "twilio") ?? false;
   const [turns, setTurns] = useState<Turn[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [debug, setDebugOn] = useState(isDebug);
@@ -58,7 +63,13 @@ export function Assistant() {
     [],
   );
 
-  useEffect(() => () => session.current?.stop(), []);
+  useEffect(
+    () => () => {
+      session.current?.stop();
+      line.current?.stop();
+    },
+    [],
+  );
   useEffect(preloadSounds, []);
   useEffect(() => {
     // Anything that blows up in the browser lands in the activity card instead of vanishing
@@ -84,6 +95,7 @@ export function Assistant() {
     setMuted(false);
     const handlers = {
       onActivity: log,
+      voiceClient: () => (line.current && line.current.status() !== "off" ? ("browser" as const) : ("mobile" as const)),
       onStatus: (next: LiveStatus, info?: string) => {
         debugLog(`status ${next}${info ? ` (${info})` : ""}`);
         if (next !== "connecting") {
@@ -111,6 +123,9 @@ export function Assistant() {
       const resumeFrom = resume ? (lastSessionId.current ?? undefined) : undefined;
       session.current = demo ? startDemo(handlers) : await startLive(handlers, resumeFrom);
       lastSessionId.current = session.current.id || lastSessionId.current;
+      if (hasPhone && !demo && !line.current) {
+        await openLine();
+      }
     } catch (err) {
       stopRinging();
       setStatus("error");
@@ -118,10 +133,41 @@ export function Assistant() {
       log("error", describe(err));
     }
   };
+  /** Registers this page as the user's phone, so calls ring here while the conversation is open. */
+  const openLine = async () => {
+    try {
+      line.current = await openPhoneLine(
+        {
+          onActivity: log,
+          onStatus: (next, who) => {
+            const wasOnCall = lineStatus === "connected";
+            setLineStatus(next);
+            setCaller(who ?? null);
+            if (next === "connected") {
+              // The assistant on the line hears the call; the one in this page stays quiet until it ends
+              session.current?.setMuted(true);
+              log("info", `On a call with ${who ?? "unknown"}`);
+            } else if (next === "ready" && wasOnCall) {
+              session.current?.setMuted(muted);
+              log("info", "Call ended");
+            } else if (next === "ringing") {
+              log("info", `Incoming call from ${who ?? "unknown"}`);
+            }
+          },
+        },
+        () => session.current?.micTrack() ?? null,
+      );
+    } catch (err) {
+      log("error", `Phone line unavailable: ${describe(err)}`);
+    }
+  };
   const stop = () => {
     const wasActive = session.current !== null;
     session.current?.stop();
     session.current = null;
+    line.current?.stop();
+    line.current = null;
+    setLineStatus("off");
     if (wasActive) {
       playEnd();
     }
@@ -144,7 +190,11 @@ export function Assistant() {
   const toggleMute = () => {
     const next = !muted;
     setMuted(next);
-    session.current?.setMuted(next);
+    if (lineStatus === "connected") {
+      line.current?.setMuted(next);
+    } else {
+      session.current?.setMuted(next);
+    }
   };
 
   // GPT-Live fixes the voice when a session starts, so a change mid-conversation reconnects
@@ -172,8 +222,13 @@ export function Assistant() {
   return (
     <div className="assistant">
       <Flex align="center" justify="between" gap="2" wrap="nowrap" className="assistant-bar">
-        <Badge color={COLOURS[status]} size="2" className="assistant-status" role="status">
-          {LABELS[status]}
+        <Badge
+          color={lineStatus === "connected" ? "indigo" : COLOURS[status]}
+          size="2"
+          className="assistant-status"
+          role="status"
+        >
+          {lineStatus === "connected" ? "On a call" : LABELS[status]}
         </Badge>
         <Flex align="center" gap="2" wrap="nowrap">
           <Select.Root
@@ -219,6 +274,31 @@ export function Assistant() {
           <Callout.Text>
             Add your OpenAI API key under <Link to="/connections">Connections</Link> first.
           </Callout.Text>
+        </Callout.Root>
+      )}
+      {lineStatus === "ringing" && (
+        <Callout.Root color="amber" size="1" role="alert">
+          <Flex align="center" justify="between" gap="3" wrap="wrap">
+            <Callout.Text>Incoming call from {caller}</Callout.Text>
+            <Flex gap="2">
+              <Button size="1" color="grass" onClick={() => line.current?.answer()}>
+                Answer
+              </Button>
+              <Button size="1" variant="soft" color="red" onClick={() => line.current?.decline()}>
+                Decline
+              </Button>
+            </Flex>
+          </Flex>
+        </Callout.Root>
+      )}
+      {lineStatus === "connected" && (
+        <Callout.Root color="indigo" size="1" role="status">
+          <Flex align="center" justify="between" gap="3" wrap="wrap">
+            <Callout.Text>On a call with {caller}</Callout.Text>
+            <Button size="1" color="red" onClick={() => line.current?.hangUp()}>
+              Hang up
+            </Button>
+          </Flex>
         </Callout.Root>
       )}
       <div className="stage">

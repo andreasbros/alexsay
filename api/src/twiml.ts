@@ -22,11 +22,12 @@ export const announceTwiml = (message: string) => {
 };
 
 /**
- * Someone called the user's Twilio number: ring every registered speaker and the user's own phone
- * at once; whoever answers first takes the call. Without either, say so and hang up.
+ * Someone called the user's Twilio number: ring the app in the browser, every registered speaker
+ * and the user's own phone at once; whoever answers first takes the call. Without any, say so and hang up.
  */
-export function ringTwiml(sipUris: string[], mobile: string | null): string {
+export function ringTwiml(sipUris: string[], mobile: string | null, client: string | null = null): string {
   const targets = [
+    ...(client ? [`<Client>${escapeXml(client)}</Client>`] : []),
     ...sipUris.map((uri) => `<Sip>${escapeXml(uri)}</Sip>`),
     ...(mobile ? [`<Number>${escapeXml(mobile)}</Number>`] : []),
   ];

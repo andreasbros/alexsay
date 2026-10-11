@@ -7,7 +7,7 @@ import type { FunctionTool } from "./providers/openai";
 import { type Recipient, type RecipientRef, resolveRecipient } from "./recipients";
 import { applyContactChanges, publicContact } from "./routes/contacts";
 import { memoryCategory } from "./schemas";
-import { addToConference, placeCall, sendText, startConference, TelephonyError } from "./telephony";
+import { addToConference, endCall, placeCall, sendText, startConference, TelephonyError } from "./telephony";
 import type { AppEnv, ContactRow, MemoryCategory } from "./types";
 import { MEMORY_CATEGORIES } from "./types";
 
@@ -503,14 +503,17 @@ export const TOOLS: Tool[] = [
       type: "function",
       name: "place_call",
       description:
-        "Phones someone for the user. Without a message, the user's own phone rings first and is then connected " +
-        "to the person. With a message, the person is phoned and the message is read out to them instead. " +
-        "Confirm who (and the message) with the user before calling.",
+        "Phones someone for the user. From the app the call opens right here in the browser, with you on the " +
+        "line too when the user's OpenAI project allows it: give a task when the user wants you to speak for " +
+        "them (ask something, book, explain), otherwise you listen and only speak when addressed. From a " +
+        "speaker the user's own phone rings first and is then connected. A message phones the person and reads " +
+        "it out without the user. Confirm who, and the task or message, before calling.",
       parameters: {
         type: "object",
         properties: {
           ...RECIPIENT_PROPERTIES,
-          message: { type: "string", description: "Spoken to the person instead of connecting the user" },
+          task: { type: "string", description: "What you should get done on the call, in the user's words" },
+          message: { type: "string", description: "Spoken to the person instead of connecting anyone" },
         },
         additionalProperties: false,
       },
@@ -521,11 +524,20 @@ export const TOOLS: Tool[] = [
         return recipient;
       }
       const message = string(args, "message").slice(0, 500) || undefined;
-      return telephony(async () => ({
-        ok: true,
-        ...(await placeCall(c, c.get("user").username, recipient, message)),
-        note: message ? "the message is being delivered" : "the user's phone is ringing; when answered it connects",
-      }));
+      const task = string(args, "task").slice(0, 1000) || undefined;
+      const voice = c.get("voice") ?? "mobile";
+      return telephony(async () => {
+        const result = await placeCall(c, c.get("user").username, recipient, { message, task, voice });
+        const note = message
+          ? "the message is being delivered"
+          : "conference" in result
+            ? result.assistant
+              ? "the call is opening in the app and you are on the line: " +
+                (task ? "carry out the task once they answer" : "speak only when addressed")
+              : "the call is opening in the app; you are not on the line, the user talks directly"
+            : "the user's phone is ringing; when answered it connects";
+        return { ok: true, ...result, note };
+      });
     },
   },
   {
@@ -563,7 +575,10 @@ export const TOOLS: Tool[] = [
         }
         recipients.push(recipient);
       }
-      return telephony(async () => ({ ok: true, ...(await startConference(c, c.get("user").username, recipients)) }));
+      return telephony(async () => ({
+        ok: true,
+        ...(await startConference(c, c.get("user").username, recipients, c.get("voice") ?? "mobile")),
+      }));
     },
   },
   {
@@ -581,6 +596,16 @@ export const TOOLS: Tool[] = [
       }
       return telephony(async () => ({ ok: true, ...(await addToConference(c, c.get("user").username, recipient)) }));
     },
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "end_call",
+      description: "Hangs up the phone call or group call in progress when the user asks.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+    run: async (c) => telephony(async () => ({ ok: true, ...(await endCall(c, c.get("user").username)) })),
   },
   {
     needs: "twilio",

@@ -179,10 +179,14 @@
 .hardware-copy h2 {
   margin-bottom: 16px;
 }
+/* The same frame as the hero photo: rounded corners, a hairline edge and a soft shadow, no card padding */
 .photo {
   margin: 0;
   padding: 0;
   overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
 }
 .photo img {
   width: 100%;

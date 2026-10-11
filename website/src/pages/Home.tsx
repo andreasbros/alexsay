@@ -112,7 +112,7 @@ export function Home() {
               <li>Mains powered, one cable</li>
             </ul>
           </div>
-          <figure className="card photo">
+          <figure className="photo">
             <ThemedPicture
               night={{ large: nightTall1200, small: nightTall600 }}
               day={{ large: dayTall1200, small: dayTall600 }}

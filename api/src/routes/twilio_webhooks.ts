@@ -36,6 +36,9 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     const speakers = settings.sip_domain
       ? (await devices.list(c.env.DB, owner.username)).map((d) => `sip:${d.id}@${settings.sip_domain}`)
       : [];
+    // The user's own mobile cannot take a call it is making itself, so it is left out when it is the caller
+    const mobile = settings.my_number && settings.my_number !== from ? settings.my_number : null;
+    const rang = ["app", ...speakers.map(() => "speaker"), ...(mobile ? ["mobile"] : [])];
     const contact = await contacts.byPhone(c.env.DB, owner.username, from);
     const now = Date.now();
     await calls.create(c.env.DB, {
@@ -45,12 +48,13 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       kind: "call",
       phone: from,
       conference: null,
+      brief: `rang: ${rang.join(", ")}`,
       sid: params.CallSid ?? null,
       status: params.CallStatus ?? "ringing",
       at: now,
     });
     await contacts.stamp(c.env.DB, owner.username, from, "last_called_at", now);
-    return xml(c, ringTwiml(speakers, settings.my_number || null, CLIENT_IDENTITY));
+    return xml(c, ringTwiml(speakers, mobile, CLIENT_IDENTITY));
   })
   .post("/voice/outbound", async (c) => {
     const params = await form(c);

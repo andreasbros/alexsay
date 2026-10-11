@@ -3,7 +3,14 @@ import { canJoinCalls, openaiConnection, type TwilioConnection, twilioConnection
 import { calls, contacts, messages } from "./db";
 import { contextInstructions, loadContext } from "./memory";
 import { toWhatsapp } from "./phone";
-import { addParticipant, CLIENT_IDENTITY, completeCall, createCall, sendMessage } from "./providers/twilio";
+import {
+  addParticipant,
+  CLIENT_IDENTITY,
+  completeCall,
+  createCall,
+  sendMessage,
+  type Webhooks,
+} from "./providers/twilio";
 import type { Recipient } from "./recipients";
 import { announceTwiml, bridgeTwiml } from "./twiml";
 import type { AppEnv, Channel, VoiceClient } from "./types";
@@ -48,6 +55,16 @@ export interface Conference {
 }
 
 export const statusCallbackUrl = (c: Context<AppEnv>) => `${new URL(c.req.url).origin}/v1/twilio/status`;
+
+/** The URLs a Twilio number is pointed at, derived from the request so local and live differ naturally. */
+export function webhooks(c: Context<AppEnv>): Webhooks {
+  const origin = new URL(c.req.url).origin;
+  return {
+    voiceUrl: `${origin}/v1/twilio/voice`,
+    smsUrl: `${origin}/v1/twilio/messages`,
+    statusCallback: `${origin}/v1/twilio/status`,
+  };
+}
 
 type Ready = TwilioConnection & { from: string };
 

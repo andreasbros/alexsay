@@ -32,7 +32,9 @@ export function ringTwiml(sipUris: string[], mobile: string | null, client: stri
     ...(mobile ? [`<Number>${escapeXml(mobile)}</Number>`] : []),
   ];
   if (targets.length === 0) {
-    return response(`<Say ${SAY_VOICE}>Nobody is available to take your call right now.</Say><Hangup/>`);
+    return response(
+      `<Say ${SAY_VOICE}>Nothing is set up to take this call: no app open, no speaker and no other phone.</Say><Hangup/>`,
+    );
   }
   return response(`<Dial timeout="${RING_SECONDS}">${targets.join("")}</Dial>`);
 }

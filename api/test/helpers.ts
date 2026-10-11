@@ -132,6 +132,8 @@ export async function connectTwilio(cookie: string, settings: Record<string, unk
         ],
       }),
     [`POST ${TWILIO}/IncomingPhoneNumbers/PN1.json`]: () => reply(200, { sid: "PN1" }),
+    [`GET ${TWILIO}/IncomingPhoneNumbers/PN1.json`]: () =>
+      reply(200, { sid: "PN1", phone_number: TWILIO_NUMBER, voice_url: `${APP}/v1/twilio/voice` }),
   });
   const res = await json(
     `${APP}/api/connections/twilio`,

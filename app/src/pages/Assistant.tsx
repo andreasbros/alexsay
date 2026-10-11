@@ -47,7 +47,10 @@ export function Assistant() {
   const [status, setStatus] = useState<LiveStatus | "idle">("idle");
   const [detail, setDetail] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  const mutedRef = useRef(false);
   const line = useRef<PhoneLine | null>(null);
+  const lineStatusRef = useRef<LineStatus>("off");
+  const stopRing = useRef<(() => void) | null>(null);
   const [lineStatus, setLineStatus] = useState<LineStatus>("off");
   const [caller, setCaller] = useState<string | null>(null);
   const hasPhone = connections.data?.some((c) => c.provider === "twilio") ?? false;
@@ -71,6 +74,13 @@ export function Assistant() {
     [],
   );
   useEffect(preloadSounds, []);
+  // The page is the user's phone while it is open: calls to their number ring here even between conversations
+  // biome-ignore lint/correctness/useExhaustiveDependencies: openLine only touches refs; run when Twilio becomes available
+  useEffect(() => {
+    if (hasPhone && !demo && !line.current) {
+      void openLine();
+    }
+  }, [hasPhone, demo]);
   useEffect(() => {
     // Anything that blows up in the browser lands in the activity card instead of vanishing
     const onError = (event: ErrorEvent) => log("error", `Browser: ${event.message}`);
@@ -93,6 +103,7 @@ export function Assistant() {
       setTurns([]);
     }
     setMuted(false);
+    mutedRef.current = false;
     const handlers = {
       onActivity: log,
       voiceClient: () => (line.current && line.current.status() !== "off" ? ("browser" as const) : ("mobile" as const)),
@@ -140,15 +151,18 @@ export function Assistant() {
         {
           onActivity: log,
           onStatus: (next, who) => {
-            const wasOnCall = lineStatus === "connected";
+            const wasOnCall = lineStatusRef.current === "connected";
+            lineStatusRef.current = next;
             setLineStatus(next);
             setCaller(who ?? null);
+            stopRing.current?.();
+            stopRing.current = next === "ringing" ? startConnecting() : null;
             if (next === "connected") {
               // The assistant on the line hears the call; the one in this page stays quiet until it ends
               session.current?.setMuted(true);
               log("info", `On a call with ${who ?? "unknown"}`);
             } else if (next === "ready" && wasOnCall) {
-              session.current?.setMuted(muted);
+              session.current?.setMuted(mutedRef.current);
               log("info", "Call ended");
             } else if (next === "ringing") {
               log("info", `Incoming call from ${who ?? "unknown"}`);
@@ -165,9 +179,6 @@ export function Assistant() {
     const wasActive = session.current !== null;
     session.current?.stop();
     session.current = null;
-    line.current?.stop();
-    line.current = null;
-    setLineStatus("off");
     if (wasActive) {
       playEnd();
     }
@@ -190,6 +201,7 @@ export function Assistant() {
   const toggleMute = () => {
     const next = !muted;
     setMuted(next);
+    mutedRef.current = next;
     if (lineStatus === "connected") {
       line.current?.setMuted(next);
     } else {

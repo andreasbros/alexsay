@@ -1,15 +1,17 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { countryCode, twilioConnection, twilioSigningKey } from "../connections";
+import { calls, contacts } from "../db";
 import { providerFailure } from "../provider_errors";
-import { CLIENT_IDENTITY, listNumbers, voiceToken } from "../providers/twilio";
+import { CLIENT_IDENTITY, configureNumber, listNumbers, voiceToken } from "../providers/twilio";
 import { type Recipient, resolveRecipient } from "../recipients";
 import * as schemas from "../schemas";
-import { addToConference, endCall, placeCall, sendText, startConference, TelephonyError } from "../telephony";
+import { addToConference, endCall, placeCall, sendText, startConference, TelephonyError, webhooks } from "../telephony";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
 
 const VOICE_TOKEN_TTL_S = 3600;
+const RECENT_CALLS = 8;
 
 /** Telephony actions the app triggers directly: the same code paths the assistant's tools run. */
 export const twilioRoutes = new Hono<AppEnv>()
@@ -20,6 +22,27 @@ export const twilioRoutes = new Hono<AppEnv>()
     }
     try {
       return c.json(await listNumbers(connection.client));
+    } catch (err) {
+      return providerFailure(c, "twilio", err);
+    }
+  })
+  /** Points the chosen number at this app again, for a number that was re-routed in the Twilio console. */
+  .post("/numbers/repair", async (c) => {
+    const connection = await twilioConnection(c, c.get("user").username);
+    if (!connection) {
+      return c.json({ error: "no_twilio_connection" }, 412);
+    }
+    if (!connection.settings.from_number) {
+      return c.json({ error: "no_from_number" }, 412);
+    }
+    try {
+      const number = (await listNumbers(connection.client)).find(
+        (n) => n.phone_number === connection.settings.from_number,
+      );
+      if (!number) {
+        return c.json({ error: "number_not_found" }, 404);
+      }
+      return c.json(await configureNumber(connection.client, number.sid, webhooks(c)));
     } catch (err) {
       return providerFailure(c, "twilio", err);
     }
@@ -38,6 +61,30 @@ export const twilioRoutes = new Hono<AppEnv>()
     } catch (err) {
       return providerFailure(c, "twilio", err);
     }
+  })
+  /** The latest calls either way, with where an incoming one rang, so a silent phone can be explained. */
+  .get("/calls", async (c) => {
+    const username = c.get("user").username;
+    const rows = await calls.list(c.env.DB, username, null, RECENT_CALLS);
+    const names = new Map<string, string>();
+    for (const row of rows) {
+      if (row.contact_id && !names.has(row.contact_id)) {
+        names.set(row.contact_id, (await contacts.get(c.env.DB, username, row.contact_id))?.name ?? row.phone);
+      }
+    }
+    return c.json(
+      rows.map((row) => ({
+        id: row.id,
+        at: row.at,
+        direction: row.direction,
+        kind: row.kind,
+        role: row.role,
+        phone: row.phone,
+        contact: row.contact_id ? (names.get(row.contact_id) ?? null) : null,
+        status: row.status,
+        detail: row.direction === "in" ? row.brief : null,
+      })),
+    );
   })
   .post("/calls", async (c) => {
     const { message, task, ...ref } = await jsonBody(c, schemas.placeCall);

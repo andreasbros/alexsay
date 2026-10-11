@@ -19,11 +19,13 @@ import {
   type Connection,
   type Light,
   type OpenAiSettings,
+  type PhoneNumber,
   type Provider,
   type ProviderTest,
   type TwilioSettings,
 } from "../api";
 import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP, OPENAI_SIP_HELP, TWILIO_HELP } from "../components/HelpDialog";
+import { ago } from "../format";
 import { toE164 } from "../lib/phone";
 import { DEFAULT_OPENAI as DEFAULTS, VOICES, voiceTypeOf } from "../voices";
 
@@ -612,8 +614,88 @@ function TwilioCard({ connection }: { connection: Connection | undefined }) {
             </Flex>
           </form>
         )}
+        {connection && <NumberRouting from={connection.settings.from_number ?? ""} numbers={numbers.data} />}
+        {connection && <RecentCalls />}
       </Flex>
     </Card>
+  );
+}
+
+/**
+ * Where Twilio sends calls to the chosen number right now. A TwiML app, SIP trunk or another URL set in the
+ * console means calls never reach this app; Repair points the number back here.
+ */
+function NumberRouting({ from, numbers }: { from: string; numbers: PhoneNumber[] | undefined }) {
+  const client = useQueryClient();
+  const repair = useMutation({
+    mutationFn: api.repairNumber,
+    onSuccess: () => client.invalidateQueries({ queryKey: ["twilio-numbers"] }),
+  });
+  const number = numbers?.find((n) => n.phone_number === from);
+  if (!from || !number) {
+    return null;
+  }
+  const ours = `${window.location.origin}/v1/twilio/voice`;
+  const routedHere = number.voice_url === ours && !number.voice_application_sid && !number.trunk_sid;
+  const elsewhere = number.trunk_sid
+    ? `a SIP trunk (${number.trunk_sid})`
+    : number.voice_application_sid
+      ? `a TwiML app (${number.voice_application_sid})`
+      : number.voice_url
+        ? `another URL (${number.voice_url})`
+        : "nothing";
+  return (
+    <Flex direction="column" gap="2">
+      <Flex align="center" justify="between" gap="3" wrap="wrap">
+        <Text size="2">
+          Incoming calls to {from}:{" "}
+          {routedHere ? (
+            <Text color="grass">reach this app (the Assistant page, your speakers and your mobile).</Text>
+          ) : (
+            <Text color="amber">go to {elsewhere}, not to this app.</Text>
+          )}
+        </Text>
+        {!routedHere && (
+          <Button size="1" variant="soft" onClick={() => repair.mutate()} loading={repair.isPending}>
+            Point at this app
+          </Button>
+        )}
+      </Flex>
+      {repair.error && (
+        <Text size="2" color="red">
+          {errorText(repair.error)}
+        </Text>
+      )}
+    </Flex>
+  );
+}
+
+/** What happened to the last calls, including where an incoming one rang, so a silent phone has an answer. */
+function RecentCalls() {
+  const recent = useQuery({ queryKey: ["recent-calls"], queryFn: api.recentCalls, refetchInterval: 20_000 });
+  if (!recent.data || recent.data.length === 0) {
+    return null;
+  }
+  return (
+    <Flex direction="column" gap="1">
+      <Text size="2" weight="medium">
+        Recent calls
+      </Text>
+      {recent.data
+        .filter((call) => call.role !== "assistant")
+        .map((call) => (
+          <Flex key={call.id} justify="between" gap="3" wrap="wrap">
+            <Text size="1">
+              {call.direction === "in" ? "From" : call.kind === "conference" ? "Group call with" : "To"}{" "}
+              {call.contact ?? call.phone}
+              {call.detail ? <Text color="gray"> · {call.detail}</Text> : null}
+            </Text>
+            <Text size="1" color="gray">
+              {call.status || "placed"} · {ago(call.at)}
+            </Text>
+          </Flex>
+        ))}
+    </Flex>
   );
 }
 

@@ -62,6 +62,8 @@ describe("twilio", () => {
         configured = formOf(body);
         return reply(200, {});
       },
+      [`GET ${TWILIO}/IncomingPhoneNumbers/PN1.json`]: () =>
+        reply(200, { sid: "PN1", phone_number: TWILIO_NUMBER, voice_url: `${APP}/v1/twilio/voice` }),
     });
     await json(
       `${APP}/api/connections/twilio`,
@@ -76,12 +78,53 @@ describe("twilio", () => {
     upstream.done();
     expect(configured).toMatchObject({
       VoiceUrl: `${APP}/v1/twilio/voice`,
+      VoiceApplicationSid: "",
+      TrunkSid: "",
       SmsUrl: `${APP}/v1/twilio/messages`,
       StatusCallback: `${APP}/v1/twilio/status`,
     });
     expect(upstream.calls[0]?.headers.get("authorization")).toBe(
       `Basic ${btoa(`${TWILIO_SID}:fedcba9876543210fedcba9876543210`)}`,
     );
+  });
+
+  it("reports a number that still routes calls elsewhere, and repairs it on request", async () => {
+    const stuck = mockUpstream({
+      [`GET ${TWILIO}.json`]: () => reply(200, { friendly_name: "Alexsay" }),
+      [`GET ${TWILIO}/IncomingPhoneNumbers.json?PageSize=100`]: () =>
+        reply(200, { incoming_phone_numbers: [{ sid: "PN1", phone_number: TWILIO_NUMBER, friendly_name: "Home" }] }),
+      [`POST ${TWILIO}/IncomingPhoneNumbers/PN1.json`]: () => reply(200, {}),
+      [`GET ${TWILIO}/IncomingPhoneNumbers/PN1.json`]: () =>
+        reply(200, { sid: "PN1", phone_number: TWILIO_NUMBER, voice_url: "", trunk_sid: "TK123" }),
+    });
+    const res = await json(
+      `${APP}/api/connections/twilio`,
+      "PUT",
+      {
+        account_sid: TWILIO_SID,
+        auth_token: "fedcba9876543210fedcba9876543210",
+        settings: { from_number: TWILIO_NUMBER },
+      },
+      maria,
+    );
+    stuck.done();
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: "twilio_rejected",
+      detail: expect.stringContaining("SIP trunk TK123"),
+    });
+
+    await connectTwilio(maria);
+    const repaired = mockUpstream({
+      [`GET ${TWILIO}/IncomingPhoneNumbers.json?PageSize=100`]: () =>
+        reply(200, { incoming_phone_numbers: [{ sid: "PN1", phone_number: TWILIO_NUMBER, friendly_name: "Home" }] }),
+      [`POST ${TWILIO}/IncomingPhoneNumbers/PN1.json`]: () => reply(200, {}),
+      [`GET ${TWILIO}/IncomingPhoneNumbers/PN1.json`]: () =>
+        reply(200, { sid: "PN1", phone_number: TWILIO_NUMBER, voice_url: `${APP}/v1/twilio/voice` }),
+    });
+    const fixed = await call(`${APP}/api/twilio/numbers/repair`, { method: "POST" }, maria);
+    repaired.done();
+    expect(await fixed.json()).toMatchObject({ phone_number: TWILIO_NUMBER, voice_url: `${APP}/v1/twilio/voice` });
   });
 
   it("refuses credentials Twilio rejects and numbers the account does not own", async () => {
@@ -136,7 +179,13 @@ describe("twilio", () => {
     const numbers = await call(`${APP}/api/twilio/numbers`, {}, maria);
     upstream.done();
     expect(await numbers.json()).toEqual([
-      { sid: "PN1", phone_number: TWILIO_NUMBER, friendly_name: "Home", voice: true, sms: true },
+      expect.objectContaining({
+        sid: "PN1",
+        phone_number: TWILIO_NUMBER,
+        friendly_name: "Home",
+        voice: true,
+        sms: true,
+      }),
     ]);
     const changed = await json(
       `${APP}/api/connections/twilio`,

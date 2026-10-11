@@ -14,6 +14,7 @@ import { listModels, ProviderError } from "../providers/openai";
 import { configureNumber, listNumbers, type TwilioClient, verifyAccount } from "../providers/twilio";
 import * as schemas from "../schemas";
 import { open, seal } from "../secrets";
+import { webhooks } from "../telephony";
 import type { AppEnv } from "../types";
 
 import { jsonBody } from "../validate";
@@ -87,12 +88,7 @@ export const connectionRoutes = new Hono<AppEnv>()
         if (!number) {
           return c.json({ error: "number_not_found" }, 400);
         }
-        const origin = new URL(c.req.url).origin;
-        await configureNumber(client, number.sid, {
-          voiceUrl: `${origin}/v1/twilio/voice`,
-          smsUrl: `${origin}/v1/twilio/messages`,
-          statusCallback: `${origin}/v1/twilio/status`,
-        });
+        await configureNumber(client, number.sid, webhooks(c));
       }
     } catch (err) {
       if (err instanceof ProviderError) {

@@ -46,6 +46,10 @@ export interface PhoneNumber {
   friendly_name: string;
   voice: boolean;
   sms: boolean;
+  voice_url: string;
+  voice_application_sid: string;
+  trunk_sid: string;
+  sms_url: string;
 }
 
 export interface Connection {
@@ -158,6 +162,18 @@ export interface ContactChanges {
   favourite?: boolean;
 }
 
+export interface RecentCall {
+  id: string;
+  at: number;
+  direction: "out" | "in";
+  kind: "call" | "announcement" | "conference";
+  role: string;
+  phone: string;
+  contact: string | null;
+  status: string;
+  detail: string | null;
+}
+
 export interface Placed {
   sid: string;
   status: string;
@@ -220,6 +236,7 @@ export const api = {
       settings,
     }),
   twilioNumbers: () => request<PhoneNumber[]>("GET", "/api/twilio/numbers"),
+  repairNumber: () => request<PhoneNumber>("POST", "/api/twilio/numbers/repair"),
   testConnection: (provider: Provider) => request<ProviderTest>("POST", `/api/connections/${provider}/test`),
   removeConnection: (provider: Provider) => request<void>("DELETE", `/api/connections/${provider}`),
 
@@ -277,6 +294,7 @@ export const api = {
   sendMessage: (contact_id: string, body: string, channel: Channel) =>
     request<Placed>("POST", "/api/twilio/messages", { contact_id, body, channel }),
   voiceToken: () => request<{ token: string; identity: string; ttl: number }>("GET", "/api/twilio/voice-token"),
+  recentCalls: () => request<RecentCall[]>("GET", "/api/twilio/calls"),
   endCall: () => request<{ conference: string }>("POST", "/api/twilio/calls/end"),
 
   users: () => request<User[]>("GET", "/api/users"),

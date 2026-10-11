@@ -25,6 +25,11 @@ export interface PhoneNumber {
   friendly_name: string;
   voice: boolean;
   sms: boolean;
+  /** Where Twilio sends calls right now: our webhook, another URL, a TwiML app or a SIP trunk. */
+  voice_url: string;
+  voice_application_sid: string;
+  trunk_sid: string;
+  sms_url: string;
 }
 
 interface NumberRow {
@@ -32,6 +37,10 @@ interface NumberRow {
   phone_number: string;
   friendly_name: string;
   capabilities?: { voice?: boolean; sms?: boolean };
+  voice_url?: string | null;
+  voice_application_sid?: string | null;
+  trunk_sid?: string | null;
+  sms_url?: string | null;
 }
 
 const API_VERSION = "2010-04-01";
@@ -80,7 +89,26 @@ export async function listNumbers(client: TwilioClient): Promise<PhoneNumber[]> 
     friendly_name: n.friendly_name,
     voice: n.capabilities?.voice ?? false,
     sms: n.capabilities?.sms ?? false,
+    voice_url: n.voice_url ?? "",
+    voice_application_sid: n.voice_application_sid ?? "",
+    trunk_sid: n.trunk_sid ?? "",
+    sms_url: n.sms_url ?? "",
   }));
+}
+
+export async function getNumber(client: TwilioClient, numberSid: string): Promise<PhoneNumber> {
+  const n = await request<NumberRow>(client, `/IncomingPhoneNumbers/${numberSid}.json`);
+  return {
+    sid: n.sid,
+    phone_number: n.phone_number,
+    friendly_name: n.friendly_name,
+    voice: n.capabilities?.voice ?? false,
+    sms: n.capabilities?.sms ?? false,
+    voice_url: n.voice_url ?? "",
+    voice_application_sid: n.voice_application_sid ?? "",
+    trunk_sid: n.trunk_sid ?? "",
+    sms_url: n.sms_url ?? "",
+  };
 }
 
 export interface Webhooks {
@@ -89,16 +117,32 @@ export interface Webhooks {
   statusCallback: string;
 }
 
-/** Points a number's incoming call and message webhooks at this app, so the user never edits the console. */
-export async function configureNumber(client: TwilioClient, numberSid: string, hooks: Webhooks): Promise<void> {
+/**
+ * Points a number's incoming call and message webhooks at this app, so the user never edits the
+ * console. A TwiML app or SIP trunk on the number would make Twilio ignore the URLs, so both are
+ * detached; the number is read back so a silent failure shows up as an error, not a silent phone.
+ */
+export async function configureNumber(client: TwilioClient, numberSid: string, hooks: Webhooks): Promise<PhoneNumber> {
   await request(client, `/IncomingPhoneNumbers/${numberSid}.json`, {
     VoiceUrl: hooks.voiceUrl,
     VoiceMethod: "POST",
+    VoiceApplicationSid: "",
+    TrunkSid: "",
+    VoiceReceiveMode: "voice",
     SmsUrl: hooks.smsUrl,
     SmsMethod: "POST",
+    SmsApplicationSid: "",
     StatusCallback: hooks.statusCallback,
     StatusCallbackMethod: "POST",
   });
+  const number = await getNumber(client, numberSid);
+  if (number.voice_url !== hooks.voiceUrl || number.voice_application_sid || number.trunk_sid) {
+    throw new ProviderError(
+      409,
+      `the number still routes calls elsewhere (${number.trunk_sid ? `SIP trunk ${number.trunk_sid}` : number.voice_application_sid ? `TwiML app ${number.voice_application_sid}` : number.voice_url || "no URL"})`,
+    );
+  }
+  return number;
 }
 
 export interface Sent {

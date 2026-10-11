@@ -56,7 +56,7 @@ describe("TwiML", () => {
     expect(ring).toContain(
       '<Dial timeout="25"><Sip>sip:abc@home.sip.twilio.com</Sip><Number>+447700900999</Number></Dial>',
     );
-    expect(ringTwiml([], null)).toContain("Nobody is available");
+    expect(ringTwiml([], null)).toContain("Nothing is set up to take this call");
     expect(ringTwiml([], null)).toContain("<Hangup/>");
   });
 });

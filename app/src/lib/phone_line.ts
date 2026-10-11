@@ -22,6 +22,13 @@ export interface PhoneLine {
   stop: () => void;
 }
 
+/** Silences (or restores) the given microphone tracks at the source, whatever the SDK does with them. */
+export function applyMute(tracks: { enabled: boolean }[], muted: boolean): void {
+  for (const track of tracks) {
+    track.enabled = !muted;
+  }
+}
+
 /**
  * The browser as a phone: it registers with Twilio under the user's own account, so calls the
  * assistant places ring here at once and calls to the user's number can be answered here.
@@ -53,11 +60,17 @@ export async function openPhoneLine(
       for (const t of stream.getAudioTracks()) {
         t.applyConstraints({ autoGainControl: true, noiseSuppression: true, echoCancellation: true }).catch(() => {});
       }
+      callTracks = stream.getAudioTracks();
+      applyMute(callTracks, muted);
       return stream;
     },
   });
   let current: Call | null = null;
   let status: LineStatus = "off";
+  // The call's own microphone tracks (clones of the conversation's), silenced directly: the SDK's mute alone
+  // did not stop the user's voice reaching the call, and a mute pressed before the call must hold through it
+  let callTracks: MediaStreamTrack[] = [];
+  let muted = false;
   const set = (next: LineStatus, who?: string) => {
     status = next;
     handlers.onStatus(next, who);
@@ -65,6 +78,8 @@ export async function openPhoneLine(
   const attach = (call: Call) => {
     current = call;
     call.on("accept", () => {
+      call.mute(muted);
+      applyMute(callTracks, muted);
       set("connected", callerOf(call));
       if (sink) {
         playThrough(sink, call, handlers);
@@ -76,6 +91,7 @@ export async function openPhoneLine(
     });
     call.on("disconnect", () => {
       current = null;
+      callTracks = [];
       if (sink) {
         sink.srcObject = null;
       }
@@ -126,7 +142,11 @@ export async function openPhoneLine(
     answer: () => current?.accept(),
     decline: () => current?.reject(),
     hangUp: () => current?.disconnect(),
-    setMuted: (muted) => current?.mute(muted),
+    setMuted: (next) => {
+      muted = next;
+      current?.mute(next);
+      applyMute(callTracks, next);
+    },
     stop: () => {
       current?.disconnect();
       device.destroy();

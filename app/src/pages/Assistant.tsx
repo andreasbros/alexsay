@@ -281,9 +281,9 @@ export function Assistant() {
     const next = !muted;
     setMuted(next);
     mutedRef.current = next;
-    if (lineStatus === "connected") {
-      line.current?.setMuted(next);
-    } else {
+    // The line remembers the state, so a mute pressed before a call connects holds through the call
+    line.current?.setMuted(next);
+    if (lineStatus !== "connected") {
       session.current?.setMuted(next);
     }
   };

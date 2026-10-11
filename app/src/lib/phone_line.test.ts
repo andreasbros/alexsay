@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { callerOf } from "./phone_line";
+import { applyMute, callerOf } from "./phone_line";
+
+describe("applyMute", () => {
+  it("silences every track of the call at the source and restores them", () => {
+    const tracks = [{ enabled: true }, { enabled: true }];
+    applyMute(tracks, true);
+    expect(tracks.map((t) => t.enabled)).toEqual([false, false]);
+    applyMute(tracks, false);
+    expect(tracks.map((t) => t.enabled)).toEqual([true, true]);
+  });
+});
 
 describe("callerOf", () => {
   it("names the assistant's own conference legs and otherwise the caller", () => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { debugLog, isDebug } from "../lib/debug";
 import type { LiveStatus } from "../lib/live";
 
 interface Props {
@@ -35,7 +36,7 @@ const COLOURS: Record<string, string> = {
 export function Bars({ status, level }: Props) {
   const svg = useRef<SVGSVGElement>(null);
   const bars = useRef<(SVGLineElement | null)[]>([]);
-  const state = useRef({ status, level, energy: 0 });
+  const state = useRef({ status, level, energy: 0, lastLog: 0 });
   state.current.status = status;
   state.current.level = level;
 
@@ -70,6 +71,15 @@ export function Bars({ status, level }: Props) {
       });
       if (svg.current) {
         svg.current.style.transform = `scale(${(1 + energy * 0.08).toFixed(3)})`;
+      }
+      if (isDebug() && (energy > 0 || thinking) && now - state.current.lastLog > 200) {
+        state.current.lastLog = now;
+        const heights = bars.current.map((bar) =>
+          bar ? (Number(bar.getAttribute("y2")) - Number(bar.getAttribute("y1"))).toFixed(0) : "?",
+        );
+        debugLog(
+          `bars status=${status} target=${target.toFixed(2)} energy=${energy.toFixed(2)} heights=${heights.join(",")}`,
+        );
       }
     };
     frame = requestAnimationFrame(draw);

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import type { User } from "../api";
 import { BUILD } from "../build";
+import { isDebug, setDebug } from "../lib/debug";
 import { useLogout } from "../session";
 import { useAppearance } from "../theme";
 import { Logo } from "./Logo";
@@ -93,6 +94,9 @@ export function Layout({ user }: { user: User }) {
                       <PersonIcon /> Users
                     </DropdownMenu.Item>
                   )}
+                  <DropdownMenu.CheckboxItem checked={isDebug()} onCheckedChange={(on) => setDebug(on)}>
+                    Debug log
+                  </DropdownMenu.CheckboxItem>
                   <DropdownMenu.Item onSelect={() => logout.mutate()}>
                     <ExitIcon /> Sign out
                   </DropdownMenu.Item>

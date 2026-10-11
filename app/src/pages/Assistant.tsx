@@ -6,7 +6,9 @@ import { Link, useLocation } from "react-router";
 import { ApiError, api, type OpenAiSettings } from "../api";
 import { Activity, type ActivityEntry } from "../components/Activity";
 import { Bars } from "../components/Bars";
+import { DebugPanel } from "../components/DebugPanel";
 import { appendTurn, Transcript, type Turn } from "../components/Transcript";
+import { debugLog, isDebug, subscribeDebug } from "../lib/debug";
 import { startDemo } from "../lib/demo";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
 import { DEFAULT_OPENAI, VOICES } from "../voices";
@@ -45,6 +47,8 @@ export function Assistant() {
   const [muted, setMuted] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [debug, setDebugOn] = useState(isDebug);
+  useEffect(() => subscribeDebug(() => setDebugOn(isDebug())), []);
   // The last GPT-Live session, kept so a dropped call can be forked and carried on
   const lastSessionId = useRef<string | null>(null);
   const log = (kind: ActivityEntry["kind"], text: string) =>
@@ -73,6 +77,7 @@ export function Assistant() {
     const handlers = {
       onActivity: log,
       onStatus: (next: LiveStatus, info?: string) => {
+        debugLog(`status ${next}${info ? ` (${info})` : ""}`);
         setStatus(next);
         if (info) {
           setDetail(info);
@@ -218,6 +223,7 @@ export function Assistant() {
           <Activity entries={activity} />
         </div>
       </Flex>
+      {debug && <DebugPanel />}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { api } from "../api";
-import { type SpeechMeter, speechMeter } from "./speech";
+import { brief, debugLog } from "./debug";
 import { functionCallOf, runTool } from "./tools";
 
 export type LiveStatus = "connecting" | "listening" | "thinking" | "speaking" | "lost" | "closed" | "error";
@@ -38,8 +38,7 @@ const HANGUP_QUIET_MS = 1500;
  */
 export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Promise<LiveSession> {
   handlers.onStatus("connecting");
-  // Created before the first await, inside the click that started the call, so iOS allows it
-  const audioContext = new AudioContext();
+  debugLog(`start resumeFrom=${resumeFrom ?? "none"} ua=${navigator.userAgent}`);
   const conversationId = await api
     .startConversation()
     .then((r) => r.id)
@@ -57,15 +56,10 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
   const levels = { mic: 0, voice: 0 };
   const micGate = new NoiseGate();
   const voiceGate = new NoiseGate();
-  // Your voice: an analyser on the microphone (hark's method). The assistant's voice: WebRTC
-  // statistics, never a Web Audio tap on the remote stream, which clicks on iOS.
+  // Levels come from WebRTC statistics only: any Web Audio tap on these streams clicks on iOS
   const statsSeen = { mic: false, voice: false };
-  let micMeter: SpeechMeter | null = null;
-  try {
-    micMeter = speechMeter(mic, audioContext);
-  } catch (err) {
-    handlers.onActivity("error", `Microphone meter unavailable: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  const raw = { mic: -1, voice: -1 };
+  let lastUserWords = 0;
   let ticker = 0;
 
   pc.ontrack = (event) => {
@@ -93,15 +87,18 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
   events.onmessage = (message) => {
     const event = parse(message.data);
     if (!event) {
+      debugLog(`event unparsable ${String(message.data).slice(0, 120)}`);
       return;
     }
     const type = String(event.type);
+    debugLog(`event ${brief(event)}`);
     if (type === "session.output_transcript.delta") {
       lastAssistantAudio = Date.now();
       thinking = false;
       handlers.onTranscript("assistant", String(event.delta ?? ""));
       recorder.add("assistant", String(event.delta ?? ""));
     } else if (type === "session.input_transcript.delta") {
+      lastUserWords = Date.now();
       handlers.onTranscript("user", String(event.delta ?? ""));
       recorder.add("user", String(event.delta ?? ""));
     } else if (type === "session.closed") {
@@ -129,10 +126,14 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
   };
   let openedAt = 0;
   let diagnosed = false;
+  let lastLevelLog = 0;
   events.onopen = () => {
     openedAt = Date.now();
+    debugLog("data channel open");
     handlers.onStatus("listening");
   };
+  pc.onconnectionstatechange = () => debugLog(`connection ${pc.connectionState}`);
+  pc.oniceconnectionstatechange = () => debugLog(`ice ${pc.iceConnectionState}`);
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
@@ -161,17 +162,20 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
       handlers.onStatus("lost", "Connection lost. Tap Resume to carry on where you left off.");
       return;
     }
-    void readLevels(pc, levels, statsSeen, { mic: micGate, voice: voiceGate });
-    if (micMeter) {
-      levels.mic = micMeter.level();
-    }
+    void readLevels(pc, levels, statsSeen, { mic: micGate, voice: voiceGate }, raw);
     if (events.readyState !== "open") {
       return;
     }
     if (!diagnosed && Date.now() - openedAt > 5000) {
       diagnosed = true;
-      const mic = micMeter ? `analyser, peak ${micMeter.peakDb().toFixed(0)} dB` : statsSeen.mic ? "stats" : "none";
-      handlers.onActivity("info", `Levels: you via ${mic}; assistant via ${statsSeen.voice ? "stats" : "transcript"}`);
+      handlers.onActivity(
+        "info",
+        `Levels: you via ${statsSeen.mic ? "stats" : "transcript"}; assistant via ${statsSeen.voice ? "stats" : "transcript"}`,
+      );
+    }
+    // Without a microphone level, your words arriving is the signal that you are talking
+    if (!statsSeen.mic && Date.now() - lastUserWords < SPEAKING_HOLD_MS) {
+      levels.mic = 0.3 + 0.3 * Math.abs(Math.sin(Date.now() / 90));
     }
     const talkingByTranscript = Date.now() - lastAssistantAudio < SPEAKING_HOLD_MS;
     // No measurable level at all: let the words themselves move the bars
@@ -181,6 +185,13 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
     const speaking = levels.voice > 0.02 || talkingByTranscript;
     if (speaking) {
       lastAssistantAudio = Math.max(lastAssistantAudio, levels.voice > 0.02 ? Date.now() : 0);
+    }
+    if (Date.now() - lastLevelLog > 250) {
+      lastLevelLog = Date.now();
+      debugLog(
+        `levels rawMic=${raw.mic.toFixed(3)} rawVoice=${raw.voice.toFixed(3)} mic=${levels.mic.toFixed(2)} ` +
+          `voice=${levels.voice.toFixed(2)} speaking=${speaking} thinking=${thinking} byTranscript=${talkingByTranscript}`,
+      );
     }
     if (hangingUp && !speaking && Date.now() - lastAssistantAudio > HANGUP_QUIET_MS) {
       handlers.onActivity("info", "Conversation ended by the assistant");
@@ -198,7 +209,6 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
     pc.close();
     speaker.srcObject = null;
     speaker.remove();
-    micMeter?.close();
     void recorder.finish();
   }
 
@@ -294,6 +304,7 @@ async function readLevels(
   levels: { mic: number; voice: number },
   seen: { mic: boolean; voice: boolean },
   gates: { mic: NoiseGate; voice: NoiseGate },
+  raw: { mic: number; voice: number },
 ): Promise<void> {
   const stats = await pc.getStats().catch(() => null);
   if (!stats) {
@@ -304,9 +315,11 @@ async function readLevels(
       return;
     }
     if (report.type === "inbound-rtp") {
+      raw.voice = report.audioLevel;
       levels.voice = gates.voice.pass(report.audioLevel);
       seen.voice = true;
     } else if (report.type === "media-source") {
+      raw.mic = report.audioLevel;
       levels.mic = gates.mic.pass(report.audioLevel);
       seen.mic = true;
     }
@@ -405,6 +418,7 @@ function iceGathered(pc: RTCPeerConnection): Promise<void> {
 }
 
 function send(channel: RTCDataChannel, event: Record<string, unknown>): void {
+  debugLog(`send ${brief(event)}`);
   channel.send(JSON.stringify(event));
 }
 

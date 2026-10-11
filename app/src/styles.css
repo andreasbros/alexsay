@@ -253,3 +253,27 @@ body {
     animation: none;
   }
 }
+
+/* The debug log: a fixed strip at the bottom of the assistant screen */
+.debug {
+  flex-shrink: 0;
+  border-top: 1px solid var(--gray-a5);
+  padding-top: var(--space-2);
+}
+
+.debug-lines {
+  margin: 0;
+  height: 9rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--code-font-family);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--gray-11);
+  background: var(--gray-a2);
+  border-radius: var(--radius-2);
+  padding: var(--space-2);
+  user-select: text;
+  -webkit-user-select: text;
+}

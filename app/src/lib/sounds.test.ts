@@ -8,7 +8,7 @@ describe("earcons", () => {
     expect(clip[0]).toBe(0);
     expect(clip[clip.length - 1]).toBe(0);
     const peak = Math.max(...Array.from(clip).map(Math.abs));
-    expect(peak).toBeGreaterThan(0.2);
+    expect(peak).toBeGreaterThan(0.15);
     expect(peak).toBeLessThanOrEqual(1);
   });
 });

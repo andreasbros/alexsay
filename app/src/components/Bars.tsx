@@ -26,7 +26,8 @@ const COLOURS: Record<string, string> = {
 };
 
 /**
- * The logo bars as a live meter. At rest they hold the logo's shape and stay still. Sound makes them
+ * The logo bars as a live meter. Idle, they breathe gently; in a conversation, silence holds the
+ * logo's shape exactly. Sound makes them
  * jump at once and settle slowly, the middle bars most, each with its own flutter; thinking sends a
  * wave travelling across them; the whole mark swells with the energy. Plain strokes only: gradients
  * and filters did not render on every phone.
@@ -57,11 +58,13 @@ export function Bars({ status, level }: Props) {
           return;
         }
         const centreness = 1 - Math.abs(i - 3) / 3.5;
-        // Silence is the logo, exactly: motion comes only from sound (or the thinking wave)
+        // Out of a conversation the mark breathes slowly; in one, silence is the logo exactly and
+        // motion comes only from sound (or the thinking wave)
+        const breathing = live ? 1 : 1 + Math.sin(t * 1.6 + i * 0.7) * 0.03;
         const flutter = 0.7 + 0.3 * Math.sin(t * 11 + i * 1.9) * Math.sin(t * 6.3 + i);
         const wave = thinking ? 0.45 * (0.5 + 0.5 * Math.sin(t * 6 - i * 0.9)) : 0;
         const grow = energy * (0.5 + 1.3 * centreness) * flutter + wave;
-        const height = Math.min(MAX_HEIGHT, (REST_HEIGHTS[i] ?? 0) * (1 + grow));
+        const height = Math.min(MAX_HEIGHT, (REST_HEIGHTS[i] ?? 0) * breathing * (1 + grow));
         bar.setAttribute("y1", (50 - height / 2 + WIDTH / 2).toFixed(2));
         bar.setAttribute("y2", (50 + height / 2 - WIDTH / 2).toFixed(2));
       });

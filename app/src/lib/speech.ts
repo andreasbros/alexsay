@@ -20,7 +20,7 @@ export function speechMeter(stream: MediaStream, context: AudioContext = new Aud
   analyser.fftSize = 512;
   analyser.smoothingTimeConstant = 0.1;
   context.createMediaStreamSource(stream).connect(analyser);
-  const bins = new Float32Array(analyser.frequencyBinCount);
+  const bins = new Float32Array(new ArrayBuffer(analyser.frequencyBinCount * 4));
   const history: number[] = [];
   let peak = -Infinity;
   if (context.state === "suspended") {
@@ -49,7 +49,7 @@ export function speechMeter(stream: MediaStream, context: AudioContext = new Aud
   };
 }
 
-function loudestBin(analyser: AnalyserNode, bins: Float32Array): number {
+function loudestBin(analyser: AnalyserNode, bins: Float32Array<ArrayBuffer>): number {
   analyser.getFloatFrequencyData(bins);
   let loudest = -Infinity;
   for (const db of bins) {

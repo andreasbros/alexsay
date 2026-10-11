@@ -27,6 +27,8 @@ export interface LiveSession {
   setMuted: (muted: boolean) => void;
   /** The live microphone track, for a phone call to share instead of opening the microphone again. */
   micTrack: () => MediaStreamTrack | null;
+  /** Hands the assistant a note from the app (a call report) and has it respond, as if the user had spoken. */
+  tell: (note: string) => void;
   stop: () => void;
 }
 
@@ -279,6 +281,18 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
         send(events, { type: muted ? "session.input_audio.mute" : "session.input_audio.unmute" });
       }
       handlers.onActivity("info", muted ? "Microphone muted" : "Microphone live");
+    },
+    tell: (note) => {
+      if (events.readyState !== "open") {
+        return;
+      }
+      send(events, {
+        type: "response.item.create",
+        item: { type: "message", role: "user", content: [{ type: "input_text", text: note }] },
+      });
+      send(events, { type: "response.create" });
+      recorder.tool(`note: ${note}`);
+      handlers.onActivity("info", `Told the assistant: ${note.slice(0, 120)}`);
     },
     stop: () => {
       if (events.readyState === "open") {

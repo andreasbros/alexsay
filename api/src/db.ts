@@ -1,7 +1,10 @@
 import { purgeLog } from "./log";
 import { searchName } from "./phone";
 import type {
+  CallReportRow,
   CallRow,
+  CallSpeaker,
+  CallTurnRow,
   Channel,
   ConnectionRow,
   ContactRow,
@@ -54,6 +57,20 @@ export const users = {
   remove: (db: D1Database, username: string) => db.prepare("DELETE FROM users WHERE username = ?").bind(username).run(),
 
   /** Whether the user let the assistant read their server log. */
+  callTest: async (db: D1Database, username: string) =>
+    (
+      await db
+        .prepare("SELECT ai_call_test FROM users WHERE username = ?")
+        .bind(username)
+        .first<{ ai_call_test: number }>()
+    )?.ai_call_test === 1,
+
+  setCallTest: (db: D1Database, username: string, allowed: boolean) =>
+    db
+      .prepare("UPDATE users SET ai_call_test = ? WHERE username = ?")
+      .bind(allowed ? 1 : 0, username)
+      .run(),
+
   logAccess: async (db: D1Database, username: string) =>
     (
       await db
@@ -566,6 +583,51 @@ export const calls = {
   /** Every leg of a conference in dialling order: host, guests, assistant. */
   legs: async (db: D1Database, conference: string) =>
     (await db.prepare("SELECT * FROM calls WHERE conference = ? ORDER BY at").bind(conference).all<CallRow>()).results,
+
+  setLeft: (db: D1Database, sid: string, at: number) =>
+    db.prepare("UPDATE calls SET status = 'completed', left_at = ? WHERE sid = ?").bind(at, sid).run(),
+
+  /** The assistant's leg is gone (its socket closed), whatever Twilio has said so far. */
+  endAssistant: (db: D1Database, conference: string) =>
+    db
+      .prepare("UPDATE calls SET status = 'completed' WHERE conference = ? AND role = 'assistant'")
+      .bind(conference)
+      .run(),
+
+  /** The user's most recent conference, in progress or not. */
+  latestConference: async (db: D1Database, username: string) =>
+    (
+      await db
+        .prepare("SELECT conference FROM calls WHERE username = ? AND kind = 'conference' ORDER BY at DESC LIMIT 1")
+        .bind(username)
+        .first<{ conference: string }>()
+    )?.conference ?? null,
+
+  addTurn: (db: D1Database, conference: string, at: number, speaker: CallSpeaker, text: string) =>
+    db
+      .prepare("INSERT INTO call_turns (conference, at, speaker, text) VALUES (?, ?, ?, ?)")
+      .bind(conference, at, speaker, text)
+      .run(),
+
+  turns: async (db: D1Database, conference: string, limit: number) =>
+    (
+      await db
+        .prepare("SELECT * FROM call_turns WHERE conference = ? ORDER BY id LIMIT ?")
+        .bind(conference, limit)
+        .all<CallTurnRow>()
+    ).results,
+
+  /** Notes how a call ended, once: the first signal (hang-up, agent, Twilio) wins. */
+  recordEnd: async (db: D1Database, row: CallReportRow) =>
+    (
+      await db
+        .prepare("INSERT OR IGNORE INTO call_reports (conference, username, ended_at, ended_by) VALUES (?, ?, ?, ?)")
+        .bind(row.conference, row.username, row.ended_at, row.ended_by)
+        .run()
+    ).meta.changes > 0,
+
+  report: (db: D1Database, conference: string) =>
+    db.prepare("SELECT * FROM call_reports WHERE conference = ?").bind(conference).first<CallReportRow>(),
 
   /** Guests of a conference, in dialling order. */
   guests: async (db: D1Database, conference: string) =>

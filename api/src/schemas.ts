@@ -223,4 +223,4 @@ export const sendMessage = z.object({
 export const startConference = z.object({ participants: z.array(recipient).min(1).max(9) });
 export const conferenceName = z.string().regex(/^[a-z0-9-]{4,64}$/);
 
-export const userSettings = z.object({ ai_log_access: z.boolean() });
+export const userSettings = z.object({ ai_log_access: z.boolean().optional(), ai_call_test: z.boolean().optional() });

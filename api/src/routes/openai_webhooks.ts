@@ -4,8 +4,8 @@ import { openaiConnection } from "../connections";
 import { calls, connections, users } from "../db";
 import { logFor } from "../log";
 import { acceptCall, ProviderError, rejectCall, verifyWebhook } from "../providers/openai";
-import { CONFERENCE_HEADER, notOnCalls } from "../telephony";
-import { toolDefinitions } from "../tools";
+import { AGENT_HEADER, agentBrief, CONFERENCE_HEADER, notOnCalls, parseAgent } from "../telephony";
+import { agentToolDefinitions, toolDefinitions } from "../tools";
 import type { AppEnv } from "../types";
 
 interface IncomingCall {
@@ -30,9 +30,13 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
     return c.json({ ok: true });
   }
   const callId = event.data?.call_id ?? "";
-  const conference =
-    event.data?.sip_headers?.find((h) => h.name.toLowerCase() === CONFERENCE_HEADER.toLowerCase())?.value ?? "";
-  const leg = conference ? await calls.assistantLeg(c.env.DB, conference) : null;
+  const header = (name: string) =>
+    event.data?.sip_headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+  const conference = header(CONFERENCE_HEADER);
+  const agentLegId = header(AGENT_HEADER);
+  const agentLeg = agentLegId ? await calls.get(c.env.DB, agentLegId) : null;
+  const agent = agentLeg?.conference === conference ? parseAgent(agentLeg.brief) : null;
+  const leg = agent ? agentLeg : conference ? await calls.assistantLeg(c.env.DB, conference) : null;
   const openai = leg ? await openaiConnection(c, leg.username) : null;
   if (!leg || !openai?.webhookSecret || !callId) {
     return c.json({ error: "not_found" }, 404);
@@ -47,24 +51,37 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
   }
   try {
     const hasLights = (await connections.get(c.env.DB, leg.username, "lightwave")) !== null;
-    const logAccess = await users.logAccess(c.env.DB, leg.username);
+    const [logAccess, callTest] = await Promise.all([
+      users.logAccess(c.env.DB, leg.username),
+      users.callTest(c.env.DB, leg.username),
+    ]);
     await acceptCall(c.env.OPENAI_BASE_URL, openai.apiKey, callId, {
       model: openai.settings.call_model,
-      instructions: leg.brief ?? "",
-      voice: openai.settings.voice,
-      tools: toolDefinitions(hasLights, true, logAccess).filter((t) => !notOnCalls(t.name)),
+      instructions: agent ? agentBrief(agent, leg.username) : (leg.brief ?? ""),
+      voice: agent ? agent.voice : openai.settings.voice,
+      tools: agent
+        ? agentToolDefinitions()
+        : toolDefinitions(hasLights, true, logAccess, callTest).filter((t) => !notOnCalls(t.name)),
     });
     const start: CallAgentStart = {
       callId,
+      conference,
+      transcript: !agent,
+      legId: agent ? leg.id : undefined,
       apiKey: openai.apiKey,
       baseUrl: c.env.OPENAI_BASE_URL,
       username: leg.username,
       origin: new URL(c.req.url).origin,
     };
-    void logFor(c, leg.username, "info", `openai: SIP call ${callId} accepted for ${conference}`);
-    const agent = c.env.CALL_AGENT.get(c.env.CALL_AGENT.idFromName(callId));
+    void logFor(
+      c,
+      leg.username,
+      "info",
+      `openai: SIP call ${callId} accepted for ${conference}${agent ? ` (test agent: ${agent.role})` : ""}`,
+    );
+    const worker = c.env.CALL_AGENT.get(c.env.CALL_AGENT.idFromName(callId));
     c.executionCtx.waitUntil(
-      agent.fetch("https://call-agent/start", { method: "POST", body: JSON.stringify(start) }).catch(() => undefined),
+      worker.fetch("https://call-agent/start", { method: "POST", body: JSON.stringify(start) }).catch(() => undefined),
     );
   } catch (err) {
     const detail = err instanceof ProviderError ? err.detail : err instanceof Error ? err.message : "accept failed";

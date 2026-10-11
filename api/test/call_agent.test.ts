@@ -1,6 +1,12 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { parseArguments, realtimeFunctionCall, realtimeSocketUrl, runCallTool } from "../src/call_agent";
+import {
+  parseArguments,
+  realtimeFunctionCall,
+  realtimeSocketUrl,
+  runCallTool,
+  transcriptLine,
+} from "../src/call_agent";
 import { APP, addUser, json, resetDb, signIn } from "./helpers";
 
 describe("call agent", () => {
@@ -27,6 +33,20 @@ describe("call agent", () => {
     expect(realtimeFunctionCall({ type: "response.output_audio.delta", delta: "..." })).toBeNull();
     expect(realtimeFunctionCall("nonsense")).toBeNull();
     expect(parseArguments("not json")).toEqual({});
+  });
+
+  it("keeps what was said on the call: the assistant's words and everyone else's", () => {
+    expect(transcriptLine({ type: "response.output_audio_transcript.done", transcript: " Hello, Mum. " })).toEqual({
+      speaker: "assistant",
+      text: "Hello, Mum.",
+    });
+    expect(
+      transcriptLine({ type: "conversation.item.input_audio_transcription.completed", transcript: "Who is this?" }),
+    ).toEqual({ speaker: "line", text: "Who is this?" });
+    expect(transcriptLine({ type: "response.output_audio_transcript.delta", delta: "Hel" })).toBeNull();
+    expect(
+      transcriptLine({ type: "conversation.item.input_audio_transcription.completed", transcript: " " }),
+    ).toBeNull();
   });
 
   it("opens the realtime socket over https, which is how Workers upgrade to a WebSocket", () => {

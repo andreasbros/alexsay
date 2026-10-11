@@ -8,6 +8,7 @@ import { Activity, type ActivityEntry } from "../components/Activity";
 import { Bars } from "../components/Bars";
 import { DebugPanel } from "../components/DebugPanel";
 import { appendTurn, Transcript, type Turn } from "../components/Transcript";
+import { callReportNote } from "../lib/call_report";
 import { debugLog, isDebug, subscribeDebug } from "../lib/debug";
 import { startDemo } from "../lib/demo";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
@@ -16,6 +17,9 @@ import { callSink, playEnd, preloadSounds, primeCallAudio, primeSounds, startCon
 import { DEFAULT_OPENAI, VOICES } from "../voices";
 
 const QUIET_BEFORE_CALL_MS = 800;
+/** How long the page waits for the assistant's leg to close before it hands over a possibly short report. */
+const REPORT_WAIT_MS = 8000;
+const REPORT_POLL_MS = 600;
 
 const LABELS: Record<LiveStatus | "idle", string> = {
   idle: "Ready",
@@ -55,6 +59,8 @@ export function Assistant() {
   const statusRef = useRef<LiveStatus | "idle">("idle");
   const lastSpokeAt = useRef(0);
   const stopRing = useRef<(() => void) | null>(null);
+  // The conference the page is in, so its report can be fetched the moment the leg drops
+  const conferenceRef = useRef<string | null>(null);
   const [lineStatus, setLineStatus] = useState<LineStatus>("off");
   const [lineError, setLineError] = useState<string | null>(null);
   const [resumeAudio, setResumeAudio] = useState<(() => void) | null>(null);
@@ -174,8 +180,10 @@ export function Assistant() {
           onActivity: log,
           onPlaybackBlocked: (resume) => setResumeAudio(() => resume),
           // Tell the server the page is on, so the person is dialled even if Twilio's callback is late or lost
-          onConferenceJoined: (conference) =>
-            api.hostAnswered(conference).catch((err) => log("error", `Could not start dialling: ${describe(err)}`)),
+          onConferenceJoined: (conference) => {
+            conferenceRef.current = conference;
+            api.hostAnswered(conference).catch((err) => log("error", `Could not start dialling: ${describe(err)}`));
+          },
           onStatus: (next, who) => {
             const wasOnCall = lineStatusRef.current === "connected";
             lineStatusRef.current = next;
@@ -193,6 +201,11 @@ export function Assistant() {
             } else if (next === "ready" && wasOnCall) {
               session.current?.setMuted(mutedRef.current);
               log("info", "Call ended");
+              const conference = conferenceRef.current;
+              conferenceRef.current = null;
+              if (conference) {
+                void handBackCall(conference);
+              }
             } else if (next === "ringing") {
               log("info", `Incoming call from ${who ?? "unknown"}`);
             }
@@ -207,6 +220,29 @@ export function Assistant() {
       line.current = null;
       setLineError(describe(err));
       log("error", `Phone line unavailable: ${describe(err)}`);
+    }
+  };
+  /**
+   * The call is over: fetch its report and hand it to the assistant in this page. The report is asked
+   * for until the assistant's leg has closed too, so the transcript is whole; failing that, after a
+   * few seconds the assistant gets what there is rather than nothing.
+   */
+  const handBackCall = async (conference: string) => {
+    const deadline = Date.now() + REPORT_WAIT_MS;
+    for (;;) {
+      try {
+        const report = await api.callReport(conference);
+        if (report.ready || Date.now() > deadline) {
+          session.current?.tell(callReportNote(report));
+          return;
+        }
+      } catch (err) {
+        log("error", `Call report: ${describe(err)}`);
+        if (Date.now() > deadline) {
+          return;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, REPORT_POLL_MS));
     }
   };
   /** Ends the phone call with the conversation, so no conference keeps running (and billing) unheard. */

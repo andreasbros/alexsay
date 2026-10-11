@@ -5,7 +5,7 @@ import { calls, connections, contacts, devices, messages } from "../db";
 import { logFor } from "../log";
 import { bareNumber, normalisePhone, WHATSAPP_PREFIX } from "../phone";
 import { CLIENT_IDENTITY, validSignature } from "../providers/twilio";
-import { guestAnswered, hostAnswered } from "../telephony";
+import { callEnded, endedByFromLegs, guestAnswered, hostAnswered } from "../telephony";
 import { dialOutTwiml, emptyTwiml, rejectTwiml, ringTwiml } from "../twiml";
 import type { AppEnv } from "../types";
 
@@ -180,10 +180,11 @@ export const twilioConferenceRoute = new Hono<AppEnv>().post("/conference", asyn
     }
   }
   if (event === "participant-leave" && leg?.sid) {
-    await calls.setStatus(c.env.DB, leg.sid, "completed");
+    await calls.setLeft(c.env.DB, leg.sid, Date.now());
   }
   if (event === "conference-end") {
     await calls.endConference(c.env.DB, conference);
+    await callEnded(place, first.username, conference, endedByFromLegs(await calls.legs(c.env.DB, conference)));
   }
   return c.body(null, 204);
 });

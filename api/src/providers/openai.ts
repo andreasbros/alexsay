@@ -43,7 +43,9 @@ const PHONE_INSTRUCTIONS =
   "A call exists only when place_call, start_conference or add_to_call has returned a result in this turn: " +
   "once the user says yes, make that tool call before saying anything else, and never say a call is being placed, " +
   "ringing, connected or answered without that result. If no such result exists, say plainly that no call was made. " +
-  "For how a call is going (ringing, answered, who is on, ended), call call_status and report what it says.";
+  "For how a call is going (ringing, answered, who is on, ended), call call_status and report what it says. " +
+  "When a call ends, the app hands you its report as a note (who answered, how long, who hung up, the transcript): " +
+  "tell the user in two or three sentences how it went and what was agreed; call_report has it again later.";
 
 const ADDRESSED_INSTRUCTIONS =
   "You are in a room with background sound: a television, music, other people talking to each other. " +
@@ -188,7 +190,8 @@ export async function acceptCall(baseUrl: string, apiKey: string, callId: string
       type: "realtime",
       model: session.model,
       instructions: session.instructions,
-      audio: { output: { voice: session.voice } },
+      // The call's own words come back as transcripts, for the report handed to the page's assistant
+      audio: { input: { transcription: { model: "gpt-4o-mini-transcribe" } }, output: { voice: session.voice } },
       tools: session.tools,
       tool_choice: "auto",
     }),

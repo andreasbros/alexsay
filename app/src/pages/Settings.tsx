@@ -15,6 +15,10 @@ export function Settings({ user }: { user: User }) {
     mutationFn: (ai_log_access: boolean) => api.updateSettings({ ai_log_access }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["session"] }),
   });
+  const callTest = useMutation({
+    mutationFn: (ai_call_test: boolean) => api.updateSettings({ ai_call_test }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["session"] }),
+  });
   useEffect(() => subscribeDebug(() => setDebugOn(isDebug())), []);
   return (
     <Flex direction="column" gap="5">
@@ -56,6 +60,22 @@ export function Settings({ user }: { user: User }) {
           <Text size="2" color="gray">
             Lets the assistant read the server&apos;s log of what it did for you (calls placed and answered, tools,
             failures), so you can ask it what happened. Up to 100 lines at a time, newest or oldest first.
+          </Text>
+          <Text as="label" size="2">
+            <Flex gap="3" align="center">
+              <Switch
+                checked={callTest.isPending ? (callTest.variables ?? false) : (user.ai_call_test ?? false)}
+                onCheckedChange={(on) => callTest.mutate(on)}
+                aria-label="AI call test"
+              />
+              AI call test
+            </Flex>
+          </Text>
+          <Text size="2" color="gray">
+            Lets the assistant place rehearsal calls: ask for a test call and another AI answers over the phone network,
+            playing the part and scenario you describe (a GP receptionist, a restaurant), with you and the assistant on
+            the line. You can direct either side or have more people and agents added. Needs Twilio and OpenAI phone
+            calls set up.
           </Text>
           <Text as="label" size="2">
             <Flex gap="3" align="center">

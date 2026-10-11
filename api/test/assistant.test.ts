@@ -144,6 +144,13 @@ describe("assistant sessions", () => {
     expect(String(chatty.instructions)).not.toMatch(/addresses you by name/);
   });
 
+  it("offers test calls only when allowed, and never the test agent's own tool", () => {
+    expect(toolDefinitions(false, true).map((t) => t.name)).not.toContain("call_test");
+    const names = toolDefinitions(false, true, false, true).map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(["call_test", "add_test_agent", "call_report", "call_status"]));
+    expect(names).not.toContain("leave_call");
+  });
+
   it("tells a phone-capable assistant that a call exists only as a tool result", () => {
     const withPhone = sessionConfig(openaiSettings.parse({}), toolDefinitions(false, true));
     expect(String(withPhone.instructions)).toMatch(/never say a call is being placed/);

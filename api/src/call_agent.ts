@@ -1,10 +1,16 @@
 import { DurableObject } from "cloudflare:workers";
+import { calls } from "./db";
 import { logFor } from "./log";
 import { toolByName } from "./tools";
-import type { ToolContext } from "./types";
+import type { CallSpeaker, ToolContext } from "./types";
 
 export interface CallAgentStart {
   callId: string;
+  conference: string;
+  /** The assistant's leg keeps a transcript for the call report; a test agent's leg does not. */
+  transcript: boolean;
+  /** Set for a test agent: the calls row of its own leg. */
+  legId?: string;
   apiKey: string;
   baseUrl: string;
   username: string;
@@ -37,6 +43,25 @@ export function realtimeFunctionCall(event: unknown): FunctionCall | null {
         arguments: typeof item.arguments === "string" ? item.arguments : "{}",
       };
     }
+  }
+  return null;
+}
+
+/** A finished transcript of something said on the call: by the assistant, or by anyone else on the line. */
+export function transcriptLine(event: unknown): { speaker: CallSpeaker; text: string } | null {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  const e = event as Record<string, unknown>;
+  const text = typeof e.transcript === "string" ? e.transcript.trim() : "";
+  if (!text) {
+    return null;
+  }
+  if (e.type === "conversation.item.input_audio_transcription.completed") {
+    return { speaker: "line", text };
+  }
+  if (e.type === "response.output_audio_transcript.done") {
+    return { speaker: "assistant", text };
   }
   return null;
 }
@@ -91,20 +116,42 @@ export class CallAgent extends DurableObject<Env> {
       user: { username: start.username, role: "user" },
       origin: start.origin,
       voice: "browser",
+      onCall: true,
+      legId: start.legId,
     };
     socket.addEventListener("message", (message) => {
-      void this.onMessage(socket, context, message.data);
+      void this.onMessage(socket, context, start, message.data);
     });
-    socket.addEventListener("close", () => {
+    socket.addEventListener("close", async () => {
+      if (start.transcript) {
+        await calls.endAssistant(this.env.DB, start.conference);
+      } else if (start.legId) {
+        const leg = await calls.get(this.env.DB, start.legId);
+        if (leg?.sid) {
+          await calls.setLeft(this.env.DB, leg.sid, Date.now());
+        }
+      }
       void logFor({ env: this.env }, start.username, "info", `call agent: socket closed for ${start.callId}`);
     });
   }
 
-  private async onMessage(socket: WebSocket, context: ToolContext, data: unknown): Promise<void> {
+  private async onMessage(
+    socket: WebSocket,
+    context: ToolContext,
+    start: CallAgentStart,
+    data: unknown,
+  ): Promise<void> {
     let event: unknown;
     try {
       event = JSON.parse(typeof data === "string" ? data : "");
     } catch {
+      return;
+    }
+    const line = transcriptLine(event);
+    if (line) {
+      if (start.transcript) {
+        await calls.addTurn(this.env.DB, start.conference, Date.now(), line.speaker, line.text.slice(0, 2000));
+      }
       return;
     }
     const call = realtimeFunctionCall(event);

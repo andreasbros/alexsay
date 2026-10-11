@@ -22,7 +22,7 @@ describe("server log", () => {
     expect(await tool(maria, "read_log", {})).toEqual({ error: "the user has not allowed log access in Settings" });
 
     const allowed = await json(`${APP}/api/session/settings`, "PATCH", { ai_log_access: true }, maria);
-    expect(await allowed.json()).toEqual({ ai_log_access: true });
+    expect(await allowed.json()).toEqual({ ai_log_access: true, ai_call_test: false });
     expect(await (await call(`${APP}/api/session/me`, {}, maria)).json()).toMatchObject({ ai_log_access: true });
 
     await tool(maria, "list_memories", {});

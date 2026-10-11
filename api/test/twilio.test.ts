@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import { runCallTool } from "../src/call_agent";
 import {
   APP,
   addUser,
@@ -797,6 +798,189 @@ describe("twilio", () => {
     upstream.done();
   });
 
+  it("reports a finished call: who answered, who hung up, how long, and what was said", async () => {
+    await connectTwilio(maria);
+    await connectOpenaiForCalls();
+    const seconds: Record<string, string> = { CA1: "65", CA2: "60", CA3: "58" };
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: (_req, body) => {
+        const label = formOf(body).Label;
+        return reply(201, { call_sid: label === "host" ? "CA1" : label === "Mum" ? "CA2" : "CA3", status: "queued" });
+      },
+      [`GET ${TWILIO}/Calls/*`]: (req) => {
+        const sid = req.url.split("/").pop()?.replace(".json", "") ?? "";
+        return reply(200, { status: "completed", duration: seconds[sid] ?? "0" });
+      },
+    });
+    const placed = (await tool(maria, "place_call", {
+      name: "Mum",
+      task: "ask about Sunday lunch",
+      via: "mobile",
+    })) as {
+      conference: string;
+    };
+    const name = placed.conference;
+    await twilioWebhook("/v1/twilio/conference", {
+      FriendlyName: name,
+      StatusCallbackEvent: "participant-join",
+      CallSid: "CA1",
+    });
+    const before = (await tool(maria, "call_report", {})) as { ready: boolean; ended_at: number | null };
+    expect(before).toMatchObject({ ready: false, ended_at: null });
+    await env.DB.prepare("INSERT INTO call_turns (conference, at, speaker, text) VALUES (?, ?, 'line', 'Hello?')")
+      .bind(name, Date.UTC(2026, 9, 11, 15, 0, 10))
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO call_turns (conference, at, speaker, text) VALUES (?, ?, 'assistant', 'Hi Mum, is Sunday lunch on?')",
+    )
+      .bind(name, Date.UTC(2026, 9, 11, 15, 0, 12))
+      .run();
+    // Mum hangs up first, then the user's leg drops and Twilio closes the conference
+    await twilioWebhook("/v1/twilio/conference", {
+      FriendlyName: name,
+      StatusCallbackEvent: "participant-leave",
+      CallSid: "CA2",
+    });
+    await twilioWebhook("/v1/twilio/conference", {
+      FriendlyName: name,
+      StatusCallbackEvent: "participant-leave",
+      CallSid: "CA1",
+    });
+    await twilioWebhook("/v1/twilio/conference", { FriendlyName: name, StatusCallbackEvent: "conference-end" });
+    const report = (await (await call(`${APP}/api/twilio/conferences/${name}/report`, {}, maria)).json()) as {
+      ready: boolean;
+      ended_by: string;
+      seconds: number;
+      task: string;
+      participants: { who: string; answered: boolean; seconds: number }[];
+      transcript: { speaker: string; text: string }[];
+    };
+    expect(report).toMatchObject({ ready: true, ended_by: "other side", seconds: 65, task: "ask about Sunday lunch" });
+    expect(report.participants).toEqual([
+      expect.objectContaining({ who: "the user, on their mobile", answered: true, seconds: 65 }),
+      expect.objectContaining({ who: `Mum (${MUM})`, answered: true, seconds: 60 }),
+      expect.objectContaining({ who: "you, the assistant", answered: true, seconds: 58 }),
+    ]);
+    expect(report.transcript.map((t) => `${t.speaker}: ${t.text}`)).toEqual([
+      "line: Hello?",
+      "assistant: Hi Mum, is Sunday lunch on?",
+    ]);
+    const told = (await tool(maria, "call_report", {})) as { transcript: string[] };
+    expect(told.transcript).toEqual(["15:00:10 line: Hello?", "15:00:12 assistant: Hi Mum, is Sunday lunch on?"]);
+    expect((await call(`${APP}/api/twilio/conferences/ay-nobody/report`, {}, maria)).status).toBe(412);
+    upstream.done();
+  });
+
+  it("places a rehearsal call answered by a scripted agent, adds a second one, and lets it leave", async () => {
+    await connectTwilio(maria);
+    await connectOpenaiForCalls();
+    await json(`${APP}/api/session/settings`, "PATCH", { ai_call_test: true }, maria);
+    const legs: Record<string, string>[] = [];
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: (_req, body) => {
+        legs.push(formOf(body));
+        return reply(201, { call_sid: `CA${legs.length}`, status: "queued" });
+      },
+    });
+    const placed = (await (
+      await json(
+        `${APP}/api/tools/call`,
+        "POST",
+        {
+          name: "call_test",
+          arguments: {
+            role: "a GP receptionist",
+            scenario: "The next free appointment is Thursday at 9:40; ask for the patient's date of birth.",
+            task: "book me a GP appointment this week",
+            voice: "male",
+          },
+          client: { voice: "browser" },
+        },
+        maria,
+      )
+    ).json()) as { output: { ok: boolean; conference: string; note: string } };
+    expect(placed.output.ok).toBe(true);
+    expect(placed.output.note).toContain("a GP receptionist");
+    const name = placed.output.conference;
+    await call(`${APP}/api/twilio/conferences/${name}/answered`, { method: "POST" }, maria);
+    expect(legs.map((l) => l.Label)).toEqual(["host", "a test agent playing a GP receptionist", "assistant"]);
+    const agentTo = legs[1]?.To ?? "";
+    expect(agentTo).toMatch(/^sip:proj_abc12345@sip.api.openai.com;transport=tls\?X-Alexsay-Conference=ay-/);
+    const agentId = new URLSearchParams(agentTo.split("?")[1]).get("X-Alexsay-Agent") ?? "";
+    expect(agentId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(legs[2]?.To).not.toContain("X-Alexsay-Agent");
+
+    // OpenAI rings back for the agent's leg: it gets the part, the scenario, its voice and only leave_call
+    let accepted: { instructions: string; tools: { name: string }[]; audio: { output: { voice: string } } } | null =
+      null;
+    const openai = mockUpstream({
+      "POST https://api.openai.com/v1/realtime/calls/rtc_agent/accept": (_req, body) => {
+        accepted = JSON.parse(body);
+        return reply(200, {});
+      },
+    });
+    const res = await openaiWebhook({
+      type: "realtime.call.incoming",
+      data: {
+        call_id: "rtc_agent",
+        sip_headers: [
+          { name: "X-Alexsay-Conference", value: name },
+          { name: "X-Alexsay-Agent", value: agentId },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    openai.done();
+    const session = accepted as {
+      instructions: string;
+      tools: { name: string }[];
+      audio: { output: { voice: string } };
+    } | null;
+    expect(session?.instructions).toContain("Your part: a GP receptionist");
+    expect(session?.instructions).toContain("Thursday at 9:40");
+    expect(session?.instructions).toContain("call leave_call");
+    expect(session?.tools.map((t) => t.name)).toEqual(["leave_call"]);
+    expect(["cedar", "ash", "ballad", "echo", "verse"]).toContain(session?.audio.output.voice);
+
+    // The assistant's own briefing names the agent as who is on the line
+    const brief = await env.DB.prepare("SELECT brief FROM calls WHERE role = 'assistant'").first<{ brief: string }>();
+    expect(brief?.brief).toContain("a test agent playing a GP receptionist");
+
+    expect(
+      await tool(maria, "add_test_agent", { role: "a pharmacist", scenario: "The prescription is ready." }),
+    ).toMatchObject({
+      ok: true,
+    });
+    expect(legs).toHaveLength(4);
+    expect(legs[3]?.Label).toBe("a test agent playing a pharmacist");
+    upstream.done();
+
+    // Told to hang up, the agent leaves its own line; the call goes on
+    const left = mockUpstream({
+      [`POST ${TWILIO}/Calls/CA2.json`]: (_req, body) => {
+        expect(formOf(body)).toEqual({ Status: "completed" });
+        return reply(200, {});
+      },
+    });
+    const context = {
+      env,
+      user: { username: "maria", role: "user" as const },
+      origin: APP,
+      voice: "browser" as const,
+      onCall: true,
+      legId: agentId,
+    };
+    expect(JSON.parse(await runCallTool(context, { call_id: "c1", name: "leave_call", arguments: "{}" }))).toEqual({
+      ok: true,
+      left: true,
+    });
+    left.done();
+    const agentLeg = await env.DB.prepare("SELECT status FROM calls WHERE id = ?")
+      .bind(agentId)
+      .first<{ status: string }>();
+    expect(agentLeg?.status).toBe("completed");
+  });
+
   it("hangs up the call in progress by ending the host leg", async () => {
     await connectTwilio(maria);
     const legs = mockUpstream({
@@ -818,6 +1002,8 @@ describe("twilio", () => {
     });
     expect(await tool(maria, "end_call", {})).toMatchObject({ ok: true });
     ended.done();
+    const report = await env.DB.prepare("SELECT ended_by FROM call_reports").first<{ ended_by: string }>();
+    expect(report?.ended_by).toBe("user");
     const open = await env.DB.prepare("SELECT COUNT(*) AS n FROM calls WHERE status != 'completed'").first<{
       n: number;
     }>();

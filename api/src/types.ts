@@ -53,6 +53,10 @@ export interface ToolContext extends Scope {
   /** Where this app is served, for the webhook URLs Twilio is given. */
   origin: string;
   voice: VoiceClient;
+  /** True for the assistant on a phone call's SIP leg, so "hang up" is recorded as its doing. */
+  onCall?: boolean;
+  /** The calls row of the leg this context speaks for: a test agent hanging up leaves only its own line. */
+  legId?: string;
 }
 
 export type ConversationSource = "app" | "device";
@@ -143,4 +147,22 @@ export interface CallRow {
   sid: string | null;
   status: string;
   at: number;
+  left_at: number | null;
+}
+
+export type CallSpeaker = "assistant" | "line";
+
+export interface CallTurnRow {
+  id: number;
+  conference: string;
+  at: number;
+  speaker: CallSpeaker;
+  text: string;
+}
+
+export interface CallReportRow {
+  conference: string;
+  username: string;
+  ended_at: number;
+  ended_by: string;
 }

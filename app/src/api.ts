@@ -8,6 +8,13 @@ export interface User {
   devices?: number;
   /** The assistant may read this user's server log. */
   ai_log_access?: boolean;
+  /** The assistant may place test calls answered by a scripted AI. */
+  ai_call_test?: boolean;
+}
+
+export interface AccountSettings {
+  ai_log_access: boolean;
+  ai_call_test: boolean;
 }
 
 export interface Device {
@@ -183,6 +190,27 @@ export interface ContactChanges {
   favourite?: boolean;
 }
 
+export interface CallParticipant {
+  who: string;
+  role: string;
+  status: string;
+  seconds: number;
+  answered: boolean;
+}
+
+export interface CallReport {
+  conference: string;
+  started_at: number;
+  ended_at: number | null;
+  ended_by: string | null;
+  /** False while the assistant's leg is still closing: the transcript may be missing its last words. */
+  ready: boolean;
+  task: string | null;
+  seconds: number;
+  participants: CallParticipant[];
+  transcript: { at: number; speaker: "assistant" | "line"; text: string }[];
+}
+
 export interface RecentCall {
   id: string;
   at: number;
@@ -232,8 +260,8 @@ export const api = {
   register: (username: string, password: string) =>
     request<User>("POST", "/api/session/register", { username, password }),
   logout: () => request<void>("POST", "/api/session/logout"),
-  updateSettings: (settings: { ai_log_access: boolean }) =>
-    request<{ ai_log_access: boolean }>("PATCH", "/api/session/settings", settings),
+  updateSettings: (settings: Partial<AccountSettings>) =>
+    request<AccountSettings>("PATCH", "/api/session/settings", settings),
 
   devices: () => request<Device[]>("GET", "/api/devices"),
   addDevice: (id: string, name: string) => request<Device>("POST", "/api/devices", { id, name }),
@@ -319,6 +347,8 @@ export const api = {
   voiceToken: () => request<{ token: string; identity: string; ttl: number }>("GET", "/api/twilio/voice-token"),
   recentCalls: () => request<RecentCall[]>("GET", "/api/twilio/calls"),
   endCall: () => request<{ conference: string }>("POST", "/api/twilio/calls/end"),
+  callReport: (conference: string) =>
+    request<CallReport>("GET", `/api/twilio/conferences/${encodeURIComponent(conference)}/report`),
   hostAnswered: (conference: string) =>
     request<{ ok: boolean }>("POST", `/api/twilio/conferences/${encodeURIComponent(conference)}/answered`),
   addToCall: (ref: { contact_id?: string; to?: string }) =>

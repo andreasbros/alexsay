@@ -19,16 +19,17 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
   if (!connection) {
     return c.json({ error: "no_openai_connection" }, 412);
   }
-  const [hasLights, hasPhone, logAccess] = await Promise.all([
+  const [hasLights, hasPhone, logAccess, callTest] = await Promise.all([
     connections.get(c.env.DB, me.username, "lightwave").then((row) => row !== null),
     connections.get(c.env.DB, me.username, "twilio").then((row) => row !== null),
     users.logAccess(c.env.DB, me.username),
+    users.callTest(c.env.DB, me.username),
   ]);
   try {
     const context = contextInstructions(await loadContext(c.env.DB, me.username));
     const input = {
       settings: connection.settings,
-      tools: toolDefinitions(hasLights, hasPhone, logAccess),
+      tools: toolDefinitions(hasLights, hasPhone, logAccess, callTest),
       context,
       sdp,
     };

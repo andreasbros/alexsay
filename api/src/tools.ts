@@ -1,5 +1,5 @@
 import { countryCode, lightwaveToken, lightwaveUrls } from "./connections";
-import { contacts, conversations, memories, messages, users } from "./db";
+import { calls, contacts, conversations, memories, messages, users } from "./db";
 import { DEFAULT_LOG_LINES, formatLogLine, MAX_LOG_LINES, readLog } from "./log";
 import { normalisePhone } from "./phone";
 import { type Light, lights, writeFeatures } from "./providers/lightwave";
@@ -8,14 +8,20 @@ import { type Recipient, type RecipientRef, resolveRecipient } from "./recipient
 import { applyContactChanges, publicContact } from "./routes/contacts";
 import { memoryCategory } from "./schemas";
 import {
+  addTestAgent,
   addToConference,
+  callReport,
   callStatus,
   endCall,
+  leaveCall,
+  pickVoice,
   placeCall,
+  placeTestCall,
   pressDigits,
   sendText,
   startConference,
   TelephonyError,
+  type TestAgent,
 } from "./telephony";
 import type { ContactRow, MemoryCategory, ToolContext, VoiceClient } from "./types";
 import { MEMORY_CATEGORIES } from "./types";
@@ -27,7 +33,7 @@ import { MEMORY_CATEGORIES } from "./types";
 export interface Tool {
   definition: FunctionTool;
   /** Provider tools only make sense once the user connected that provider; the log once the user allowed it. */
-  needs?: "lightwave" | "twilio" | "log";
+  needs?: "lightwave" | "twilio" | "log" | "test";
   run: (c: ToolContext, args: Record<string, unknown>, conversationId: string | null) => Promise<unknown>;
 }
 
@@ -37,6 +43,7 @@ const num = (args: Record<string, unknown>, key: string): number | null =>
   typeof args[key] === "number" ? (args[key] as number) : null;
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const clock = (ms: number) => new Date(ms).toISOString().slice(11, 19);
 const dayOrNull = (ms: number | null) => (ms === null ? null : day(ms));
 
 const CONTACT_PAGE = 25;
@@ -75,6 +82,15 @@ async function recipientOf(c: ToolContext, args: Record<string, unknown>): Promi
  * Where the user takes a call. The page they are talking from, when it has its phone line up; their
  * mobile only when they asked for it. A page without a line gets an error rather than a surprise call.
  */
+function agentOf(args: Record<string, unknown>): TestAgent | { error: string } {
+  const role = string(args, "role").slice(0, 200);
+  const scenario = string(args, "scenario").slice(0, 4000);
+  if (!role || !scenario) {
+    return { error: "role and scenario are required" };
+  }
+  return { role, scenario, voice: pickVoice(string(args, "voice")) };
+}
+
 function callHost(c: ToolContext, args: Record<string, unknown>): { host: VoiceClient } | { error: string } {
   if (string(args, "via") === "mobile") {
     return { host: "mobile" };
@@ -706,7 +722,127 @@ export const TOOLS: Tool[] = [
       description: "Hangs up the phone call or group call in progress when the user asks.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
-    run: async (c) => telephony(async () => ({ ok: true, ...(await endCall(c, c.user.username)) })),
+    run: async (c) =>
+      telephony(async () => ({ ok: true, ...(await endCall(c, c.user.username, c.onCall ? "assistant" : "user")) })),
+  },
+  {
+    needs: "test",
+    definition: {
+      type: "function",
+      name: "call_test",
+      description:
+        "A rehearsal call: instead of a real person, another AI answers over the phone network playing a part you " +
+        "write (a GP receptionist, a restaurant, a difficult customer) and following your scenario; the user and " +
+        "you are on the call as for any other, and the user can direct either of you or ask to hang up. Use it " +
+        "when the user asks for a test call. Write the role and scenario in full from what the user wants to " +
+        "rehearse, and a task for yourself when they want you to do the talking.",
+      parameters: {
+        type: "object",
+        properties: {
+          role: { type: "string", description: "Who the other side is, in one line" },
+          scenario: {
+            type: "string",
+            description: "The script or situation the other side follows: what they know, want, offer or refuse",
+          },
+          task: { type: "string", description: "What you should get done on the call, if the user wants you to talk" },
+          voice: { type: "string", description: "male, female, or an OpenAI voice name; female if omitted" },
+          via: {
+            type: "string",
+            enum: ["app", "mobile"],
+            description: "Where the user takes the call; app unless asked",
+          },
+        },
+        required: ["role", "scenario"],
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const agent = agentOf(args);
+      if ("error" in agent) {
+        return agent;
+      }
+      const host = callHost(c, args);
+      if ("error" in host) {
+        return host;
+      }
+      const task = string(args, "task").slice(0, 1000) || undefined;
+      return telephony(async () => {
+        const result = await placeTestCall(c, c.user.username, agent, { task, host: host.host });
+        return {
+          ok: true,
+          ...result,
+          note:
+            `the test call is opening in the ${result.host === "browser" ? "app" : "user's mobile"}; the agent ` +
+            `(${agent.role}, voice ${agent.voice}) answers once the user is on, and you join right behind it. ` +
+            "Reply with one short sentence and then say nothing more.",
+        };
+      });
+    },
+  },
+  {
+    needs: "test",
+    definition: {
+      type: "function",
+      name: "add_test_agent",
+      description:
+        "Adds one more scripted AI participant to the call in progress, with its own part and scenario (for " +
+        "example a pharmacist joining the GP call). Real people are added with add_to_call.",
+      parameters: {
+        type: "object",
+        properties: {
+          role: { type: "string", description: "Who this participant is, in one line" },
+          scenario: { type: "string", description: "What they know, want, offer or refuse" },
+          voice: { type: "string", description: "male, female, or an OpenAI voice name; female if omitted" },
+        },
+        required: ["role", "scenario"],
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const agent = agentOf(args);
+      if ("error" in agent) {
+        return agent;
+      }
+      return telephony(async () => ({ ok: true, ...(await addTestAgent(c, c.user.username, agent)) }));
+    },
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "leave_call",
+      description: "Hangs up your own line and leaves the call; everyone else stays on.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+    run: async (c) => telephony(async () => ({ ok: true, ...(await leaveCall(c, c.user.username, c.legId)) })),
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "call_report",
+      description:
+        "The report of a finished call (the latest unless a conference is given): who was called, who answered, how " +
+        "long it ran, who ended it, and the transcript of what was said with times. Use it when asked what " +
+        "happened on a call.",
+      parameters: {
+        type: "object",
+        properties: { conference: { type: "string", description: "The call's conference name, if known" } },
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) =>
+      telephony(async () => {
+        const conference = string(args, "conference") || (await calls.latestConference(c.env.DB, c.user.username));
+        if (!conference) {
+          return { error: "there have been no calls" };
+        }
+        const report = await callReport(c, c.user.username, conference);
+        return {
+          ...report,
+          transcript: report.transcript.map((t) => `${clock(t.at)} ${t.speaker}: ${t.text}`),
+        };
+      }),
   },
   {
     needs: "twilio",
@@ -819,10 +955,22 @@ async function sendTool(c: ToolContext, args: Record<string, unknown>, channel: 
 
 export const toolByName = (name: string) => TOOLS.find((t) => t.definition.name === name);
 
-export function toolDefinitions(hasLightwave: boolean, hasTwilio = false, logAccess = false): FunctionTool[] {
-  const available = { lightwave: hasLightwave, twilio: hasTwilio, log: logAccess };
-  return TOOLS.filter((t) => !t.needs || available[t.needs]).map((t) => t.definition);
+export function toolDefinitions(
+  hasLightwave: boolean,
+  hasTwilio = false,
+  logAccess = false,
+  callTest = false,
+): FunctionTool[] {
+  const available = { lightwave: hasLightwave, twilio: hasTwilio, log: logAccess, test: callTest };
+  return TOOLS.filter((t) => (!t.needs || available[t.needs]) && !AGENT_TOOLS.has(t.definition.name)).map(
+    (t) => t.definition,
+  );
 }
+
+/** What a scripted test agent may do on its call: leave it. Nothing of the user's. */
+const AGENT_TOOLS = new Set(["leave_call"]);
+export const agentToolDefinitions = (): FunctionTool[] =>
+  TOOLS.filter((t) => AGENT_TOOLS.has(t.definition.name)).map((t) => t.definition);
 
 async function userLights(c: ToolContext): Promise<Light[]> {
   const token = await lightwaveToken(c, c.user.username);

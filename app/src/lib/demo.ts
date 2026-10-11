@@ -60,6 +60,7 @@ export function startDemo(handlers: LiveHandlers): LiveSession {
     micLevel: () => level,
     voiceLevel: () => level,
     micTrack: () => null,
+    tell: () => undefined,
     setMuted: (muted) => handlers.onActivity("info", muted ? "Microphone muted" : "Microphone live"),
     stop: () => {
       window.clearInterval(ticker);

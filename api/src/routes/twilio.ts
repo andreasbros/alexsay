@@ -8,6 +8,7 @@ import { type Recipient, resolveRecipient } from "../recipients";
 import * as schemas from "../schemas";
 import {
   addToConference,
+  callReport,
   endCall,
   hostAnswered,
   placeCall,
@@ -142,6 +143,12 @@ export const twilioRoutes = new Hono<AppEnv>()
       await hostAnswered({ env: c.env, origin: new URL(c.req.url).origin }, host);
       return c.json({ ok: true });
     });
+  })
+  /** The report for a call, read by the page the moment its leg drops and handed to its assistant. */
+  .get("/conferences/:name/report", async (c) => {
+    const name = parse(schemas.conferenceName, c.req.param("name"));
+    const username = c.get("user").username;
+    return telephony(c, async () => c.json(await callReport(c, username, name)));
   })
   .post("/conferences/participants", async (c) => {
     const ref = await jsonBody(c, schemas.recipient);

@@ -291,3 +291,26 @@ body {
 .assistant-line {
   padding-inline: 8px;
 }
+
+/* A muted microphone is easy to forget: the button flashes for a moment every five seconds */
+.mute-reminder {
+  animation: mute-reminder 5s ease-in-out infinite;
+}
+@keyframes mute-reminder {
+  0%,
+  12%,
+  100% {
+    opacity: 1;
+  }
+  4% {
+    opacity: 0.25;
+  }
+  8% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mute-reminder {
+    animation: none;
+  }
+}

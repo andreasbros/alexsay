@@ -12,6 +12,7 @@ import { callReportNote } from "../lib/call_report";
 import { debugLog, isDebug, subscribeDebug } from "../lib/debug";
 import { startDemo } from "../lib/demo";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
+import { applyMuteState } from "../lib/mute";
 import { type LineStatus, openPhoneLine, type PhoneLine } from "../lib/phone_line";
 import { callSink, playEnd, preloadSounds, primeCallAudio, primeSounds, startConnecting } from "../lib/sounds";
 import { DEFAULT_OPENAI, VOICES } from "../voices";
@@ -124,9 +125,9 @@ export function Assistant() {
     setDetail(null);
     if (!resume) {
       setTurns([]);
+      setMuted(false);
+      mutedRef.current = false;
     }
-    setMuted(false);
-    mutedRef.current = false;
     const handlers = {
       onActivity: log,
       voiceClient: () => (line.current && line.current.status() !== "off" ? ("browser" as const) : ("mobile" as const)),
@@ -161,6 +162,12 @@ export function Assistant() {
       const resumeFrom = resume ? (lastSessionId.current ?? undefined) : undefined;
       session.current = demo ? startDemo(handlers) : await startLive(handlers, resumeFrom);
       lastSessionId.current = session.current.id || lastSessionId.current;
+      // A resumed conversation keeps the user's mute; a call already connected keeps the conversation quiet
+      applyMuteState(
+        { muted: mutedRef.current, onCall: lineStatusRef.current === "connected" },
+        session.current,
+        line.current,
+      );
       if (hasPhone && !demo && !line.current) {
         await openLine();
       }
@@ -196,10 +203,10 @@ export function Assistant() {
             stopRing.current = next === "ringing" ? startConnecting() : null;
             if (next === "connected") {
               // The assistant on the line hears the call; the one in this page stays quiet until it ends
-              session.current?.setMuted(true);
+              applyMuteState({ muted: mutedRef.current, onCall: true }, session.current, line.current);
               log("info", `On a call with ${who ?? "unknown"}`);
             } else if (next === "ready" && wasOnCall) {
-              session.current?.setMuted(mutedRef.current);
+              applyMuteState({ muted: mutedRef.current, onCall: false }, session.current, line.current);
               log("info", "Call ended");
               const conference = conferenceRef.current;
               conferenceRef.current = null;
@@ -281,11 +288,7 @@ export function Assistant() {
     const next = !muted;
     setMuted(next);
     mutedRef.current = next;
-    // The line remembers the state, so a mute pressed before a call connects holds through the call
-    line.current?.setMuted(next);
-    if (lineStatus !== "connected") {
-      session.current?.setMuted(next);
-    }
+    applyMuteState({ muted: next, onCall: lineStatusRef.current === "connected" }, session.current, line.current);
   };
 
   // GPT-Live fixes the voice when a session starts, so a change mid-conversation reconnects
@@ -365,7 +368,8 @@ export function Assistant() {
             variant={muted ? "solid" : "soft"}
             color={muted ? "amber" : "gray"}
             onClick={toggleMute}
-            disabled={!active}
+            disabled={!active && lineStatus !== "connected"}
+            className={muted ? "mute-reminder" : undefined}
           >
             {muted ? <SpeakerOffIcon /> : <SpeakerLoudIcon />}
             {muted ? "Unmute" : "Mute"}
@@ -421,6 +425,15 @@ export function Assistant() {
                   Tap to hear the call
                 </Button>
               )}
+              <Button
+                size="1"
+                variant={muted ? "solid" : "soft"}
+                color={muted ? "amber" : "gray"}
+                onClick={toggleMute}
+                className={muted ? "mute-reminder" : undefined}
+              >
+                {muted ? "Unmute" : "Mute"}
+              </Button>
               <AddToCall onAdded={(name) => log("info", `Dialling ${name} into the call`)} />
               <Button size="1" color="red" onClick={hangUpCall}>
                 Hang up

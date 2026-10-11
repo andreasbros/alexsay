@@ -106,6 +106,46 @@ describe("contacts", () => {
     expect((await call(`${APP}/api/contacts/${created.id}`, {}, maria)).status).toBe(404);
   });
 
+  it("edits name, number, label and note, refusing a number another contact has", async () => {
+    const mum = (await (
+      await json(`${APP}/api/contacts`, "POST", { name: "Mum", phone: "07700900123", note: "Calls on Sundays" }, maria)
+    ).json()) as Contact & { note: string };
+    expect(mum.note).toBe("Calls on Sundays");
+    await json(`${APP}/api/contacts`, "POST", { name: "Dad", phone: "07700900124" }, maria);
+    const edited = await json(
+      `${APP}/api/contacts/${mum.id}`,
+      "PATCH",
+      { name: "Mother", phone: "+44 7700 900125", label: "home", note: "Prefers evenings" },
+      maria,
+    );
+    expect(edited.status).toBe(204);
+    expect(await (await call(`${APP}/api/contacts/${mum.id}`, {}, maria)).json()).toMatchObject({
+      name: "Mother",
+      phone: "+447700900125",
+      label: "home",
+      note: "Prefers evenings",
+    });
+    const taken = await json(`${APP}/api/contacts/${mum.id}`, "PATCH", { phone: "07700900124" }, maria);
+    expect(taken.status).toBe(409);
+    expect((await json(`${APP}/api/contacts/${mum.id}`, "PATCH", { phone: "abc" }, maria)).status).toBe(400);
+
+    expect(
+      await tool(maria, "update_contact", { name: "Mother", note: "Prefers evenings, never before 10" }),
+    ).toMatchObject({
+      ok: true,
+      contact: { name: "Mother", note: "Prefers evenings, never before 10" },
+    });
+    expect(await tool(maria, "update_contact", { name: "Mother", new_number: "07700900124" })).toEqual({
+      error: "another contact has that number",
+    });
+    expect(await tool(maria, "add_contact", { name: "Sam", number: "07700 900126", note: "Plumber" })).toMatchObject({
+      ok: true,
+      contact: { name: "Sam", phone: "+447700900126", note: "Plumber" },
+    });
+    const found = (await tool(maria, "find_contact", { query: "sam" })) as { note: string }[];
+    expect(found[0]?.note).toBe("Plumber");
+  });
+
   it("keeps each user's phone book to themselves", async () => {
     await addUser("tom", "tom-pass-123", "user");
     const tom = await signIn("tom", "tom-pass-123");

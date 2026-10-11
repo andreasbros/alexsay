@@ -154,15 +154,18 @@ export const twilioConnection = z.object({
 export const contactId = memoryId;
 const contactName = z.string().trim().min(1).max(120);
 const contactLabel = z.string().trim().max(40).default("");
+const contactNote = z.string().trim().max(1000).default("");
 const rawPhone = z.string().trim().min(3).max(40);
-export const createContact = z.object({ name: contactName, phone: rawPhone, label: contactLabel });
+export const createContact = z.object({ name: contactName, phone: rawPhone, label: contactLabel, note: contactNote });
 export const importContacts = z.object({
   contacts: z
     .array(z.object({ name: contactName, phone: rawPhone, label: contactLabel }))
     .min(1)
     .max(1000),
 });
-export const updateContact = z.object({ name: contactName, label: contactLabel, favourite: z.boolean() }).partial();
+export const updateContact = z
+  .object({ name: contactName, phone: rawPhone, label: contactLabel, note: contactNote, favourite: z.boolean() })
+  .partial();
 export const contactList = z.object({
   q: z.string().trim().max(100).optional(),
   page: z.coerce.number().int().min(1).default(1),

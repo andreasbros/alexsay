@@ -112,6 +112,7 @@ export interface Contact {
   name: string;
   phone: string;
   label: string;
+  note: string;
   favourite: boolean;
   last_called_at: number | null;
   last_messaged_at: number | null;
@@ -142,6 +143,15 @@ export interface NewContact {
   name: string;
   phone: string;
   label: string;
+  note?: string;
+}
+
+export interface ContactChanges {
+  name?: string;
+  phone?: string;
+  label?: string;
+  note?: string;
+  favourite?: boolean;
 }
 
 export interface Placed {
@@ -250,7 +260,7 @@ export const api = {
   addContact: (contact: NewContact) => request<Contact>("POST", "/api/contacts", contact),
   importContacts: (contacts: NewContact[]) =>
     request<{ imported: number; updated: number; skipped: number }>("POST", "/api/contacts/import", { contacts }),
-  updateContact: (id: string, changes: { name?: string; label?: string; favourite?: boolean }) =>
+  updateContact: (id: string, changes: ContactChanges) =>
     request<void>("PATCH", `/api/contacts/${encodeURIComponent(id)}`, changes),
   removeContact: (id: string) => request<void>("DELETE", `/api/contacts/${encodeURIComponent(id)}`),
   placeCall: (contact_id: string, message?: string) =>

@@ -324,6 +324,7 @@ export interface NewContact {
   name: string;
   phone: string;
   label: string;
+  note?: string;
 }
 
 /** Fields the assistant stamps when it reaches someone; a fixed set, so the column name is safe to splice. */
@@ -374,13 +375,24 @@ export const contacts = {
       rows.map((row) =>
         db
           .prepare(
-            `INSERT INTO contacts (id, username, name, search_name, phone, label, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO contacts (id, username, name, search_name, phone, label, note, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (username, phone) DO UPDATE SET name = excluded.name, search_name = excluded.search_name,
                label = CASE WHEN excluded.label = '' THEN contacts.label ELSE excluded.label END,
+               note = CASE WHEN excluded.note = '' THEN contacts.note ELSE excluded.note END,
                updated_at = excluded.updated_at`,
           )
-          .bind(crypto.randomUUID(), username, row.name, searchName(row.name), row.phone, row.label, now, now),
+          .bind(
+            crypto.randomUUID(),
+            username,
+            row.name,
+            searchName(row.name),
+            row.phone,
+            row.label,
+            row.note ?? "",
+            now,
+            now,
+          ),
       ),
     ),
 
@@ -388,18 +400,21 @@ export const contacts = {
     db: D1Database,
     username: string,
     id: string,
-    changes: { name?: string; label?: string; favourite?: boolean },
+    changes: { name?: string; phone?: string; label?: string; note?: string; favourite?: boolean },
   ) =>
     db
       .prepare(
         `UPDATE contacts SET name = COALESCE(?, name), search_name = COALESCE(?, search_name),
-           label = COALESCE(?, label), favourite = COALESCE(?, favourite), updated_at = ?
+           phone = COALESCE(?, phone), label = COALESCE(?, label), note = COALESCE(?, note),
+           favourite = COALESCE(?, favourite), updated_at = ?
          WHERE id = ? AND username = ?`,
       )
       .bind(
         changes.name ?? null,
         changes.name ? searchName(changes.name) : null,
+        changes.phone ?? null,
         changes.label ?? null,
+        changes.note ?? null,
         changes.favourite === undefined ? null : changes.favourite ? 1 : 0,
         Date.now(),
         id,

@@ -85,6 +85,7 @@ export interface ContactRow {
   search_name: string;
   phone: string;
   label: string;
+  note: string;
   favourite: number;
   last_called_at: number | null;
   last_messaged_at: number | null;

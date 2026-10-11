@@ -61,7 +61,18 @@ test("adds a contact by hand with the number normalised, and calling needs Twili
   await expect(page.getByText("+447700900124")).toBeVisible();
   await expect(page.getByText("mobile")).toBeVisible();
 
-  await page.getByRole("button", { name: "Call E2E Dad" }).click();
+  await page.getByRole("button", { name: "Edit E2E Dad" }).click();
+  const edit = page.getByRole("dialog");
+  await edit.getByLabel("Contact name").fill("E2E Father");
+  await edit.getByLabel("Contact phone").fill("07700 900125");
+  await edit.getByLabel("Contact note").fill("Call after six");
+  await edit.getByRole("button", { name: "Save" }).click();
+  await expect(edit).toHaveCount(0);
+  await expect(page.getByText("E2E Father")).toBeVisible();
+  await expect(page.getByText("+447700900125")).toBeVisible();
+  await expect(page.getByText("Call after six")).toBeVisible();
+
+  await page.getByRole("button", { name: "Call E2E Father" }).click();
   await expect(page.getByRole("status")).toHaveText(/Connect Twilio under Connections first\./);
 
   await page.getByRole("button", { name: "Help" }).click();

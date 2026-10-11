@@ -2,6 +2,7 @@ import {
   ChatBubbleIcon,
   ChevronDownIcon,
   MobileIcon,
+  Pencil1Icon,
   PlusIcon,
   StarFilledIcon,
   StarIcon,
@@ -23,7 +24,7 @@ import {
 } from "@radix-ui/themes";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ChangeEvent, type FormEvent, useRef, useState } from "react";
-import { ApiError, api, type Channel, type Contact, type NewContact } from "../api";
+import { ApiError, api, type Channel, type Contact, type ContactChanges, type NewContact } from "../api";
 import { CONTACTS_HELP, HelpDialog } from "../components/HelpDialog";
 import { ago } from "../format";
 import { canPickContacts, parseVcf, pickContacts } from "../lib/contacts";
@@ -170,6 +171,7 @@ export function Contacts() {
                 onStar={(favourite) => star.mutate({ id: contact.id, favourite })}
                 onRemove={() => remove.mutate(contact.id)}
                 onNotice={setNotice}
+                onSaved={refresh}
               />
             ))}
           </Flex>
@@ -200,12 +202,14 @@ function ContactRow({
   onStar,
   onRemove,
   onNotice,
+  onSaved,
 }: {
   contact: Contact;
   first: boolean;
   onStar: (favourite: boolean) => void;
   onRemove: () => void;
   onNotice: (notice: Notice) => void;
+  onSaved: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const detail = useQuery({
@@ -252,6 +256,11 @@ function ContactRow({
             <Text size="1" color="gray" className="mono">
               {contact.phone}
             </Text>
+            {contact.note && (
+              <Text size="1" color="gray" style={{ whiteSpace: "pre-wrap" }}>
+                {contact.note}
+              </Text>
+            )}
           </Flex>
         </Flex>
         <Text size="1" color="gray">
@@ -270,6 +279,7 @@ function ContactRow({
             <MobileIcon />
           </IconButton>
           <MessageDialog contact={contact} onNotice={onNotice} />
+          <EditContact contact={contact} onSaved={onSaved} />
           <IconButton
             variant="ghost"
             color="gray"
@@ -384,13 +394,13 @@ function MessageDialog({ contact, onNotice }: { contact: Contact; onNotice: (not
 
 function AddContact({ onAdded }: { onAdded: () => void }) {
   const [open, setOpen] = useState(false);
-  const [contact, setContact] = useState<NewContact>({ name: "", phone: "", label: "" });
+  const [contact, setContact] = useState<NewContact>({ name: "", phone: "", label: "", note: "" });
   const add = useMutation({
     mutationFn: () => api.addContact({ ...contact, name: contact.name.trim(), phone: contact.phone.trim() }),
     onSuccess: () => {
       onAdded();
       setOpen(false);
-      setContact({ name: "", phone: "", label: "" });
+      setContact({ name: "", phone: "", label: "", note: "" });
     },
   });
   const submit = (event: FormEvent) => {
@@ -432,6 +442,12 @@ function AddContact({ onAdded }: { onAdded: () => void }) {
               value={contact.label}
               onChange={(e) => setContact({ ...contact, label: e.target.value })}
             />
+            <TextArea
+              aria-label="Contact note"
+              placeholder="Note for the assistant, e.g. my sister, call after 6pm (optional)"
+              value={contact.note ?? ""}
+              onChange={(e) => setContact({ ...contact, note: e.target.value })}
+            />
             {add.error && (
               <Text size="2" color="red">
                 {add.error instanceof ApiError && add.error.code === "bad_phone"
@@ -464,6 +480,104 @@ const readText = (file: File) =>
     reader.onerror = () => reject(reader.error ?? new Error("could not read the file"));
     reader.readAsText(file);
   });
+
+function EditContact({ contact, onSaved }: { contact: Contact; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<ContactChanges>({});
+  const current = {
+    name: draft.name ?? contact.name,
+    phone: draft.phone ?? contact.phone,
+    label: draft.label ?? contact.label,
+    note: draft.note ?? contact.note,
+  };
+  const save = useMutation({
+    mutationFn: () => api.updateContact(contact.id, draft),
+    onSuccess: () => {
+      onSaved();
+      setOpen(false);
+      setDraft({});
+    },
+  });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    save.mutate();
+  };
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        setDraft({});
+      }}
+    >
+      <Dialog.Trigger>
+        <IconButton variant="ghost" color="gray" aria-label={`Edit ${contact.name}`}>
+          <Pencil1Icon />
+        </IconButton>
+      </Dialog.Trigger>
+      <Dialog.Content maxWidth="440px">
+        <Dialog.Title>Edit contact</Dialog.Title>
+        <Dialog.Description size="2" color="gray">
+          The assistant reads the note when it looks this person up.
+        </Dialog.Description>
+        <form onSubmit={submit}>
+          <Flex direction="column" gap="3" mt="4">
+            <TextField.Root
+              aria-label="Contact name"
+              value={current.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              required
+            />
+            <TextField.Root
+              aria-label="Contact phone"
+              type="tel"
+              value={current.phone}
+              onChange={(e) => setDraft({ ...draft, phone: e.target.value })}
+              required
+            />
+            <TextField.Root
+              aria-label="Contact label"
+              placeholder="Label, e.g. mobile"
+              value={current.label}
+              onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+            />
+            <TextArea
+              aria-label="Contact note"
+              placeholder="Note for the assistant"
+              value={current.note}
+              onChange={(e) => setDraft({ ...draft, note: e.target.value })}
+            />
+            {save.error && (
+              <Text size="2" color="red">
+                {editError(save.error)}
+              </Text>
+            )}
+            <Flex justify="end" gap="2">
+              <Dialog.Close>
+                <Button variant="soft" color="gray" type="button">
+                  Cancel
+                </Button>
+              </Dialog.Close>
+              <Button type="submit" loading={save.isPending} disabled={Object.keys(draft).length === 0}>
+                Save
+              </Button>
+            </Flex>
+          </Flex>
+        </form>
+      </Dialog.Content>
+    </Dialog.Root>
+  );
+}
+
+function editError(err: unknown): string {
+  if (err instanceof ApiError && err.code === "bad_phone") {
+    return "That does not look like a phone number.";
+  }
+  if (err instanceof ApiError && err.code === "phone_taken") {
+    return "Another contact already has that number.";
+  }
+  return explain(err);
+}
 
 const PRECONDITIONS: Record<string, string> = {
   no_twilio_connection: "Connect Twilio under Connections first.",

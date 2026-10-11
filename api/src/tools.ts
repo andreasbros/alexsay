@@ -1,10 +1,11 @@
 import type { Context } from "hono";
 import { countryCode, lightwaveToken, lightwaveUrls } from "./connections";
 import { contacts, conversations, memories, messages } from "./db";
+import { normalisePhone } from "./phone";
 import { type Light, lights, writeFeatures } from "./providers/lightwave";
 import type { FunctionTool } from "./providers/openai";
 import { type Recipient, type RecipientRef, resolveRecipient } from "./recipients";
-import { publicContact } from "./routes/contacts";
+import { applyContactChanges, publicContact } from "./routes/contacts";
 import { memoryCategory } from "./schemas";
 import { addToConference, placeCall, sendText, startConference, TelephonyError } from "./telephony";
 import type { AppEnv, ContactRow, MemoryCategory } from "./types";
@@ -30,6 +31,11 @@ const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const dayOrNull = (ms: number | null) => (ms === null ? null : day(ms));
 
 const CONTACT_PAGE = 25;
+const CONTACT_EDIT_ERRORS: Record<"not_found" | "bad_phone" | "phone_taken", string> = {
+  not_found: "no such contact",
+  bad_phone: "that is not a phone number",
+  phone_taken: "another contact has that number",
+};
 
 /** How the model sees a contact: ids to act on, dates instead of timestamps. */
 const contactForModel = (row: ContactRow) => {
@@ -410,6 +416,85 @@ export const TOOLS: Tool[] = [
       const favourite = args.favourite === true;
       await contacts.update(c.env.DB, c.get("user").username, recipient.contact.id, { favourite });
       return { ok: true, contact: recipient.contact.name, favourite };
+    },
+  },
+  {
+    definition: {
+      type: "function",
+      name: "update_contact",
+      description:
+        "Edits a contact: rename, change the number or label, or set the note. The note is free text about the " +
+        "person (who they are, when to call, what they like); setting it replaces the previous note, so fold old " +
+        "content in when the user adds to it.",
+      parameters: {
+        type: "object",
+        properties: {
+          ...RECIPIENT_PROPERTIES,
+          new_name: { type: "string" },
+          new_number: { type: "string" },
+          label: { type: "string", description: "mobile, home, work, or anything short" },
+          note: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const recipient = await recipientOf(c, args);
+      if ("error" in recipient) {
+        return recipient;
+      }
+      if (!recipient.contact) {
+        return { error: "that number is not in the phone book; add it first with add_contact" };
+      }
+      const changes = {
+        ...(string(args, "new_name") ? { name: string(args, "new_name").slice(0, 120) } : {}),
+        ...(string(args, "new_number") ? { phone: string(args, "new_number") } : {}),
+        ...(typeof args.label === "string" ? { label: string(args, "label").slice(0, 40) } : {}),
+        ...(typeof args.note === "string" ? { note: string(args, "note").slice(0, 1000) } : {}),
+      };
+      if (Object.keys(changes).length === 0) {
+        return { error: "nothing to change" };
+      }
+      const result = await applyContactChanges(c, c.get("user").username, recipient.contact.id, changes);
+      if (result !== "ok") {
+        return { error: CONTACT_EDIT_ERRORS[result] };
+      }
+      const updated = await contacts.get(c.env.DB, c.get("user").username, recipient.contact.id);
+      return { ok: true, contact: updated ? contactForModel(updated) : null };
+    },
+  },
+  {
+    definition: {
+      type: "function",
+      name: "add_contact",
+      description: "Adds a person to the phone book with a number the user dictates, and optionally a label and note.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          number: { type: "string" },
+          label: { type: "string" },
+          note: { type: "string" },
+        },
+        required: ["name", "number"],
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const name = string(args, "name").slice(0, 120);
+      const username = c.get("user").username;
+      const phone = normalisePhone(string(args, "number"), await countryCode(c, username));
+      if (!name || !phone) {
+        return { error: "a name and a valid phone number are required" };
+      }
+      await contacts.upsert(
+        c.env.DB,
+        username,
+        [{ name, phone, label: string(args, "label").slice(0, 40), note: string(args, "note").slice(0, 1000) }],
+        Date.now(),
+      );
+      const row = await contacts.byPhone(c.env.DB, username, phone);
+      return { ok: true, contact: row ? contactForModel(row) : null };
     },
   },
   {

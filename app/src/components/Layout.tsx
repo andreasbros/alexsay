@@ -86,7 +86,6 @@ export function Layout({ user }: { user: User }) {
                   <DropdownMenu.Label>
                     {user.username} · {user.role}
                   </DropdownMenu.Label>
-                  <DropdownMenu.Label>build {BUILD}</DropdownMenu.Label>
                   <DropdownMenu.Separator />
                   {user.role === "admin" && (
                     <DropdownMenu.Item onSelect={() => navigate("/users")}>

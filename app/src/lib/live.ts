@@ -30,6 +30,9 @@ const SPEAKING_HOLD_MS = 300;
 const LEVEL_POLL_MS = 50;
 /** After the assistant asked to hang up, how long its goodbye may trail off before the line closes. */
 const HANGUP_QUIET_MS = 1500;
+/** What the user says to end the call; the app hangs up itself if the model forgets its tool. */
+const GOODBYES =
+  /\b(end (the |this )?conversation|stop (the |this )?conversation|goodbye|good bye|bye bye|that'?s all)\b/i;
 
 /**
  * One conversation: microphone and speaker travel over WebRTC straight to GPT-Live, the JSON
@@ -75,10 +78,13 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
 
   // The channel must exist before the offer so it is part of the negotiated SDP.
   const events = pc.createDataChannel("oai-events");
-  // Set by the end_conversation tool: close once the goodbye has been spoken
+  // Set by the end_conversation tool or by the user's own goodbye: close once the reply has been spoken
   let hangingUp = false;
+  let hangUpAskedAt = 0;
+  let recentUserWords = "";
   const tools = new ToolRunner(events, handlers, conversationId, () => {
     hangingUp = true;
+    hangUpAskedAt = Date.now();
   });
   tools.recorder = recorder;
   let lastAssistantAudio = 0;
@@ -101,6 +107,12 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
       lastUserWords = Date.now();
       handlers.onTranscript("user", String(event.delta ?? ""));
       recorder.add("user", String(event.delta ?? ""));
+      recentUserWords = `${recentUserWords}${String(event.delta ?? "")}`.slice(-200);
+      if (!hangingUp && GOODBYES.test(recentUserWords)) {
+        hangingUp = true;
+        hangUpAskedAt = Date.now();
+        handlers.onActivity("info", "You said goodbye: ending after the reply");
+      }
     } else if (type === "session.closed") {
       const reason = String(event.reason ?? "no reason");
       handlers.onActivity("info", `Session closed (${reason})`);
@@ -196,8 +208,10 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
           `voice=${levels.voice.toFixed(2)} speaking=${speaking} thinking=${thinking} byTranscript=${talkingByTranscript}`,
       );
     }
-    if (hangingUp && !speaking && Date.now() - lastAssistantAudio > HANGUP_QUIET_MS) {
-      handlers.onActivity("info", "Conversation ended by the assistant");
+    // Give the reply a moment to start, then close once it has been quiet for a while
+    const quietFor = Math.min(now - lastAssistantAudio, now - hangUpAskedAt);
+    if (hangingUp && !speaking && quietFor > HANGUP_QUIET_MS) {
+      handlers.onActivity("info", "Conversation ended");
       session.stop();
       return;
     }

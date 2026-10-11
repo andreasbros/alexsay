@@ -127,6 +127,124 @@ describe("twilio", () => {
     expect(await fixed.json()).toMatchObject({ phone_number: TWILIO_NUMBER, voice_url: `${APP}/v1/twilio/voice` });
   });
 
+  it("keeps a number's earlier routing and puts it back when the user switches away or removes Twilio", async () => {
+    const studio = `https://webhooks.twilio.com/v1/Accounts/${TWILIO_SID}/Flows/FW123`;
+    const numbers = [
+      { sid: "PN1", phone_number: TWILIO_NUMBER, friendly_name: "Support", voice_url: studio, status_callback: "" },
+      { sid: "PN2", phone_number: "+447700900001", friendly_name: "Spare", voice_url: "" },
+    ];
+    const writes: { sid: string; form: Record<string, string> }[] = [];
+    const routes = {
+      [`GET ${TWILIO}.json`]: () => reply(200, { friendly_name: "Alexsay" }),
+      [`GET ${TWILIO}/IncomingPhoneNumbers.json?PageSize=100`]: () => reply(200, { incoming_phone_numbers: numbers }),
+      [`POST ${TWILIO}/IncomingPhoneNumbers/*`]: (req: Request, body: string) => {
+        writes.push({ sid: req.url.split("/").pop()?.replace(".json", "") ?? "", form: formOf(body) });
+        return reply(200, {});
+      },
+      [`GET ${TWILIO}/IncomingPhoneNumbers/*`]: (req: Request) => {
+        const sid = req.url.split("/").pop()?.replace(".json", "");
+        return reply(200, { sid, phone_number: TWILIO_NUMBER, voice_url: `${APP}/v1/twilio/voice` });
+      },
+    };
+    const first = mockUpstream(routes);
+    const taken = await json(
+      `${APP}/api/connections/twilio`,
+      "PUT",
+      {
+        account_sid: TWILIO_SID,
+        auth_token: "fedcba9876543210fedcba9876543210",
+        settings: { from_number: TWILIO_NUMBER },
+      },
+      maria,
+    );
+    first.done();
+    expect(await taken.json()).toMatchObject({
+      settings: { number_backup: expect.objectContaining({ sid: "PN1", voice_url: studio }) },
+    });
+    expect(writes.map((w) => w.sid)).toEqual(["PN1"]);
+
+    // Switching to the spare number writes the Studio flow back onto the support line first
+    writes.length = 0;
+    const { [`GET ${TWILIO}.json`]: _verify, ...withoutVerify } = routes;
+    const second = mockUpstream(withoutVerify);
+    const switched = await json(
+      `${APP}/api/connections/twilio`,
+      "PUT",
+      {
+        settings: {
+          from_number: "+447700900001",
+          number_backup: {
+            sid: "PNX",
+            phone_number: "+440000000000",
+            voice_url: "spoofed",
+            voice_method: "POST",
+            voice_application_sid: "",
+            trunk_sid: "",
+            sms_url: "",
+            sms_method: "POST",
+            sms_application_sid: "",
+            status_callback: "",
+          },
+        },
+      },
+      maria,
+    );
+    second.done();
+    expect(writes.map((w) => w.sid)).toEqual(["PN1", "PN2"]);
+    expect(writes[0]?.form).toMatchObject({ VoiceUrl: studio, VoiceApplicationSid: "", TrunkSid: "" });
+    expect(writes[1]?.form).toMatchObject({ VoiceUrl: `${APP}/v1/twilio/voice` });
+    // The spare number's empty routing is kept too, so leaving it later clears our URLs; a client cannot plant one
+    expect(await switched.json()).toMatchObject({
+      settings: { from_number: "+447700900001", number_backup: expect.objectContaining({ sid: "PN2", voice_url: "" }) },
+    });
+
+    // A settings-only save with the same number touches nothing at Twilio
+    const quiet = mockUpstream({});
+    expect(
+      (
+        await json(
+          `${APP}/api/connections/twilio`,
+          "PUT",
+          { settings: { from_number: "+447700900001", my_number: MY_NUMBER } },
+          maria,
+        )
+      ).status,
+    ).toBe(200);
+    quiet.done();
+  });
+
+  it("restores the number when Twilio is removed", async () => {
+    await connectTwilio(maria);
+    await env.DB.prepare(
+      `UPDATE connections SET settings = json_set(settings, '$.number_backup', json(?)) WHERE provider = 'twilio'`,
+    )
+      .bind(
+        JSON.stringify({
+          sid: "PN1",
+          phone_number: TWILIO_NUMBER,
+          voice_url: "https://handler.twilio.com/twiml/EH1",
+          voice_method: "POST",
+          voice_application_sid: "",
+          trunk_sid: "",
+          sms_url: "",
+          sms_method: "POST",
+          sms_application_sid: "",
+          status_callback: "",
+        }),
+      )
+      .run();
+    let restored: Record<string, string> = {};
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/IncomingPhoneNumbers/PN1.json`]: (_req, body) => {
+        restored = formOf(body);
+        return reply(200, {});
+      },
+    });
+    expect((await call(`${APP}/api/connections/twilio`, { method: "DELETE" }, maria)).status).toBe(204);
+    upstream.done();
+    expect(restored).toMatchObject({ VoiceUrl: "https://handler.twilio.com/twiml/EH1" });
+  });
+
   it("refuses credentials Twilio rejects and numbers the account does not own", async () => {
     const upstream = mockUpstream({
       [`GET ${TWILIO}.json`]: () => reply(401, { code: 20003, message: "Authenticate" }),
@@ -187,6 +305,8 @@ describe("twilio", () => {
         sms: true,
       }),
     ]);
+    // Dropping the number hands its earlier routing back to Twilio
+    const released = mockUpstream({ [`POST ${TWILIO}/IncomingPhoneNumbers/PN1.json`]: () => reply(200, {}) });
     const changed = await json(
       `${APP}/api/connections/twilio`,
       "PUT",
@@ -195,6 +315,7 @@ describe("twilio", () => {
     );
     expect(changed.status).toBe(200);
     expect(await changed.json()).toMatchObject({ settings: { my_number: "+447700900998", from_number: "" } });
+    released.done();
   });
 
   it("offers the phone tools to the assistant once Twilio is connected", async () => {

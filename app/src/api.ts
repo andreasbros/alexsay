@@ -32,12 +32,27 @@ export interface OpenAiSettings {
 
 export type VoiceClient = "browser" | "mobile";
 
+export interface NumberRouting {
+  sid: string;
+  phone_number: string;
+  voice_url: string;
+  voice_method: string;
+  voice_application_sid: string;
+  trunk_sid: string;
+  sms_url: string;
+  sms_method: string;
+  sms_application_sid: string;
+  status_callback: string;
+}
+
 export interface TwilioSettings {
   from_number: string;
   whatsapp_from: string;
   my_number: string;
   sip_domain: string;
   country_code: string;
+  /** Set by the server: how the chosen number routed calls before this app took it. */
+  number_backup?: NumberRouting | null;
 }
 
 export interface PhoneNumber {
@@ -47,9 +62,13 @@ export interface PhoneNumber {
   voice: boolean;
   sms: boolean;
   voice_url: string;
+  voice_method: string;
   voice_application_sid: string;
   trunk_sid: string;
   sms_url: string;
+  sms_method: string;
+  sms_application_sid: string;
+  status_callback: string;
 }
 
 export interface Connection {

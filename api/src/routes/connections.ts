@@ -11,8 +11,17 @@ import { connections } from "../db";
 import { providerFailure } from "../provider_errors";
 import { structureIds } from "../providers/lightwave";
 import { listModels, ProviderError } from "../providers/openai";
-import { configureNumber, listNumbers, type TwilioClient, verifyAccount } from "../providers/twilio";
+import {
+  configureNumber,
+  listNumbers,
+  restoreNumber,
+  routedTo,
+  routingOf,
+  type TwilioClient,
+  verifyAccount,
+} from "../providers/twilio";
 import * as schemas from "../schemas";
+import { twilioSettings } from "../schemas";
 import { open, seal } from "../secrets";
 import { webhooks } from "../telephony";
 import type { AppEnv } from "../types";
@@ -79,16 +88,27 @@ export const connectionRoutes = new Hono<AppEnv>()
       return c.json({ error: "credentials_required" }, 400);
     }
     const client: TwilioClient = { baseUrl: c.env.TWILIO_BASE_URL, secret };
+    const before = existing ? twilioSettings.parse(JSON.parse(existing.settings)) : null;
+    // The server owns the backup: the number's routing before this app took it, restored when it lets go
+    settings.number_backup = before?.number_backup ?? null;
     try {
       if (pasted) {
         await verifyAccount(client);
       }
-      if (settings.from_number) {
-        const number = (await listNumbers(client)).find((n) => n.phone_number === settings.from_number);
-        if (!number) {
-          return c.json({ error: "number_not_found" }, 400);
+      if (settings.from_number !== (before?.from_number ?? "")) {
+        if (settings.number_backup) {
+          await restoreNumber(client, settings.number_backup);
+          settings.number_backup = null;
         }
-        await configureNumber(client, number.sid, webhooks(c));
+        if (settings.from_number) {
+          const number = (await listNumbers(client)).find((n) => n.phone_number === settings.from_number);
+          if (!number) {
+            return c.json({ error: "number_not_found" }, 400);
+          }
+          const hooks = webhooks(c);
+          settings.number_backup = routedTo(number, hooks) ? null : routingOf(number);
+          await configureNumber(client, number.sid, hooks);
+        }
       }
     } catch (err) {
       if (err instanceof ProviderError) {
@@ -147,6 +167,24 @@ export const connectionRoutes = new Hono<AppEnv>()
     if (!parsed.success) {
       return c.json({ error: "not_found" }, 404);
     }
+    if (parsed.data === "twilio") {
+      await releaseTwilioNumber(c);
+    }
     const result = await connections.remove(c.env.DB, c.get("user").username, parsed.data);
     return result.meta.changes ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
   });
+
+/** Removing Twilio hands the number's earlier routing back; a failure there must not keep the connection. */
+async function releaseTwilioNumber(c: Parameters<typeof twilioConnection>[0]): Promise<void> {
+  const connection = await twilioConnection(c, c.get("user").username);
+  if (!connection?.settings.number_backup) {
+    return;
+  }
+  try {
+    await restoreNumber(connection.client, connection.settings.number_backup);
+  } catch (err) {
+    console.warn(
+      JSON.stringify({ provider: "twilio", restore: "failed", error: err instanceof Error ? err.message : "" }),
+    );
+  }
+}

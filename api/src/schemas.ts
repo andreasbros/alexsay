@@ -124,6 +124,20 @@ const e164 = z
   .string()
   .trim()
   .regex(/^\+[1-9]\d{7,14}$/, "an international number such as +447700900123");
+const numberRouting = z.object({
+  sid: z.string(),
+  phone_number: z.string(),
+  voice_url: z.string(),
+  voice_method: z.string(),
+  voice_application_sid: z.string(),
+  trunk_sid: z.string(),
+  sms_url: z.string(),
+  sms_method: z.string(),
+  sms_application_sid: z.string(),
+  status_callback: z.string(),
+});
+export type NumberRouting = z.infer<typeof numberRouting>;
+
 export const twilioSettings = z.object({
   /** The Twilio number calls and texts go out from; its webhooks point at this app. */
   from_number: e164.or(z.literal("")).default(""),
@@ -150,6 +164,8 @@ export const twilioSettings = z.object({
     .trim()
     .regex(/^\+[1-9]\d{0,3}$/)
     .default("+44"),
+  /** How the chosen number routed calls before this app took it; put back when the user moves on. */
+  number_backup: numberRouting.nullable().default(null),
 });
 export type TwilioSettings = z.infer<typeof twilioSettings>;
 

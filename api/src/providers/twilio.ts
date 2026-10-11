@@ -27,10 +27,17 @@ export interface PhoneNumber {
   sms: boolean;
   /** Where Twilio sends calls right now: our webhook, another URL, a TwiML app or a SIP trunk. */
   voice_url: string;
+  voice_method: string;
   voice_application_sid: string;
   trunk_sid: string;
   sms_url: string;
+  sms_method: string;
+  sms_application_sid: string;
+  status_callback: string;
 }
+
+/** The routing fields alone: what is saved before a number is taken over and written back afterwards. */
+export type NumberRouting = Omit<PhoneNumber, "friendly_name" | "voice" | "sms">;
 
 interface NumberRow {
   sid: string;
@@ -38,10 +45,35 @@ interface NumberRow {
   friendly_name: string;
   capabilities?: { voice?: boolean; sms?: boolean };
   voice_url?: string | null;
+  voice_method?: string | null;
   voice_application_sid?: string | null;
   trunk_sid?: string | null;
   sms_url?: string | null;
+  sms_method?: string | null;
+  sms_application_sid?: string | null;
+  status_callback?: string | null;
 }
+
+const numberOf = (n: NumberRow): PhoneNumber => ({
+  sid: n.sid,
+  phone_number: n.phone_number,
+  friendly_name: n.friendly_name,
+  voice: n.capabilities?.voice ?? false,
+  sms: n.capabilities?.sms ?? false,
+  voice_url: n.voice_url ?? "",
+  voice_method: n.voice_method ?? "POST",
+  voice_application_sid: n.voice_application_sid ?? "",
+  trunk_sid: n.trunk_sid ?? "",
+  sms_url: n.sms_url ?? "",
+  sms_method: n.sms_method ?? "POST",
+  sms_application_sid: n.sms_application_sid ?? "",
+  status_callback: n.status_callback ?? "",
+});
+
+export const routingOf = (n: PhoneNumber): NumberRouting => {
+  const { friendly_name, voice, sms, ...routing } = n;
+  return routing;
+};
 
 const API_VERSION = "2010-04-01";
 
@@ -83,33 +115,30 @@ export async function listNumbers(client: TwilioClient): Promise<PhoneNumber[]> 
     client,
     "/IncomingPhoneNumbers.json?PageSize=100",
   );
-  return body.incoming_phone_numbers.map((n) => ({
-    sid: n.sid,
-    phone_number: n.phone_number,
-    friendly_name: n.friendly_name,
-    voice: n.capabilities?.voice ?? false,
-    sms: n.capabilities?.sms ?? false,
-    voice_url: n.voice_url ?? "",
-    voice_application_sid: n.voice_application_sid ?? "",
-    trunk_sid: n.trunk_sid ?? "",
-    sms_url: n.sms_url ?? "",
-  }));
+  return body.incoming_phone_numbers.map(numberOf);
 }
 
 export async function getNumber(client: TwilioClient, numberSid: string): Promise<PhoneNumber> {
-  const n = await request<NumberRow>(client, `/IncomingPhoneNumbers/${numberSid}.json`);
-  return {
-    sid: n.sid,
-    phone_number: n.phone_number,
-    friendly_name: n.friendly_name,
-    voice: n.capabilities?.voice ?? false,
-    sms: n.capabilities?.sms ?? false,
-    voice_url: n.voice_url ?? "",
-    voice_application_sid: n.voice_application_sid ?? "",
-    trunk_sid: n.trunk_sid ?? "",
-    sms_url: n.sms_url ?? "",
-  };
+  return numberOf(await request<NumberRow>(client, `/IncomingPhoneNumbers/${numberSid}.json`));
 }
+
+/** Writes a number's earlier routing back, so a support line taken over by mistake answers again. */
+export async function restoreNumber(client: TwilioClient, routing: NumberRouting): Promise<void> {
+  await request(client, `/IncomingPhoneNumbers/${routing.sid}.json`, {
+    VoiceUrl: routing.voice_url,
+    VoiceMethod: routing.voice_method || "POST",
+    VoiceApplicationSid: routing.voice_application_sid,
+    TrunkSid: routing.trunk_sid,
+    SmsUrl: routing.sms_url,
+    SmsMethod: routing.sms_method || "POST",
+    SmsApplicationSid: routing.sms_application_sid,
+    StatusCallback: routing.status_callback,
+  });
+}
+
+/** True when the number already sends calls to this app and nothing overrides that. */
+export const routedTo = (number: NumberRouting, hooks: Webhooks) =>
+  number.voice_url === hooks.voiceUrl && !number.voice_application_sid && !number.trunk_sid;
 
 export interface Webhooks {
   voiceUrl: string;

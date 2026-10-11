@@ -561,6 +561,10 @@ function TwilioCard({ connection }: { connection: Connection | undefined }) {
                         This account owns no numbers yet: buy one in the Twilio console (see Help).
                       </Text>
                     )}
+                    <TakeoverNote
+                      chosen={numbers.data?.find((n) => n.phone_number === settings.from_number)}
+                      current={connection.settings.from_number ?? ""}
+                    />
                     {numbers.error && (
                       <Text size="1" color="red">
                         {errorText(numbers.error)}
@@ -668,6 +672,49 @@ function NumberRouting({ from, numbers }: { from: string; numbers: PhoneNumber[]
       )}
     </Flex>
   );
+}
+
+/**
+ * Before a number that already answers calls elsewhere is moved to this app, say so, and say that its routing
+ * is kept and put back when the user picks another number or removes Twilio.
+ */
+function TakeoverNote({ chosen, current }: { chosen: PhoneNumber | undefined; current: string }) {
+  if (!chosen || chosen.phone_number === current) {
+    return null;
+  }
+  const ours = `${window.location.origin}/v1/twilio/voice`;
+  const elsewhere = chosen.trunk_sid
+    ? `a SIP trunk (${chosen.trunk_sid})`
+    : chosen.voice_application_sid
+      ? `a TwiML app (${chosen.voice_application_sid})`
+      : chosen.voice_url && chosen.voice_url !== ours
+        ? describeVoiceUrl(chosen.voice_url)
+        : null;
+  if (!elsewhere) {
+    return null;
+  }
+  return (
+    <Callout.Root color="amber" size="1">
+      <Callout.Text>
+        {chosen.phone_number} currently answers calls through {elsewhere}. Saving moves its calls and texts to this app;
+        the current routing is kept and put back when you pick another number or remove Twilio. If that number is a live
+        support line, pick a different one.
+      </Callout.Text>
+    </Callout.Root>
+  );
+}
+
+function describeVoiceUrl(url: string): string {
+  if (/webhooks\.twilio\.com\/.*\/Flows\//.test(url)) {
+    return "a Studio flow";
+  }
+  if (/handler\.twilio\.com/.test(url)) {
+    return "a TwiML bin";
+  }
+  if (/twil\.io/.test(url)) {
+    return "a Twilio function";
+  }
+  return `a webhook (${url})`;
 }
 
 /** What happened to the last calls, including where an incoming one rang, so a silent phone has an answer. */

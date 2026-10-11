@@ -39,7 +39,11 @@ const PHONE_INSTRUCTIONS =
   "give place_call a task when the user wants you to do the talking. Ring the user's mobile only when they ask " +
   "for it (via mobile). With a message it phones them and reads it out instead. " +
   "start_conference makes a group call, add_to_call brings in one more person, end_call hangs up. " +
-  "recent_messages reads back texts the user received or sent.";
+  "recent_messages reads back texts the user received or sent. " +
+  "A call exists only when place_call, start_conference or add_to_call has returned a result in this turn: " +
+  "once the user says yes, make that tool call before saying anything else, and never say a call is being placed, " +
+  "ringing, connected or answered without that result. If no such result exists, say plainly that no call was made. " +
+  "For how a call is going (ringing, answered, who is on, ended), call call_status and report what it says.";
 
 const ADDRESSED_INSTRUCTIONS =
   "You are in a room with background sound: a television, music, other people talking to each other. " +

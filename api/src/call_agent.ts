@@ -65,14 +65,19 @@ export class CallAgent extends DurableObject<Env> {
       await this.openSocket(start);
       return Response.json({ ok: true });
     } catch (err) {
-      console.warn(JSON.stringify({ call_agent: start.callId, error: err instanceof Error ? err.message : "failed" }));
+      const detail = err instanceof Error ? err.message : "failed";
+      void logFor(
+        { env: this.env },
+        start.username,
+        "error",
+        `call agent: no realtime socket for ${start.callId}: ${detail}`,
+      );
       return Response.json({ ok: false }, { status: 502 });
     }
   }
 
   private async openSocket(start: CallAgentStart): Promise<void> {
-    const url = `${start.baseUrl}/realtime?call_id=${encodeURIComponent(start.callId)}`;
-    const res = await fetch(url, {
+    const res = await fetch(realtimeSocketUrl(start.baseUrl, start.callId), {
       headers: { upgrade: "websocket", authorization: `Bearer ${start.apiKey}` },
     });
     const socket = res.webSocket;
@@ -121,6 +126,11 @@ export class CallAgent extends DurableObject<Env> {
     );
     socket.send(JSON.stringify({ type: "response.create" }));
   }
+}
+
+/** Workers open outbound WebSockets with an https fetch plus the Upgrade header; a ws(s) scheme is refused. */
+export function realtimeSocketUrl(baseUrl: string, callId: string): string {
+  return `${baseUrl.replace(/^wss?:/, "https:")}/realtime?call_id=${encodeURIComponent(callId)}`;
 }
 
 /** Runs one of the registry's tools for the assistant on the call; failures become results it can relay. */

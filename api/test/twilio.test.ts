@@ -631,7 +631,12 @@ describe("twilio", () => {
     expect(result.output.note).toContain("You join the call yourself");
     const name = result.output.conference;
     expect(legs.map((l) => l.form.To)).toEqual([`client:alexsay-app?conference=${name}`]);
-    expect(legs[0]?.form).toMatchObject({ Label: "host", EndConferenceOnExit: "true" });
+    expect(legs[0]?.form).toMatchObject({
+      Label: "host",
+      EndConferenceOnExit: "true",
+      ConferenceStatusCallback: `${APP}/v1/twilio/conference`,
+      ConferenceStatusCallbackEvent: "start end join leave",
+    });
 
     // The page answered and says so itself: Mum is dialled and the assistant right behind her.
     expect((await call(`${APP}/api/twilio/conferences/${name}/answered`, { method: "POST" }, maria)).status).toBe(200);
@@ -652,6 +657,8 @@ describe("twilio", () => {
     expect(brief?.brief).toContain("Mum (+447700900123)");
     expect(brief?.brief).toContain("you may hear ringing first");
     expect(brief?.brief).toContain("press_digits");
+    expect(brief?.brief).toContain("we are in a queue");
+    expect(brief?.brief).toContain("without your name");
     expect(brief?.brief).toContain("ask whether Sunday lunch is still on");
     expect(brief?.brief).toContain("end_call");
 
@@ -738,6 +745,56 @@ describe("twilio", () => {
       ).status,
     ).toBe(404);
     expect((await openaiWebhook({ type: "realtime.something.else" })).status).toBe(200);
+  });
+
+  it("dials the guests on the conference join event when the leg callbacks go missing, and reports progress", async () => {
+    await connectTwilio(maria);
+    await connectOpenaiForCalls();
+    const legs: Record<string, string>[] = [];
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: (_req, body) => {
+        legs.push(formOf(body));
+        return reply(201, { call_sid: `CA${legs.length}`, status: "queued" });
+      },
+      [`GET ${TWILIO}/Calls/*`]: (req) => {
+        const sid = req.url.split("/").pop()?.replace(".json", "");
+        return reply(
+          200,
+          sid === "CA2" ? { status: "ringing", duration: null } : { status: "in-progress", duration: "8" },
+        );
+      },
+    });
+    const placed = (await tool(maria, "place_call", { name: "Mum", via: "mobile" })) as { conference: string };
+    expect(legs).toHaveLength(1);
+    const joined = await twilioWebhook("/v1/twilio/conference", {
+      FriendlyName: placed.conference,
+      StatusCallbackEvent: "participant-join",
+      CallSid: "CA1",
+    });
+    expect(joined.status).toBe(204);
+    expect(legs.map((l) => l.Label)).toEqual(["host", "Mum", "assistant"]);
+    expect(await tool(maria, "call_status", {})).toEqual({
+      in_call: true,
+      conference: placed.conference,
+      legs: [
+        { who: "the user, on their mobile", role: "host", status: "in-progress", seconds: 8 },
+        { who: `Mum (${MUM})`, role: "guest", status: "ringing", seconds: 0 },
+        { who: "you, the assistant", role: "assistant", status: "in-progress", seconds: 8 },
+      ],
+    });
+    const ended = await twilioWebhook("/v1/twilio/conference", {
+      FriendlyName: placed.conference,
+      StatusCallbackEvent: "conference-end",
+    });
+    expect(ended.status).toBe(204);
+    expect(await tool(maria, "call_status", {})).toEqual({ in_call: false });
+    expect(await tool(maria, "end_call", {})).toEqual({ error: "there is no call in progress" });
+    const unknown = await twilioWebhook("/v1/twilio/conference", {
+      FriendlyName: "ay-nobody",
+      StatusCallbackEvent: "conference-end",
+    });
+    expect(unknown.status).toBe(404);
+    upstream.done();
   });
 
   it("hangs up the call in progress by ending the host leg", async () => {

@@ -143,6 +143,51 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     return c.body(null, 204);
   });
 
+/**
+ * Conference events are the stages' second trigger: when a leg's own callbacks go missing (they did
+ * on 11 Oct 2026), the host's join still dials the guests, a guest's join is still logged, and the
+ * end of the conference marks every leg completed whoever hung up.
+ */
+export const twilioConferenceRoute = new Hono<AppEnv>().post("/conference", async (c) => {
+  const params = await form(c);
+  const conference = (params.FriendlyName ?? "").slice(0, 64);
+  const legs = conference ? await calls.legs(c.env.DB, conference) : [];
+  const first = legs[0];
+  const row = first ? await connections.get(c.env.DB, first.username, "twilio") : null;
+  if (!first || !row) {
+    return c.text("not found", 404);
+  }
+  const owner = { username: first.username, connection: await twilioFromRow(c, row) };
+  if (!(await signed(c, owner, params))) {
+    return c.text("forbidden", 403);
+  }
+  const event = (params.StatusCallbackEvent ?? "").slice(0, 32);
+  const leg = params.CallSid ? (legs.find((l) => l.sid === params.CallSid) ?? null) : null;
+  const place = { env: c.env, origin: new URL(c.req.url).origin };
+  void logFor(
+    place,
+    first.username,
+    "info",
+    `twilio: conference ${conference} ${event}${leg ? ` (${leg.role} ${leg.phone})` : ""}`,
+  );
+  if (event === "participant-join" && leg?.sid) {
+    await calls.setStatus(c.env.DB, leg.sid, "in-progress");
+    if (leg.role === "host") {
+      await hostAnswered(place, leg);
+    }
+    if (leg.role === "guest") {
+      await guestAnswered(place, leg);
+    }
+  }
+  if (event === "participant-leave" && leg?.sid) {
+    await calls.setStatus(c.env.DB, leg.sid, "completed");
+  }
+  if (event === "conference-end") {
+    await calls.endConference(c.env.DB, conference);
+  }
+  return c.body(null, 204);
+});
+
 async function form(c: Context<AppEnv>): Promise<Params> {
   const params: Params = {};
   for (const [key, value] of await c.req.raw.formData()) {

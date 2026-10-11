@@ -248,8 +248,9 @@ export const conversations = {
   get: (db: D1Database, username: string, id: string) =>
     db.prepare("SELECT * FROM conversations WHERE id = ? AND username = ?").bind(id, username).first<ConversationRow>(),
 
-  /** Newest first; `query` matches the summary and the turns' text. */
-  list: async (db: D1Database, username: string, limit: number, query?: string) => {
+  /** Newest first; `query` matches the summary and the turns' text (capped: D1 rejects long LIKE patterns). */
+  list: async (db: D1Database, username: string, limit: number, rawQuery?: string) => {
+    const query = rawQuery?.trim().slice(0, 100);
     const statement = query
       ? db
           .prepare(
@@ -561,6 +562,10 @@ export const calls = {
       )
       .bind(conference)
       .first<CallRow>(),
+
+  /** Every leg of a conference in dialling order: host, guests, assistant. */
+  legs: async (db: D1Database, conference: string) =>
+    (await db.prepare("SELECT * FROM calls WHERE conference = ? ORDER BY at").bind(conference).all<CallRow>()).results,
 
   /** Guests of a conference, in dialling order. */
   guests: async (db: D1Database, conference: string) =>

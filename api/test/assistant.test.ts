@@ -144,6 +144,15 @@ describe("assistant sessions", () => {
     expect(String(chatty.instructions)).not.toMatch(/addresses you by name/);
   });
 
+  it("tells a phone-capable assistant that a call exists only as a tool result", () => {
+    const withPhone = sessionConfig(openaiSettings.parse({}), toolDefinitions(false, true));
+    expect(String(withPhone.instructions)).toMatch(/never say a call is being placed/);
+    expect(String(withPhone.instructions)).toMatch(/call call_status/);
+    expect(String(sessionConfig(openaiSettings.parse({}), toolDefinitions(false)).instructions)).not.toMatch(
+      /place_call/,
+    );
+  });
+
   it("builds a Responses delegation with the user's instructions appended", () => {
     const tools = toolDefinitions(true);
     const config = sessionConfig(

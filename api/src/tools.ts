@@ -9,6 +9,7 @@ import { applyContactChanges, publicContact } from "./routes/contacts";
 import { memoryCategory } from "./schemas";
 import {
   addToConference,
+  callStatus,
   endCall,
   placeCall,
   pressDigits,
@@ -706,6 +707,18 @@ export const TOOLS: Tool[] = [
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
     run: async (c) => telephony(async () => ({ ok: true, ...(await endCall(c, c.user.username)) })),
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "call_status",
+      description:
+        "How the call in progress is going, leg by leg: who is on it, whether each side is still ringing, answered " +
+        "or gone, and whether you are seated on it. Answer every question about a call from this, never from memory.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+    run: async (c) => telephony(async () => callStatus(c, c.user.username)),
   },
   {
     needs: "twilio",

@@ -57,7 +57,7 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
     const start: CallAgentStart = {
       callId,
       apiKey: openai.apiKey,
-      baseUrl: c.env.OPENAI_BASE_URL.replace(/^http/, "ws"),
+      baseUrl: c.env.OPENAI_BASE_URL,
       username: leg.username,
       origin: new URL(c.req.url).origin,
     };

@@ -8,6 +8,7 @@ import {
   CLIENT_IDENTITY,
   completeCall,
   createCall,
+  getCall,
   redirectCall,
   sendMessage,
   type Webhooks,
@@ -77,6 +78,7 @@ export interface Place extends Scope {
 }
 
 export const statusCallbackUrl = (place: Place) => `${place.origin}/v1/twilio/status`;
+export const conferenceStatusCallbackUrl = (place: Place) => `${place.origin}/v1/twilio/conference`;
 
 /** The URLs a Twilio number is pointed at, derived from the request so local and live differ naturally. */
 export function webhooks(origin: string): Webhooks {
@@ -231,6 +233,7 @@ async function openConference(
     label: "host",
     host: true,
     statusCallback: statusCallbackUrl(c),
+    conferenceStatusCallback: conferenceStatusCallbackUrl(c),
   });
   await calls.create(c.env.DB, {
     username,
@@ -293,6 +296,7 @@ async function dialGuest(place: Place, username: string, connection: Ready, conf
     label: guest.name ?? guest.phone,
     host: false,
     statusCallback: statusCallbackUrl(place),
+    conferenceStatusCallback: conferenceStatusCallbackUrl(place),
   });
   await calls.create(place.env.DB, {
     username,
@@ -335,6 +339,7 @@ async function seatAssistant(place: Place, username: string, conference: string,
     label: "assistant",
     host: false,
     statusCallback: statusCallbackUrl(place),
+    conferenceStatusCallback: conferenceStatusCallbackUrl(place),
   });
   await calls.setBrief(place.env.DB, seat.id, brief);
   await calls.setLeg(place.env.DB, seat.id, leg.sid, leg.status);
@@ -366,16 +371,23 @@ async function callBrief(place: Scope, username: string, hostBrief: HostBrief | 
     "person, a recorded service, voicemail, or an automated menu or switchboard. For a menu, do not talk to it; " +
     "choose the option that fits with press_digits, one step at a time (for example 2 for billing), and tell " +
     `${username} briefly what you pressed. If no option fits, ask ${username}. For a recording or a service that ` +
-    "only talks (a speaking clock, an announcement), say nothing and let it be heard.";
+    "only talks (a speaking clock, an announcement), say nothing and let it be heard. Hold music, a queue " +
+    `message or a long recording: tell ${username} in one short line what is happening (for example "we are in ` +
+    'a queue") and keep listening; mention it again only when it changes.';
   const conduct = hostBrief?.task
     ? `${username} asked you to handle this: ${hostBrief.task}. Once a person is on and has finished their ` +
       `greeting, introduce yourself as Alexsay calling on behalf of ${username} and get it done politely and ` +
       `concisely; hand over whenever ${username} speaks.`
     : `Do not introduce yourself and do not speak first to a person. Stay silent unless ${username} addresses you by ` +
       "name (Alexsay, Aleksey) or asks you to introduce yourself; then help briefly and go quiet again.";
+  const aside =
+    `${username} can also talk to you without your name when it is clearly for you and not for the other side: a ` +
+    'question about the call ("did you hear that?", "what did they say?", "are we still in the queue?") gets a ' +
+    `short answer. What ${username} says to the other side, you leave alone.`;
   const parts = [
     'Your name is Alexsay, pronounced "Aleksey". You have just joined a phone call that ' +
       `${username} placed from their speaker app. On the line: ${username}, and ${people}. ${picked} ${conduct} ` +
+      `${aside} ` +
       `Keep every turn short. Never read out numbers, addresses or other personal details ${username} has not asked ` +
       "you to share.",
     `Tools: when ${username} asks you to hang up or end the call, say a brief goodbye to the other side and call ` +
@@ -387,6 +399,60 @@ async function callBrief(place: Scope, username: string, hostBrief: HostBrief | 
     contextInstructions(await loadContext(place.env.DB, username)),
   ];
   return parts.filter(Boolean).join("\n\n");
+}
+
+export interface LegProgress {
+  who: string;
+  role: string;
+  status: string;
+  seconds: number;
+}
+
+export interface CallProgress {
+  in_call: boolean;
+  conference?: string;
+  legs?: LegProgress[];
+}
+
+/**
+ * How the user's call is going, leg by leg, read live from Twilio (and stored), so the assistant on
+ * the page can answer "has it connected?" with facts even when Twilio's callbacks never arrived.
+ */
+export async function callStatus(c: Scope, username: string): Promise<CallProgress> {
+  const connection = await ready(c, username);
+  const conference = await calls.openConference(c.env.DB, username, Date.now() - CONFERENCE_WINDOW_MS);
+  if (!conference) {
+    return { in_call: false };
+  }
+  const legs: LegProgress[] = [];
+  for (const leg of await calls.legs(c.env.DB, conference)) {
+    let state = { status: leg.status, seconds: 0 };
+    if (leg.sid) {
+      try {
+        state = await getCall(connection.client, leg.sid);
+      } catch {
+        state = { status: leg.status, seconds: 0 };
+      }
+      if (state.status !== leg.status) {
+        await calls.setStatus(c.env.DB, leg.sid, state.status);
+      }
+    }
+    legs.push({ who: await legName(c, leg), role: leg.role, ...state });
+  }
+  return { in_call: legs.some((l) => !TERMINAL_STATUSES.has(l.status)), conference, legs };
+}
+
+const TERMINAL_STATUSES = new Set(["completed", "busy", "failed", "no-answer", "canceled"]);
+
+async function legName(c: Scope, leg: CallRow): Promise<string> {
+  if (leg.role === "host") {
+    return leg.phone === "browser" ? "the user, in the app" : "the user, on their mobile";
+  }
+  if (leg.role === "assistant") {
+    return "you, the assistant";
+  }
+  const contact = await contacts.byPhone(c.env.DB, leg.username, leg.phone);
+  return contact ? `${contact.name} (${leg.phone})` : leg.phone;
 }
 
 /** Brings one more person into the conference the user is in. */

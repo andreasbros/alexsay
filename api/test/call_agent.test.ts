@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { parseArguments, realtimeFunctionCall, runCallTool } from "../src/call_agent";
+import { parseArguments, realtimeFunctionCall, realtimeSocketUrl, runCallTool } from "../src/call_agent";
 import { APP, addUser, json, resetDb, signIn } from "./helpers";
 
 describe("call agent", () => {
@@ -27,6 +27,15 @@ describe("call agent", () => {
     expect(realtimeFunctionCall({ type: "response.output_audio.delta", delta: "..." })).toBeNull();
     expect(realtimeFunctionCall("nonsense")).toBeNull();
     expect(parseArguments("not json")).toEqual({});
+  });
+
+  it("opens the realtime socket over https, which is how Workers upgrade to a WebSocket", () => {
+    expect(realtimeSocketUrl("https://api.openai.com/v1", "rtc_1")).toBe(
+      "https://api.openai.com/v1/realtime?call_id=rtc_1",
+    );
+    expect(realtimeSocketUrl("wss://api.openai.com/v1", "rtc 2")).toBe(
+      "https://api.openai.com/v1/realtime?call_id=rtc%202",
+    );
   });
 
   it("runs the registry's tools for the user on the call and turns failures into results", async () => {

@@ -213,6 +213,8 @@ export interface ParticipantOptions {
   label: string;
   host: boolean;
   statusCallback: string;
+  /** Conference events (join, leave, end): the stages' second trigger when leg callbacks go missing. */
+  conferenceStatusCallback: string;
 }
 
 /**
@@ -238,6 +240,9 @@ export async function addParticipant(
       StatusCallback: participant.statusCallback,
       StatusCallbackEvent: "answered completed",
       StatusCallbackMethod: "POST",
+      ConferenceStatusCallback: participant.conferenceStatusCallback,
+      ConferenceStatusCallbackEvent: "start end join leave",
+      ConferenceStatusCallbackMethod: "POST",
     },
   );
   return { sid: body.call_sid, status: body.status };
@@ -296,6 +301,20 @@ export async function redirectCall(client: TwilioClient, callSid: string, twiml:
 }
 
 /** Hangs up one leg; for a conference host that ends the whole call. */
+export interface CallState {
+  status: string;
+  seconds: number;
+}
+
+/** A leg's live status straight from Twilio, for when its callbacks never arrived. */
+export async function getCall(client: TwilioClient, callSid: string): Promise<CallState> {
+  const body = await request<{ status: string; duration: string | null }>(
+    client,
+    `/Calls/${encodeURIComponent(callSid)}.json`,
+  );
+  return { status: body.status, seconds: Number(body.duration ?? 0) || 0 };
+}
+
 export async function completeCall(client: TwilioClient, callSid: string): Promise<void> {
   await request(client, `/Calls/${encodeURIComponent(callSid)}.json`, { Status: "completed" });
 }

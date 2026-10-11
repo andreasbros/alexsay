@@ -11,7 +11,7 @@ import { appendTurn, Transcript, type Turn } from "../components/Transcript";
 import { debugLog, isDebug, subscribeDebug } from "../lib/debug";
 import { startDemo } from "../lib/demo";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
-import { playEnd, playStart, primeSounds } from "../lib/sounds";
+import { playEnd, primeSounds, startConnecting } from "../lib/sounds";
 import { DEFAULT_OPENAI, VOICES } from "../voices";
 
 const LABELS: Record<LiveStatus | "idle", string> = {
@@ -71,6 +71,8 @@ export function Assistant() {
 
   const start = async (resume = false) => {
     primeSounds();
+    // Rings from the tap until the line is ready; stopped by the first listening status or a failure
+    const stopRinging = startConnecting();
     setDetail(null);
     if (!resume) {
       setTurns([]);
@@ -80,10 +82,10 @@ export function Assistant() {
       onActivity: log,
       onStatus: (next: LiveStatus, info?: string) => {
         debugLog(`status ${next}${info ? ` (${info})` : ""}`);
+        if (next !== "connecting") {
+          stopRinging();
+        }
         setStatus((previous) => {
-          if (previous === "connecting" && next === "listening") {
-            playStart();
-          }
           if (next === "closed" && previous !== "closed" && previous !== "idle") {
             playEnd();
           }
@@ -106,6 +108,7 @@ export function Assistant() {
       session.current = demo ? startDemo(handlers) : await startLive(handlers, resumeFrom);
       lastSessionId.current = session.current.id || lastSessionId.current;
     } catch (err) {
+      stopRinging();
       setStatus("error");
       setDetail(describe(err));
       log("error", describe(err));

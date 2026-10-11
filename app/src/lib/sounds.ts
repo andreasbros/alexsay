@@ -41,11 +41,15 @@ interface Note {
   type?: OscillatorType;
 }
 
-const START: Note[] = [
-  { hz: 523.25, at: 0, length: 0.11 },
-  { hz: 659.25, at: 0.12, length: 0.11 },
-  { hz: 783.99, at: 0.24, length: 0.18 },
+/** One pulse of the connecting tone: two soft notes, repeated until the line is ready. */
+const CONNECTING: Note[] = [
+  { hz: 523.25, at: 0, length: 0.1, gain: 0.7 },
+  { hz: 659.25, at: 0.14, length: 0.14, gain: 0.7 },
 ];
+const CONNECTING_PERIOD_MS = 700;
+
+/** The ready tick that replaces the pulse the moment the assistant is listening. */
+const READY: Note[] = [{ hz: 783.99, at: 0, length: 0.16 }];
 
 const END: Note[] = [
   { hz: 659.25, at: 0, length: 0.14 },
@@ -53,11 +57,26 @@ const END: Note[] = [
   { hz: 220, at: 0.5, length: 0.09, gain: 0.5, type: "square" },
 ];
 
-/** How long the start chime takes, so the caller can wait for it before opening the microphone. */
-export const START_CHIME_MS = 450;
-
-export const playStart = () => play(START);
+export const playReady = () => play(READY);
 export const playEnd = () => play(END);
+
+/** Starts the connecting pulse at once; the returned function stops it and plays the ready tick. */
+export function startConnecting(): () => void {
+  if (!soundsEnabled()) {
+    return () => {};
+  }
+  play(CONNECTING);
+  const timer = window.setInterval(() => play(CONNECTING), CONNECTING_PERIOD_MS);
+  let stopped = false;
+  return () => {
+    if (stopped) {
+      return;
+    }
+    stopped = true;
+    window.clearInterval(timer);
+    playReady();
+  };
+}
 
 function play(notes: Note[]): void {
   if (!soundsEnabled()) {

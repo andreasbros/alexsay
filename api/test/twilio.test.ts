@@ -371,10 +371,10 @@ describe("twilio", () => {
       StatusCallbackEvent: "answered completed",
     });
 
-    // The mobile picks up: only now is Mum dialled, with machine detection reporting back to us
+    // The mobile picks up: only now is Mum dialled
     expect((await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" })).status).toBe(204);
     expect(legs.map((l) => l.To)).toEqual([MY_NUMBER, MUM]);
-    expect(legs[1]).toMatchObject({ MachineDetection: "Enable", AmdStatusCallback: `${APP}/v1/twilio/amd` });
+    expect(legs[1]).toMatchObject({ From: TWILIO_NUMBER, StatusCallbackEvent: "answered completed" });
     // A repeated callback does not dial her twice
     await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
     upstream.done();
@@ -637,23 +637,36 @@ describe("twilio", () => {
     await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
     expect(legs.map((l) => l.form.To)).toEqual([`client:alexsay-app?conference=${name}`, MUM]);
 
-    // Machine detection says a person picked up: now the assistant joins, briefed accordingly
-    await twilioWebhook("/v1/twilio/amd", { CallSid: "CA2", AnsweredBy: "human" });
+    // Mum picks up: the assistant joins that very moment, briefed to listen first
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA2", CallStatus: "in-progress" });
     expect(legs.map((l) => l.form.To)).toEqual([
       `client:alexsay-app?conference=${name}`,
       MUM,
       `sip:proj_abc12345@sip.api.openai.com;transport=tls?X-Alexsay-Conference=${name}`,
     ]);
     expect(legs[2]?.form).toMatchObject({ Label: "assistant", From: "alexsay" });
-    // A second report (the answered callback racing the detection) does not seat a second assistant
-    await twilioWebhook("/v1/twilio/amd", { CallSid: "CA2", AnsweredBy: "human" });
-    upstream.done();
+    // A repeated answered callback does not seat a second assistant
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA2", CallStatus: "in-progress" });
     expect(legs).toHaveLength(3);
     const brief = await env.DB.prepare("SELECT brief FROM calls WHERE role = 'assistant'").first<{ brief: string }>();
     expect(brief?.brief).toContain("Mum (+447700900123)");
-    expect(brief?.brief).toContain("A person answered.");
+    expect(brief?.brief).toContain("Listen first");
+    expect(brief?.brief).toContain("press_digits");
     expect(brief?.brief).toContain("ask whether Sunday lunch is still on");
     expect(brief?.brief).toContain("end_call");
+
+    // A menu answered: the assistant presses 2, which plays the tones on Mum's leg and returns it to the call
+    const pressed = mockUpstream({
+      [`POST ${TWILIO}/Calls/CA2.json`]: (_req, body) => {
+        const twiml = formOf(body).Twiml ?? "";
+        expect(twiml).toContain('<Play digits="ww2"/>');
+        expect(twiml).toContain(`>${name}</Conference>`);
+        return reply(200, {});
+      },
+    });
+    expect(await tool(maria, "press_digits", { digits: "2" })).toEqual({ ok: true, digits: "2" });
+    pressed.done();
+    upstream.done();
 
     // Without the OpenAI SIP setup, the same call still opens in the browser, just without the assistant
     await json(`${APP}/api/connections/openai`, "PUT", { settings: { project_id: "" } }, maria);
@@ -689,7 +702,7 @@ describe("twilio", () => {
       )
     ).json()) as { output: { conference: string } };
     await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
-    await twilioWebhook("/v1/twilio/amd", { CallSid: "CA2", AnsweredBy: "machine_start" });
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA2", CallStatus: "in-progress" });
     legs.done();
     const conference = placedCall.output.conference;
     const event = {
@@ -708,7 +721,7 @@ describe("twilio", () => {
     expect(res.status).toBe(200);
     const session = accepted as { instructions: string; tools: { name: string }[]; model: string } | null;
     expect(session).toMatchObject({ model: "gpt-realtime" });
-    expect(session?.instructions).toContain("A machine answered");
+    expect(session?.instructions).toContain("Listen first");
     expect(session?.instructions).toContain("Do not introduce yourself and do not speak first");
     const toolNames = session?.tools.map((t) => t.name) ?? [];
     expect(toolNames).toEqual(

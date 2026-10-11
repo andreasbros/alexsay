@@ -6,7 +6,15 @@ import type { FunctionTool } from "./providers/openai";
 import { type Recipient, type RecipientRef, resolveRecipient } from "./recipients";
 import { applyContactChanges, publicContact } from "./routes/contacts";
 import { memoryCategory } from "./schemas";
-import { addToConference, endCall, placeCall, sendText, startConference, TelephonyError } from "./telephony";
+import {
+  addToConference,
+  endCall,
+  placeCall,
+  pressDigits,
+  sendText,
+  startConference,
+  TelephonyError,
+} from "./telephony";
 import type { ContactRow, MemoryCategory, ToolContext, VoiceClient } from "./types";
 import { MEMORY_CATEGORIES } from "./types";
 
@@ -634,6 +642,31 @@ export const TOOLS: Tool[] = [
         return recipient;
       }
       return telephony(async () => ({ ok: true, ...(await addToConference(c, c.user.username, recipient)) }));
+    },
+  },
+  {
+    needs: "twilio",
+    definition: {
+      type: "function",
+      name: "press_digits",
+      description:
+        "Presses keys on the phone call in progress, for automated menus and switchboards: the digits are sent " +
+        'to the other side as touch tones. One menu step per call, for example "2" or "1234#".',
+      parameters: {
+        type: "object",
+        properties: { digits: { type: "string", description: "0-9, * and #; w pauses half a second" } },
+        required: ["digits"],
+        additionalProperties: false,
+      },
+    },
+    run: async (c, args) => {
+      const digits = string(args, "digits")
+        .replace(/[^0-9*#w]/gi, "")
+        .slice(0, 32);
+      if (!digits) {
+        return { error: "digits are required: 0-9, * or #" };
+      }
+      return telephony(async () => ({ ok: true, ...(await pressDigits(c, c.user.username, digits)) }));
     },
   },
   {

@@ -213,14 +213,12 @@ export interface ParticipantOptions {
   label: string;
   host: boolean;
   statusCallback: string;
-  /** Ask Twilio whether a human or a machine answered; the result is posted here. */
-  amdCallback?: string;
 }
 
 /**
  * Dials someone into a named conference, creating it on the first participant. Twilio accepts the
  * friendly name in place of the conference SID. We hear about answer and hang-up through the status
- * callback, so guests can be dialled once the host is on, and the assistant once a guest answered.
+ * callback, so guests are dialled once the host is on, and the assistant the moment a guest answers.
  */
 export async function addParticipant(
   client: TwilioClient,
@@ -240,14 +238,6 @@ export async function addParticipant(
       StatusCallback: participant.statusCallback,
       StatusCallbackEvent: "answered completed",
       StatusCallbackMethod: "POST",
-      ...(participant.amdCallback
-        ? {
-            MachineDetection: "Enable",
-            MachineDetectionTimeout: "10",
-            AmdStatusCallback: participant.amdCallback,
-            AmdStatusCallbackMethod: "POST",
-          }
-        : {}),
     },
   );
   return { sid: body.call_sid, status: body.status };
@@ -298,6 +288,11 @@ function timingSafeEqual(a: string, b: string): boolean {
 /** An API key for signing access tokens; the secret is only ever returned on creation. */
 export async function createApiKey(client: TwilioClient): Promise<{ sid: string; secret: string }> {
   return request(client, "/Keys.json", { FriendlyName: "alexsay app" });
+}
+
+/** Hands a live leg new TwiML; what it was doing stops and the new script runs. */
+export async function redirectCall(client: TwilioClient, callSid: string, twiml: string): Promise<void> {
+  await request(client, `/Calls/${encodeURIComponent(callSid)}.json`, { Twiml: twiml });
 }
 
 /** Hangs up one leg; for a conference host that ends the whole call. */

@@ -45,3 +45,13 @@ export const dialOutTwiml = (to: string, callerId: string) => bridgeTwiml(to, ca
 export const rejectTwiml = (reason: string) => response(`<Say ${SAY_VOICE}>${escapeXml(reason)}</Say><Hangup/>`);
 
 export const emptyTwiml = () => response("");
+
+/**
+ * Sends touch tones to the far side of a guest leg (a menu: "press 2 for billing") and puts the leg
+ * straight back into its conference. Twilio takes the leg out while this runs, so the return is explicit.
+ */
+export const digitsTwiml = (digits: string, conference: string) =>
+  response(
+    `<Play digits="ww${escapeXml(digits)}"/>` +
+      `<Dial><Conference beep="false" startConferenceOnEnter="false" endConferenceOnExit="false">${escapeXml(conference)}</Conference></Dial>`,
+  );

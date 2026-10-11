@@ -7,11 +7,12 @@ import {
   CLIENT_IDENTITY,
   completeCall,
   createCall,
+  redirectCall,
   sendMessage,
   type Webhooks,
 } from "./providers/twilio";
 import type { Recipient } from "./recipients";
-import { announceTwiml } from "./twiml";
+import { announceTwiml, digitsTwiml } from "./twiml";
 import type { Channel, Scope, ToolContext, VoiceClient } from "./types";
 
 /** A precondition the user can fix in Connections, told apart from a Twilio failure. */
@@ -75,7 +76,6 @@ export interface Place extends Scope {
 }
 
 export const statusCallbackUrl = (place: Place) => `${place.origin}/v1/twilio/status`;
-const amdCallbackUrl = (place: Place) => `${place.origin}/v1/twilio/amd`;
 
 /** The URLs a Twilio number is pointed at, derived from the request so local and live differ naturally. */
 export function webhooks(origin: string): Webhooks {
@@ -109,8 +109,8 @@ function myNumber(connection: TwilioConnection): string {
 /**
  * A call for the user. With a message, the person is phoned and the message read out. Otherwise a
  * conference opens in stages: the user's side rings first (the Assistant page, or their mobile when
- * they asked for it); once they are on, the person is dialled; once that person has answered, the
- * assistant joins over SIP, knowing whether a human or a machine picked up.
+ * they asked for it); once they are on, the person is dialled; the moment that call is answered the
+ * assistant joins over SIP, so it hears the greeting, a voicemail or a menu from the first second.
  */
 export async function placeCall(
   c: ToolContext,
@@ -274,7 +274,6 @@ async function dialGuest(place: Place, username: string, connection: Ready, conf
     label: guest.name ?? guest.phone,
     host: false,
     statusCallback: statusCallbackUrl(place),
-    amdCallback: amdCallbackUrl(place),
   });
   await calls.create(place.env.DB, {
     username,
@@ -293,10 +292,10 @@ async function dialGuest(place: Place, username: string, connection: Ready, conf
 }
 
 /**
- * A guest picked up (or Twilio's machine detection reported who did): the assistant joins now, so it
- * hears the greeting rather than speaking into a ringing line. Only the first report wins the seat.
+ * A guest picked up: the assistant joins now, so it hears the greeting, voicemail or menu rather than
+ * speaking into a ringing line. Only the first report wins the seat.
  */
-export async function guestAnswered(place: Place, guestLeg: CallRow, answeredBy: string | null): Promise<void> {
+export async function guestAnswered(place: Place, guestLeg: CallRow): Promise<void> {
   if (!guestLeg.conference) {
     return;
   }
@@ -315,7 +314,7 @@ export async function guestAnswered(place: Place, guestLeg: CallRow, answeredBy:
   }
   const connection = await ready(place, guestLeg.username);
   const host = await calls.hostLeg(place.env.DB, guestLeg.username, guestLeg.conference);
-  const brief = await callBrief(place, guestLeg.username, parseBrief(host?.brief ?? null), answeredBy);
+  const brief = await callBrief(place, guestLeg.username, parseBrief(host?.brief ?? null));
   const to = `sip:${openai.settings.project_id}@${OPENAI_SIP_HOST};transport=tls?${CONFERENCE_HEADER}=${guestLeg.conference}`;
   const leg = await addParticipant(connection.client, guestLeg.conference, {
     to,
@@ -341,12 +340,7 @@ const parseBrief = (text: string | null): HostBrief | null => {
 };
 
 /** What the assistant on the line is told: who is there, who answered, what to do, and what it remembers. */
-async function callBrief(
-  place: Scope,
-  username: string,
-  hostBrief: HostBrief | null,
-  answeredBy: string | null,
-): Promise<string> {
+async function callBrief(place: Scope, username: string, hostBrief: HostBrief | null): Promise<string> {
   const guests = hostBrief?.guests ?? [];
   const people = guests.map((g) => (g.name ? `${g.name} (${g.phone})` : g.phone)).join(", ") || "the person called";
   const notes = guests
@@ -354,18 +348,16 @@ async function callBrief(
     .map((g) => `About ${g.name ?? g.phone}: ${g.note}`)
     .join("\n");
   const picked =
-    answeredBy === "human"
-      ? "A person answered."
-      : answeredBy?.startsWith("machine")
-        ? "A machine answered: voicemail or an automated menu."
-        : "It is not yet clear whether a person or a machine answered: listen first.";
+    "The call has just been answered. Listen first: it may be a person, voicemail, or an automated menu or " +
+    "switchboard. For a menu, do not talk to it; choose the option that fits with press_digits, one step at a " +
+    "time (for example 2 for billing), and tell " +
+    `${username} briefly what you pressed. If no option fits, ask ${username}.`;
   const conduct = hostBrief?.task
-    ? `${username} asked you to handle this: ${hostBrief.task}. Wait for the other side to finish their greeting. ` +
-      `If a person answered, introduce yourself as Alexsay calling on behalf of ${username} and get it done politely ` +
-      `and concisely; hand over whenever ${username} speaks. If an automated menu answered, say nothing until ` +
-      `${username} tells you what to press or say, unless the task plainly requires navigating it.`
-    : `Do not introduce yourself and do not speak first. Stay silent unless ${username} addresses you by name ` +
-      "(Alexsay, Aleksey) or asks you to introduce yourself; then help briefly and go quiet again.";
+    ? `${username} asked you to handle this: ${hostBrief.task}. Once a person is on and has finished their ` +
+      `greeting, introduce yourself as Alexsay calling on behalf of ${username} and get it done politely and ` +
+      `concisely; hand over whenever ${username} speaks.`
+    : `Do not introduce yourself and do not speak first to a person. Stay silent unless ${username} addresses you by ` +
+      "name (Alexsay, Aleksey) or asks you to introduce yourself; then help briefly and go quiet again.";
   const parts = [
     'Your name is Alexsay, pronounced "Aleksey". You have just joined a phone call that ' +
       `${username} placed from their speaker app. On the line: ${username}, and ${people}. ${picked} ${conduct} ` +
@@ -397,6 +389,18 @@ export async function addToConference(c: ToolContext, username: string, recipien
   };
   const result = await dialGuest(c, username, connection, conference, guest);
   return { ...result, contact: recipient.contact?.name ?? null };
+}
+
+/** Touch tones for the menu on the other side of the call: the live guest leg plays them and rejoins. */
+export async function pressDigits(c: Scope, username: string, digits: string): Promise<{ digits: string }> {
+  const connection = await ready(c, username);
+  const conference = await calls.openConference(c.env.DB, username, Date.now() - CONFERENCE_WINDOW_MS);
+  const guest = conference ? await calls.liveGuest(c.env.DB, conference) : null;
+  if (!conference || !guest?.sid) {
+    throw new TelephonyError("no_open_conference", "there is no call in progress to press digits on");
+  }
+  await redirectCall(connection.client, guest.sid, digitsTwiml(digits, conference));
+  return { digits };
 }
 
 /** Hangs up the user's current call by ending the host leg, which takes the whole conference down. */

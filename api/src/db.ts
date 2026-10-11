@@ -535,6 +535,16 @@ export const calls = {
   setAnsweredBy: (db: D1Database, sid: string, answeredBy: string) =>
     db.prepare("UPDATE calls SET answered_by = ? WHERE sid = ?").bind(answeredBy, sid).run(),
 
+  /** The guest leg most recently dialled that is still up: the one a menu is playing on. */
+  liveGuest: (db: D1Database, conference: string) =>
+    db
+      .prepare(
+        `SELECT * FROM calls WHERE conference = ? AND role = 'guest' AND status NOT IN ${TERMINAL_CALL_STATUSES}
+         ORDER BY at DESC LIMIT 1`,
+      )
+      .bind(conference)
+      .first<CallRow>(),
+
   /** Guests of a conference, in dialling order. */
   guests: async (db: D1Database, conference: string) =>
     (

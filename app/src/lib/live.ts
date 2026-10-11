@@ -1,4 +1,5 @@
 import { api } from "../api";
+import { type SpeechMeter, speechMeter } from "./speech";
 import { functionCallOf, runTool } from "./tools";
 
 export type LiveStatus = "connecting" | "listening" | "thinking" | "speaking" | "lost" | "closed" | "error";
@@ -37,6 +38,8 @@ const HANGUP_QUIET_MS = 1500;
  */
 export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Promise<LiveSession> {
   handlers.onStatus("connecting");
+  // Created before the first await, inside the click that started the call, so iOS allows it
+  const audioContext = new AudioContext();
   const conversationId = await api
     .startConversation()
     .then((r) => r.id)
@@ -54,8 +57,15 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
   const levels = { mic: 0, voice: 0 };
   const micGate = new NoiseGate();
   const voiceGate = new NoiseGate();
-  // Levels come from WebRTC statistics only: tapping the audio with Web Audio caused clicks
+  // Your voice: an analyser on the microphone (hark's method). The assistant's voice: WebRTC
+  // statistics, never a Web Audio tap on the remote stream, which clicks on iOS.
   const statsSeen = { mic: false, voice: false };
+  let micMeter: SpeechMeter | null = null;
+  try {
+    micMeter = speechMeter(mic, audioContext);
+  } catch (err) {
+    handlers.onActivity("error", `Microphone meter unavailable: ${err instanceof Error ? err.message : String(err)}`);
+  }
   let ticker = 0;
 
   pc.ontrack = (event) => {
@@ -117,7 +127,12 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
       tools.onResponseEvent(event);
     }
   };
-  events.onopen = () => handlers.onStatus("listening");
+  let openedAt = 0;
+  let diagnosed = false;
+  events.onopen = () => {
+    openedAt = Date.now();
+    handlers.onStatus("listening");
+  };
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
@@ -147,8 +162,16 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
       return;
     }
     void readLevels(pc, levels, statsSeen, { mic: micGate, voice: voiceGate });
+    if (micMeter) {
+      levels.mic = micMeter.level();
+    }
     if (events.readyState !== "open") {
       return;
+    }
+    if (!diagnosed && Date.now() - openedAt > 5000) {
+      diagnosed = true;
+      const mic = micMeter ? `analyser, peak ${micMeter.peakDb().toFixed(0)} dB` : statsSeen.mic ? "stats" : "none";
+      handlers.onActivity("info", `Levels: you via ${mic}; assistant via ${statsSeen.voice ? "stats" : "transcript"}`);
     }
     const talkingByTranscript = Date.now() - lastAssistantAudio < SPEAKING_HOLD_MS;
     // No measurable level at all: let the words themselves move the bars
@@ -175,6 +198,7 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
     pc.close();
     speaker.srcObject = null;
     speaker.remove();
+    micMeter?.close();
     void recorder.finish();
   }
 

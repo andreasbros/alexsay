@@ -1,11 +1,10 @@
 /**
- * Conversation earcons, synthesised with Web Audio so nothing is downloaded: a connecting pulse,
- * a ready tick, a falling hang-up and an end blip. The audio context is only awake while a sound
- * plays and sleeps for the whole call: a running context next to WebRTC playback clicks on iOS.
+ * Conversation earcons as small WAV clips generated in the browser and played through plain
+ * audio elements. No Web Audio anywhere: a Web Audio context next to WebRTC playback, even a
+ * suspended one, clicked on iPhone Safari.
  */
 const KEY = "ay-sounds";
-let context: AudioContext | null = null;
-let sleepTimer = 0;
+const RATE = 24_000;
 
 export function soundsEnabled(): boolean {
   try {
@@ -21,100 +20,142 @@ export function setSoundsEnabled(on: boolean): void {
   } catch {}
 }
 
-/** Call from a click so iOS lets the context run; later tones then play without a gesture. */
-export function primeSounds(): void {
-  if (!soundsEnabled()) {
-    return;
-  }
-  try {
-    context ??= new AudioContext();
-    if (context.state === "suspended") {
-      void context.resume();
-    }
-  } catch {}
-}
-
 interface Note {
   hz: number;
   at: number;
   length: number;
   gain?: number;
-  type?: OscillatorType;
+  square?: boolean;
 }
 
-/** One pulse of the connecting tone: two soft notes, repeated until the line is ready. */
+/** One pulse of the connecting tone; the clip loops until the line is ready. */
 const CONNECTING: Note[] = [
   { hz: 523.25, at: 0, length: 0.1, gain: 0.7 },
   { hz: 659.25, at: 0.14, length: 0.14, gain: 0.7 },
 ];
-const CONNECTING_PERIOD_MS = 700;
-
-/** The ready tick that replaces the pulse the moment the assistant is listening. */
+const CONNECTING_CLIP_S = 0.7;
 const READY: Note[] = [{ hz: 783.99, at: 0, length: 0.16 }];
-
 const END: Note[] = [
   { hz: 659.25, at: 0, length: 0.14 },
   { hz: 440, at: 0.16, length: 0.22 },
-  { hz: 220, at: 0.5, length: 0.09, gain: 0.5, type: "square" },
+  { hz: 220, at: 0.5, length: 0.09, gain: 0.5, square: true },
 ];
 
-export const playReady = () => play(READY);
-export const playEnd = () => play(END);
+const clips = {
+  connecting: lazyClip(CONNECTING, CONNECTING_CLIP_S),
+  ready: lazyClip(READY, 0.25),
+  end: lazyClip(END, 0.7),
+};
+
+function lazyClip(notes: Note[], seconds: number): () => HTMLAudioElement {
+  let element: HTMLAudioElement | null = null;
+  return () => {
+    element ??= new Audio(wavUrl(notes, seconds));
+    return element;
+  };
+}
+
+/**
+ * Call from the Start tap. iOS only lets a media element play without a tap once it has played
+ * inside one, so each clip gets a silent nudge here.
+ */
+export function primeSounds(): void {
+  if (!soundsEnabled()) {
+    return;
+  }
+  for (const clip of [clips.ready(), clips.end()]) {
+    clip.muted = true;
+    clip
+      .play()
+      .then(() => {
+        clip.pause();
+        clip.currentTime = 0;
+        clip.muted = false;
+      })
+      .catch(() => {
+        clip.muted = false;
+      });
+  }
+}
+
+function playClip(clip: HTMLAudioElement): void {
+  if (!soundsEnabled()) {
+    return;
+  }
+  clip.loop = false;
+  clip.currentTime = 0;
+  clip.play().catch(() => {});
+}
+
+export const playReady = () => playClip(clips.ready());
+export const playEnd = () => playClip(clips.end());
 
 /** Starts the connecting pulse at once; the returned function stops it and plays the ready tick. */
 export function startConnecting(): () => void {
   if (!soundsEnabled()) {
     return () => {};
   }
-  play(CONNECTING);
-  const timer = window.setInterval(() => play(CONNECTING), CONNECTING_PERIOD_MS);
+  const pulse = clips.connecting();
+  pulse.loop = true;
+  pulse.currentTime = 0;
+  pulse.play().catch(() => {});
   let stopped = false;
   return () => {
     if (stopped) {
       return;
     }
     stopped = true;
-    window.clearInterval(timer);
+    pulse.pause();
+    pulse.currentTime = 0;
     playReady();
   };
 }
 
-/** Puts the context to sleep once the last note has faded, so nothing renders during the call. */
-function sleepAfter(ms: number): void {
-  window.clearTimeout(sleepTimer);
-  sleepTimer = window.setTimeout(() => {
-    if (context?.state === "running") {
-      void context.suspend();
+/** Renders the notes to 16-bit mono PCM and wraps them in a WAV header, as an object URL. */
+export function wavUrl(notes: Note[], seconds: number): string {
+  const samples = renderNotes(notes, seconds);
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const text = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) {
+      view.setUint8(offset + i, value.charCodeAt(i));
     }
-  }, ms);
+  };
+  text(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  text(8, "WAVE");
+  text(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, RATE, true);
+  view.setUint32(28, RATE * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  text(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  samples.forEach((sample, i) => view.setInt16(44 + i * 2, Math.round(sample * 32767), true));
+  return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
 }
 
-function play(notes: Note[]): void {
-  if (!soundsEnabled()) {
-    return;
+/** Sine (or square) notes with a short attack and an exponential release, summed into one clip. */
+export function renderNotes(notes: Note[], seconds: number): Float32Array {
+  const out = new Float32Array(Math.ceil(seconds * RATE));
+  for (const note of notes) {
+    const start = Math.floor(note.at * RATE);
+    const length = Math.floor(note.length * RATE);
+    const peak = 0.3 * (note.gain ?? 1);
+    for (let i = 0; i < length && start + i < out.length; i++) {
+      const t = i / RATE;
+      const attack = Math.min(1, i / (0.012 * RATE));
+      const release = Math.exp((-4 * i) / length);
+      const phase = 2 * Math.PI * note.hz * t;
+      const wave = note.square ? Math.sign(Math.sin(phase)) : Math.sin(phase);
+      out[start + i] = (out[start + i] ?? 0) + wave * peak * attack * release;
+    }
   }
-  try {
-    context ??= new AudioContext();
-    const ctx = context;
-    window.clearTimeout(sleepTimer);
-    if (ctx.state === "suspended") {
-      void ctx.resume();
-    }
-    const now = ctx.currentTime + 0.02;
-    const lastEnd = Math.max(...notes.map((n) => n.at + n.length));
-    sleepAfter(lastEnd * 1000 + 150);
-    for (const note of notes) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = note.type ?? "sine";
-      osc.frequency.value = note.hz;
-      const peak = 0.18 * (note.gain ?? 1);
-      gain.gain.setValueAtTime(0.0001, now + note.at);
-      gain.gain.exponentialRampToValueAtTime(peak, now + note.at + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + note.at + note.length);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(now + note.at);
-      osc.stop(now + note.at + note.length + 0.02);
-    }
-  } catch {}
+  for (let i = 0; i < out.length; i++) {
+    out[i] = Math.max(-1, Math.min(1, out[i] ?? 0));
+  }
+  return out;
 }

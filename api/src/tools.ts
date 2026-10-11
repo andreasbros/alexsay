@@ -1,4 +1,3 @@
-import type { Context } from "hono";
 import { countryCode, lightwaveToken, lightwaveUrls } from "./connections";
 import { contacts, conversations, memories, messages } from "./db";
 import { normalisePhone } from "./phone";
@@ -8,7 +7,7 @@ import { type Recipient, type RecipientRef, resolveRecipient } from "./recipient
 import { applyContactChanges, publicContact } from "./routes/contacts";
 import { memoryCategory } from "./schemas";
 import { addToConference, endCall, placeCall, sendText, startConference, TelephonyError } from "./telephony";
-import type { AppEnv, ContactRow, MemoryCategory, VoiceClient } from "./types";
+import type { ContactRow, MemoryCategory, ToolContext, VoiceClient } from "./types";
 import { MEMORY_CATEGORIES } from "./types";
 
 /**
@@ -19,7 +18,7 @@ export interface Tool {
   definition: FunctionTool;
   /** Provider tools only make sense once the user connected that provider. */
   needs?: "lightwave" | "twilio";
-  run: (c: Context<AppEnv>, args: Record<string, unknown>, conversationId: string | null) => Promise<unknown>;
+  run: (c: ToolContext, args: Record<string, unknown>, conversationId: string | null) => Promise<unknown>;
 }
 
 const string = (args: Record<string, unknown>, key: string): string =>
@@ -56,8 +55,8 @@ const refOf = (args: Record<string, unknown>): RecipientRef => ({
   number: string(args, "number") || undefined,
 });
 
-async function recipientOf(c: Context<AppEnv>, args: Record<string, unknown>): Promise<Recipient | { error: string }> {
-  const username = c.get("user").username;
+async function recipientOf(c: ToolContext, args: Record<string, unknown>): Promise<Recipient | { error: string }> {
+  const username = c.user.username;
   const resolved = await resolveRecipient(c.env.DB, username, await countryCode(c, username), refOf(args));
   return resolved.ok ? resolved : { error: resolved.error, ...(resolved.options ? { options: resolved.options } : {}) };
 }
@@ -66,11 +65,11 @@ async function recipientOf(c: Context<AppEnv>, args: Record<string, unknown>): P
  * Where the user takes a call. The page they are talking from, when it has its phone line up; their
  * mobile only when they asked for it. A page without a line gets an error rather than a surprise call.
  */
-function callHost(c: Context<AppEnv>, args: Record<string, unknown>): { host: VoiceClient } | { error: string } {
+function callHost(c: ToolContext, args: Record<string, unknown>): { host: VoiceClient } | { error: string } {
   if (string(args, "via") === "mobile") {
     return { host: "mobile" };
   }
-  if (c.get("voice") === "browser") {
+  if (c.voice === "browser") {
     return { host: "browser" };
   }
   return {
@@ -130,7 +129,7 @@ export const TOOLS: Tool[] = [
       const id = crypto.randomUUID();
       await memories.create(c.env.DB, {
         id,
-        username: c.get("user").username,
+        username: c.user.username,
         category: category.data,
         content,
         source: conversationId,
@@ -151,7 +150,7 @@ export const TOOLS: Tool[] = [
       },
     },
     run: async (c, args) => {
-      const result = await memories.remove(c.env.DB, c.get("user").username, string(args, "id"));
+      const result = await memories.remove(c.env.DB, c.user.username, string(args, "id"));
       return result.meta.changes ? { ok: true } : { error: "no such memory" };
     },
   },
@@ -168,7 +167,7 @@ export const TOOLS: Tool[] = [
     },
     run: async (c, args) => {
       const category = memoryCategory.safeParse(string(args, "category"));
-      const rows = await memories.list(c.env.DB, c.get("user").username, category.success ? category.data : undefined);
+      const rows = await memories.list(c.env.DB, c.user.username, category.success ? category.data : undefined);
       return rows.map((m) => ({ id: m.id, category: m.category, content: m.content, updated: day(m.updated_at) }));
     },
   },
@@ -189,12 +188,7 @@ export const TOOLS: Tool[] = [
     },
     run: async (c, args) => {
       const limit = Math.min(50, Math.max(1, num(args, "limit") ?? 10));
-      const rows = await conversations.list(
-        c.env.DB,
-        c.get("user").username,
-        limit,
-        string(args, "query") || undefined,
-      );
+      const rows = await conversations.list(c.env.DB, c.user.username, limit, string(args, "query") || undefined);
       return rows.map((r) => ({
         id: r.id,
         date: day(r.started_at),
@@ -217,7 +211,7 @@ export const TOOLS: Tool[] = [
       },
     },
     run: async (c, args) => {
-      const row = await conversations.get(c.env.DB, c.get("user").username, string(args, "id"));
+      const row = await conversations.get(c.env.DB, c.user.username, string(args, "id"));
       if (!row) {
         return { error: "no such conversation" };
       }
@@ -378,7 +372,7 @@ export const TOOLS: Tool[] = [
       if (!query) {
         return { error: "query is required" };
       }
-      const { rows } = await contacts.list(c.env.DB, c.get("user").username, { query, page: 1, pageSize: 10 });
+      const { rows } = await contacts.list(c.env.DB, c.user.username, { query, page: 1, pageSize: 10 });
       return rows.map(contactForModel);
     },
   },
@@ -398,7 +392,7 @@ export const TOOLS: Tool[] = [
     },
     run: async (c, args) => {
       const page = Math.max(1, num(args, "page") ?? 1);
-      const result = await contacts.list(c.env.DB, c.get("user").username, {
+      const result = await contacts.list(c.env.DB, c.user.username, {
         favourites: args.favourites_only === true,
         page,
         pageSize: CONTACT_PAGE,
@@ -432,7 +426,7 @@ export const TOOLS: Tool[] = [
         return { error: "that number is not in the phone book" };
       }
       const favourite = args.favourite === true;
-      await contacts.update(c.env.DB, c.get("user").username, recipient.contact.id, { favourite });
+      await contacts.update(c.env.DB, c.user.username, recipient.contact.id, { favourite });
       return { ok: true, contact: recipient.contact.name, favourite };
     },
   },
@@ -473,11 +467,11 @@ export const TOOLS: Tool[] = [
       if (Object.keys(changes).length === 0) {
         return { error: "nothing to change" };
       }
-      const result = await applyContactChanges(c, c.get("user").username, recipient.contact.id, changes);
+      const result = await applyContactChanges(c, c.user.username, recipient.contact.id, changes);
       if (result !== "ok") {
         return { error: CONTACT_EDIT_ERRORS[result] };
       }
-      const updated = await contacts.get(c.env.DB, c.get("user").username, recipient.contact.id);
+      const updated = await contacts.get(c.env.DB, c.user.username, recipient.contact.id);
       return { ok: true, contact: updated ? contactForModel(updated) : null };
     },
   },
@@ -500,7 +494,7 @@ export const TOOLS: Tool[] = [
     },
     run: async (c, args) => {
       const name = string(args, "name").slice(0, 120);
-      const username = c.get("user").username;
+      const username = c.user.username;
       const phone = normalisePhone(string(args, "number"), await countryCode(c, username));
       if (!name || !phone) {
         return { error: "a name and a valid phone number are required" };
@@ -555,15 +549,19 @@ export const TOOLS: Tool[] = [
         return host;
       }
       return telephony(async () => {
-        const result = await placeCall(c, c.get("user").username, recipient, { message, task, host: host.host });
+        const result = await placeCall(c, c.user.username, recipient, { message, task, host: host.host });
         const note = message
           ? "the message is being delivered"
           : "conference" in result
             ? [
-                result.host === "browser" ? "the call is opening in the app" : "the user's mobile is ringing",
+                result.host === "browser"
+                  ? "the call is opening in the app: it answers the moment you stop talking, then dials " +
+                    `${result.pending.join(", ")}.`
+                  : `the user's mobile is ringing; once they pick up, ${result.pending.join(", ")} is dialled.`,
                 result.assistant
-                  ? `and you are on the line: ${task ? "carry out the task once they answer" : "speak only when addressed"}`
-                  : "but you are not on the line (OpenAI phone calls are not set up); the user talks directly",
+                  ? "You join the call yourself once someone has answered and take it from there"
+                  : "You are not on the line (OpenAI phone calls are not set up); the user talks directly",
+                "Reply with one short sentence such as 'Calling now' and then say nothing more.",
               ].join(" ")
             : "placed";
         return { ok: true, ...result, note };
@@ -616,7 +614,7 @@ export const TOOLS: Tool[] = [
       }
       return telephony(async () => ({
         ok: true,
-        ...(await startConference(c, c.get("user").username, recipients, host.host)),
+        ...(await startConference(c, c.user.username, recipients, host.host)),
       }));
     },
   },
@@ -625,7 +623,9 @@ export const TOOLS: Tool[] = [
     definition: {
       type: "function",
       name: "add_to_call",
-      description: "Dials one more person into the group call the user is in right now.",
+      description:
+        "Dials one more person or number into the call the user is in right now, for one or several people " +
+        "(call it once per person).",
       parameters: { type: "object", properties: RECIPIENT_PROPERTIES, additionalProperties: false },
     },
     run: async (c, args) => {
@@ -633,7 +633,7 @@ export const TOOLS: Tool[] = [
       if ("error" in recipient) {
         return recipient;
       }
-      return telephony(async () => ({ ok: true, ...(await addToConference(c, c.get("user").username, recipient)) }));
+      return telephony(async () => ({ ok: true, ...(await addToConference(c, c.user.username, recipient)) }));
     },
   },
   {
@@ -644,7 +644,7 @@ export const TOOLS: Tool[] = [
       description: "Hangs up the phone call or group call in progress when the user asks.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
-    run: async (c) => telephony(async () => ({ ok: true, ...(await endCall(c, c.get("user").username)) })),
+    run: async (c) => telephony(async () => ({ ok: true, ...(await endCall(c, c.user.username)) })),
   },
   {
     needs: "twilio",
@@ -708,11 +708,11 @@ export const TOOLS: Tool[] = [
         }
         contactId = recipient.contact.id;
       }
-      const rows = await messages.list(c.env.DB, c.get("user").username, contactId, limit);
+      const rows = await messages.list(c.env.DB, c.user.username, contactId, limit);
       const names = new Map<string, string>();
       for (const row of rows) {
         if (row.contact_id && !names.has(row.contact_id)) {
-          const contact = await contacts.get(c.env.DB, c.get("user").username, row.contact_id);
+          const contact = await contacts.get(c.env.DB, c.user.username, row.contact_id);
           names.set(row.contact_id, contact?.name ?? row.phone);
         }
       }
@@ -728,7 +728,7 @@ export const TOOLS: Tool[] = [
   },
 ];
 
-async function sendTool(c: Context<AppEnv>, args: Record<string, unknown>, channel: "sms" | "whatsapp") {
+async function sendTool(c: ToolContext, args: Record<string, unknown>, channel: "sms" | "whatsapp") {
   const body = string(args, "body").slice(0, 1600);
   if (!body) {
     return { error: "body is required" };
@@ -739,7 +739,7 @@ async function sendTool(c: Context<AppEnv>, args: Record<string, unknown>, chann
   }
   return telephony(async () => ({
     ok: true,
-    ...(await sendText(c, c.get("user").username, recipient, body, channel)),
+    ...(await sendText(c, c.user.username, recipient, body, channel)),
   }));
 }
 
@@ -750,8 +750,8 @@ export function toolDefinitions(hasLightwave: boolean, hasTwilio = false): Funct
   return TOOLS.filter((t) => !t.needs || available[t.needs]).map((t) => t.definition);
 }
 
-async function userLights(c: Context<AppEnv>): Promise<Light[]> {
-  const token = await lightwaveToken(c, c.get("user").username);
+async function userLights(c: ToolContext): Promise<Light[]> {
+  const token = await lightwaveToken(c, c.user.username);
   if (!token) {
     throw new Error("Lightwave is not connected");
   }
@@ -771,12 +771,12 @@ export function lightWrites(targets: Light[], args: Record<string, unknown>): { 
   ]);
 }
 
-async function writeLights(c: Context<AppEnv>, targets: Light[], args: Record<string, unknown>): Promise<void> {
+async function writeLights(c: ToolContext, targets: Light[], args: Record<string, unknown>): Promise<void> {
   const writes = lightWrites(targets, args);
   if (writes.length === 0) {
     return;
   }
-  const token = await lightwaveToken(c, c.get("user").username);
+  const token = await lightwaveToken(c, c.user.username);
   if (!token) {
     throw new Error("Lightwave is not connected");
   }

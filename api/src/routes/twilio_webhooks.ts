@@ -4,10 +4,12 @@ import { type TwilioConnection, twilioFromRow } from "../connections";
 import { calls, connections, contacts, devices, messages } from "../db";
 import { bareNumber, normalisePhone, WHATSAPP_PREFIX } from "../phone";
 import { CLIENT_IDENTITY, validSignature } from "../providers/twilio";
+import { guestAnswered, hostAnswered } from "../telephony";
 import { dialOutTwiml, emptyTwiml, rejectTwiml, ringTwiml } from "../twiml";
 import type { AppEnv } from "../types";
 
 const SIP_USER = /^sip:([^@;]+)@/;
+const ASSISTANT_JOIN_FALLBACK_MS = 7000;
 
 type Params = Record<string, string>;
 
@@ -126,7 +128,38 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     if (!(await signed(c, owner, params))) {
       return c.text("forbidden", 403);
     }
-    await calls.setStatus(c.env.DB, call.sid ?? "", (params.CallStatus ?? "").slice(0, 32));
+    const status = (params.CallStatus ?? "").slice(0, 32);
+    await calls.setStatus(c.env.DB, call.sid ?? "", status);
+    const place = { env: c.env, origin: new URL(c.req.url).origin };
+    if (status === "in-progress" && call.role === "host") {
+      await hostAnswered(place, call);
+    }
+    if (status === "in-progress" && call.role === "guest") {
+      // Machine detection usually reports within a few seconds; if it never does, the assistant still joins
+      c.executionCtx.waitUntil(
+        new Promise((resolve) => setTimeout(resolve, ASSISTANT_JOIN_FALLBACK_MS)).then(() =>
+          guestAnswered(place, call, null),
+        ),
+      );
+    }
+    return c.body(null, 204);
+  })
+  .post("/amd", async (c) => {
+    const params = await form(c);
+    const call = params.CallSid ? await calls.bySid(c.env.DB, params.CallSid) : null;
+    const row = call ? await connections.get(c.env.DB, call.username, "twilio") : null;
+    if (!call || !row) {
+      return c.text("not found", 404);
+    }
+    const owner = { username: call.username, connection: await twilioFromRow(c, row) };
+    if (!(await signed(c, owner, params))) {
+      return c.text("forbidden", 403);
+    }
+    const answeredBy = (params.AnsweredBy ?? "unknown").slice(0, 32);
+    await calls.setAnsweredBy(c.env.DB, call.sid ?? "", answeredBy);
+    if (call.role === "guest") {
+      await guestAnswered({ env: c.env, origin: new URL(c.req.url).origin }, call, answeredBy);
+    }
     return c.body(null, 204);
   });
 

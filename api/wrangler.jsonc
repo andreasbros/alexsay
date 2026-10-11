@@ -19,6 +19,8 @@
     }
   ],
   "triggers": { "crons": ["23 3 * * *"] },
+  "durable_objects": { "bindings": [{ "name": "CALL_AGENT", "class_name": "CallAgent" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CallAgent"] }],
   "vars": {
     "OPENAI_BASE_URL": "https://api.openai.com/v1",
     "LIGHTWAVE_AUTH_URL": "https://auth.lightwaverf.com/token",

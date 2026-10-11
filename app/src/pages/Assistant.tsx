@@ -1,9 +1,9 @@
 import { MobileIcon, SpeakerLoudIcon, SpeakerOffIcon } from "@radix-ui/react-icons";
-import { Badge, Button, Callout, Flex, Select, Text } from "@radix-ui/themes";
+import { Badge, Button, Callout, Dialog, Flex, Select, Text, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router";
-import { ApiError, api, type OpenAiSettings } from "../api";
+import { ApiError, api, type Contact, type OpenAiSettings } from "../api";
 import { Activity, type ActivityEntry } from "../components/Activity";
 import { Bars } from "../components/Bars";
 import { DebugPanel } from "../components/DebugPanel";
@@ -14,6 +14,8 @@ import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
 import { type LineStatus, openPhoneLine, type PhoneLine } from "../lib/phone_line";
 import { playEnd, preloadSounds, primeSounds, startConnecting } from "../lib/sounds";
 import { DEFAULT_OPENAI, VOICES } from "../voices";
+
+const QUIET_BEFORE_CALL_MS = 800;
 
 const LABELS: Record<LiveStatus | "idle", string> = {
   idle: "Ready",
@@ -50,6 +52,8 @@ export function Assistant() {
   const mutedRef = useRef(false);
   const line = useRef<PhoneLine | null>(null);
   const lineStatusRef = useRef<LineStatus>("off");
+  const statusRef = useRef<LiveStatus | "idle">("idle");
+  const lastSpokeAt = useRef(0);
   const stopRing = useRef<(() => void) | null>(null);
   const [lineStatus, setLineStatus] = useState<LineStatus>("off");
   const [lineError, setLineError] = useState<string | null>(null);
@@ -75,6 +79,16 @@ export function Assistant() {
     [],
   );
   useEffect(preloadSounds, []);
+  // Closing the tab mid-call: tell the server to end the conference, since no event follows the page's death
+  useEffect(() => {
+    const onHide = () => {
+      if (lineStatusRef.current === "connected") {
+        navigator.sendBeacon("/api/twilio/calls/end");
+      }
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, []);
   // The page is the user's phone while it is open: calls to their number ring here even between conversations
   // biome-ignore lint/correctness/useExhaustiveDependencies: openLine only touches refs; run when Twilio becomes available
   useEffect(() => {
@@ -112,6 +126,10 @@ export function Assistant() {
         debugLog(`status ${next}${info ? ` (${info})` : ""}`);
         if (next !== "connecting") {
           stopRinging();
+        }
+        statusRef.current = next;
+        if (next === "speaking" || next === "thinking") {
+          lastSpokeAt.current = Date.now();
         }
         setStatus((previous) => {
           if (next === "closed" && previous !== "closed" && previous !== "idle") {
@@ -172,6 +190,8 @@ export function Assistant() {
           },
         },
         () => session.current?.micTrack() ?? null,
+        // Let the page's assistant finish "Calling now" before the line opens, or it talks over the call
+        () => statusRef.current !== "speaking" && Date.now() - lastSpokeAt.current > QUIET_BEFORE_CALL_MS,
       );
     } catch (err) {
       line.current = null;
@@ -179,8 +199,17 @@ export function Assistant() {
       log("error", `Phone line unavailable: ${describe(err)}`);
     }
   };
+  /** Ends the phone call with the conversation, so no conference keeps running (and billing) unheard. */
+  const hangUpCall = () => {
+    if (lineStatusRef.current !== "connected") {
+      return;
+    }
+    line.current?.hangUp();
+    void api.endCall().catch(() => undefined);
+  };
   const stop = () => {
     const wasActive = session.current !== null;
+    hangUpCall();
     session.current?.stop();
     session.current = null;
     if (wasActive) {
@@ -333,9 +362,12 @@ export function Assistant() {
         <Callout.Root color="indigo" size="1" role="status">
           <Flex align="center" justify="between" gap="3" wrap="wrap">
             <Callout.Text>On a call with {caller}</Callout.Text>
-            <Button size="1" color="red" onClick={() => line.current?.hangUp()}>
-              Hang up
-            </Button>
+            <Flex gap="2">
+              <AddToCall onAdded={(name) => log("info", `Dialling ${name} into the call`)} />
+              <Button size="1" color="red" onClick={hangUpCall}>
+                Hang up
+              </Button>
+            </Flex>
           </Flex>
         </Callout.Root>
       )}
@@ -382,4 +414,74 @@ function describe(err: unknown): string {
     return "Microphone access was refused.";
   }
   return err instanceof Error ? err.message : "Something went wrong.";
+}
+
+/** Brings one more person into the call: a contact found by name, or a number typed in. */
+function AddToCall({ onAdded }: { onAdded: (name: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const matches = useQuery({
+    queryKey: ["contacts", query, false, 1],
+    queryFn: () => api.contacts(query, 1, false),
+    enabled: open && query.trim().length > 0,
+  });
+  const add = useMutation({
+    mutationFn: (ref: { contact_id?: string; to?: string }) => api.addToCall(ref),
+    onSuccess: (placed) => {
+      onAdded(placed.contact ?? placed.phone);
+      setOpen(false);
+      setQuery("");
+    },
+  });
+  const looksLikeNumber = /^[+\d][\d\s()-]{5,}$/.test(query.trim());
+  return (
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      <Dialog.Trigger>
+        <Button size="1" variant="soft">
+          Add person
+        </Button>
+      </Dialog.Trigger>
+      <Dialog.Content maxWidth="420px">
+        <Dialog.Title>Add someone to the call</Dialog.Title>
+        <Dialog.Description size="2" color="gray">
+          A contact by name, or a number. They are dialled straight into this call.
+        </Dialog.Description>
+        <Flex direction="column" gap="2" mt="4">
+          <TextField.Root
+            autoFocus
+            aria-label="Name or number"
+            placeholder="Name or number"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {looksLikeNumber && (
+            <Button variant="soft" onClick={() => add.mutate({ to: query.trim() })} loading={add.isPending}>
+              Dial {query.trim()}
+            </Button>
+          )}
+          {matches.data?.contacts.slice(0, 6).map((contact: Contact) => (
+            <Button
+              key={contact.id}
+              variant="soft"
+              color="gray"
+              onClick={() => add.mutate({ contact_id: contact.id })}
+              loading={add.isPending && add.variables?.contact_id === contact.id}
+              style={{ justifyContent: "space-between" }}
+            >
+              <span>
+                {contact.name}
+                {contact.label ? ` (${contact.label})` : ""}
+              </span>
+              <span className="mono">{contact.phone}</span>
+            </Button>
+          ))}
+          {add.error && (
+            <Text size="2" color="red">
+              {describe(add.error)}
+            </Text>
+          )}
+        </Flex>
+      </Dialog.Content>
+    </Dialog.Root>
+  );
 }

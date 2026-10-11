@@ -23,9 +23,14 @@ export interface PhoneLine {
  * assistant places ring here at once and calls to the user's number can be answered here.
  * It shares the conversation's microphone track instead of opening the microphone a second time.
  */
+const ACCEPT_POLL_MS = 150;
+const ACCEPT_WAIT_MAX_MS = 15_000;
+
 export async function openPhoneLine(
   handlers: LineHandlers,
   micTrack: () => MediaStreamTrack | null,
+  /** False while the page's own assistant is still speaking, so its words do not spill into the call. */
+  canAccept: () => boolean = () => true,
 ): Promise<PhoneLine> {
   const { token } = await api.voiceToken();
   withoutWebAudio();
@@ -37,7 +42,12 @@ export async function openPhoneLine(
     logLevel: "error",
     getUserMedia: async (constraints: MediaStreamConstraints) => {
       const track = micTrack();
-      return track ? new MediaStream([track.clone()]) : navigator.mediaDevices.getUserMedia(constraints);
+      const stream = track ? new MediaStream([track.clone()]) : await navigator.mediaDevices.getUserMedia(constraints);
+      // Callers hear the browser quietly otherwise: let the browser level the microphone for the call
+      for (const t of stream.getAudioTracks()) {
+        t.applyConstraints({ autoGainControl: true, noiseSuppression: true, echoCancellation: true }).catch(() => {});
+      }
+      return stream;
     },
   });
   let current: Call | null = null;
@@ -67,7 +77,7 @@ export async function openPhoneLine(
     attach(call);
     // Our own conference legs carry the conference name; anything else is a real incoming call
     if (call.customParameters.get("conference")) {
-      call.accept();
+      acceptWhenQuiet(call, canAccept);
     } else {
       set("ringing", callerOf(call));
     }
@@ -105,6 +115,22 @@ export async function openPhoneLine(
       set("off");
     },
   };
+}
+
+/** Answers the assistant's own conference leg as soon as the page's assistant has finished its sentence. */
+function acceptWhenQuiet(call: Call, canAccept: () => boolean): void {
+  const startedAt = Date.now();
+  const attempt = () => {
+    if (call.status() !== "pending") {
+      return;
+    }
+    if (canAccept() || Date.now() - startedAt > ACCEPT_WAIT_MAX_MS) {
+      call.accept();
+      return;
+    }
+    window.setTimeout(attempt, ACCEPT_POLL_MS);
+  };
+  attempt();
 }
 
 /** Who is calling, as Twilio tells it: the caller's number, or the conference the assistant opened. */

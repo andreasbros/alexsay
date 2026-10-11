@@ -1,10 +1,9 @@
-import type { Context } from "hono";
 import { Hono } from "hono";
 import { countryCode } from "../connections";
 import { calls, contacts, messages, type NewContact } from "../db";
 import { normalisePhone } from "../phone";
 import * as schemas from "../schemas";
-import type { AppEnv, ContactRow } from "../types";
+import type { AppEnv, ContactRow, Scope } from "../types";
 import { jsonBody, parse } from "../validate";
 
 const PAGE_SIZE = 50;
@@ -111,7 +110,7 @@ export type ContactChanges = { name?: string; phone?: string; label?: string; no
 
 /** Edits shared by the app and the assistant; a new number is normalised and must not belong to another contact. */
 export async function applyContactChanges(
-  c: Context<AppEnv>,
+  c: Scope,
   username: string,
   id: string,
   changes: ContactChanges,

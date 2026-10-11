@@ -1,3 +1,4 @@
+import type { Context } from "hono";
 import { Hono } from "hono";
 import {
   exchangeLightwave,
@@ -105,7 +106,7 @@ export const connectionRoutes = new Hono<AppEnv>()
           if (!number) {
             return c.json({ error: "number_not_found" }, 400);
           }
-          const hooks = webhooks(c);
+          const hooks = webhooks(new URL(c.req.url).origin);
           settings.number_backup = routedTo(number, hooks) ? null : routingOf(number);
           await configureNumber(client, number.sid, hooks);
         }
@@ -175,7 +176,7 @@ export const connectionRoutes = new Hono<AppEnv>()
   });
 
 /** Removing Twilio hands the number's earlier routing back; a failure there must not keep the connection. */
-async function releaseTwilioNumber(c: Parameters<typeof twilioConnection>[0]): Promise<void> {
+async function releaseTwilioNumber(c: Context<AppEnv>): Promise<void> {
   const connection = await twilioConnection(c, c.get("user").username);
   if (!connection?.settings.number_backup) {
     return;

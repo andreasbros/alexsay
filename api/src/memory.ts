@@ -159,3 +159,21 @@ function parseDigest(body: unknown): Digest | null {
     return null;
   }
 }
+
+const CURRENT_TURNS = 30;
+
+/** What has been said so far in the conversation that is still open, for an assistant joining it elsewhere. */
+export async function currentConversation(db: D1Database, username: string): Promise<string> {
+  const recent = await conversations.list(db, username, 1);
+  const open = recent[0];
+  if (!open || open.ended_at !== null) {
+    return "";
+  }
+  const turns = (await conversations.turns(db, open.id, 400)).slice(-CURRENT_TURNS);
+  if (turns.length === 0) {
+    return "";
+  }
+  return `The conversation so far in the app, which led to this call:\n${turns
+    .map((t) => `${t.role}: ${t.text}`)
+    .join("\n")}`;
+}

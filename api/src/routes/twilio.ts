@@ -7,6 +7,7 @@ import { CLIENT_IDENTITY, configureNumber, listNumbers, voiceToken } from "../pr
 import { type Recipient, resolveRecipient } from "../recipients";
 import * as schemas from "../schemas";
 import { addToConference, endCall, placeCall, sendText, startConference, TelephonyError, webhooks } from "../telephony";
+import { toolContext } from "../tool_context";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
 
@@ -42,7 +43,7 @@ export const twilioRoutes = new Hono<AppEnv>()
       if (!number) {
         return c.json({ error: "number_not_found" }, 404);
       }
-      return c.json(await configureNumber(connection.client, number.sid, webhooks(c)));
+      return c.json(await configureNumber(connection.client, number.sid, webhooks(new URL(c.req.url).origin)));
     } catch (err) {
       return providerFailure(c, "twilio", err);
     }
@@ -91,19 +92,19 @@ export const twilioRoutes = new Hono<AppEnv>()
     const username = c.get("user").username;
     return telephony(c, async () => {
       const recipient = await recipientOrThrow(c, username, ref);
-      return c.json(await placeCall(c, username, recipient, { message, task, host: "mobile" }), 201);
+      return c.json(await placeCall(toolContext(c), username, recipient, { message, task, host: "mobile" }), 201);
     });
   })
   .post("/calls/end", async (c) => {
     const username = c.get("user").username;
-    return telephony(c, async () => c.json(await endCall(c, username)));
+    return telephony(c, async () => c.json(await endCall(toolContext(c), username)));
   })
   .post("/messages", async (c) => {
     const { body, channel, ...ref } = await jsonBody(c, schemas.sendMessage);
     const username = c.get("user").username;
     return telephony(c, async () => {
       const recipient = await recipientOrThrow(c, username, ref);
-      return c.json(await sendText(c, username, recipient, body, channel), 201);
+      return c.json(await sendText(toolContext(c), username, recipient, body, channel), 201);
     });
   })
   .post("/conferences", async (c) => {
@@ -114,7 +115,7 @@ export const twilioRoutes = new Hono<AppEnv>()
       for (const ref of participants) {
         recipients.push(await recipientOrThrow(c, username, ref));
       }
-      return c.json(await startConference(c, username, recipients, "mobile"), 201);
+      return c.json(await startConference(toolContext(c), username, recipients, "mobile"), 201);
     });
   })
   .post("/conferences/participants", async (c) => {
@@ -122,7 +123,7 @@ export const twilioRoutes = new Hono<AppEnv>()
     const username = c.get("user").username;
     return telephony(c, async () => {
       const recipient = await recipientOrThrow(c, username, ref);
-      return c.json(await addToConference(c, username, recipient), 201);
+      return c.json(await addToConference(toolContext(c), username, recipient), 201);
     });
   });
 

@@ -1,4 +1,7 @@
 import { app } from "./app";
+
+export { CallAgent } from "./call_agent";
+
 import { purgeExpired } from "./db";
 
 export default {

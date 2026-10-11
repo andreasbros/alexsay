@@ -490,6 +490,7 @@ export const calls = {
       sid: string | null;
       status: string;
       at: number;
+      id?: string;
     },
   ) =>
     db
@@ -498,7 +499,7 @@ export const calls = {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
-        crypto.randomUUID(),
+        row.id ?? crypto.randomUUID(),
         row.username,
         row.contact_id,
         row.direction,
@@ -522,6 +523,45 @@ export const calls = {
     ).results,
 
   bySid: (db: D1Database, sid: string) => db.prepare("SELECT * FROM calls WHERE sid = ?").bind(sid).first<CallRow>(),
+
+  get: (db: D1Database, id: string) => db.prepare("SELECT * FROM calls WHERE id = ?").bind(id).first<CallRow>(),
+
+  setBrief: (db: D1Database, id: string, brief: string) =>
+    db.prepare("UPDATE calls SET brief = ? WHERE id = ?").bind(brief, id).run(),
+
+  setLeg: (db: D1Database, id: string, sid: string, status: string) =>
+    db.prepare("UPDATE calls SET sid = ?, status = ? WHERE id = ?").bind(sid, status, id).run(),
+
+  setAnsweredBy: (db: D1Database, sid: string, answeredBy: string) =>
+    db.prepare("UPDATE calls SET answered_by = ? WHERE sid = ?").bind(answeredBy, sid).run(),
+
+  /** Guests of a conference, in dialling order. */
+  guests: async (db: D1Database, conference: string) =>
+    (
+      await db
+        .prepare("SELECT * FROM calls WHERE conference = ? AND role = 'guest' ORDER BY at")
+        .bind(conference)
+        .all<CallRow>()
+    ).results,
+
+  /**
+   * Reserves the one assistant seat of a conference before dialling it. Two webhooks racing for it
+   * both try; the unique index lets exactly one through.
+   */
+  claimAssistant: async (db: D1Database, row: { id: string; username: string; conference: string; at: number }) => {
+    try {
+      await db
+        .prepare(
+          `INSERT INTO calls (id, username, contact_id, direction, kind, phone, conference, role, sid, status, at)
+           VALUES (?, ?, NULL, 'out', 'conference', 'assistant', ?, 'assistant', NULL, 'dialling', ?)`,
+        )
+        .bind(row.id, row.username, row.conference, row.at)
+        .run();
+      return true;
+    } catch {
+      return false;
+    }
+  },
 
   setStatus: (db: D1Database, sid: string, status: string) =>
     db.prepare("UPDATE calls SET status = ? WHERE sid = ?").bind(status, sid).run(),
@@ -557,3 +597,5 @@ export const calls = {
         .first<{ conference: string }>()
     )?.conference ?? null,
 };
+
+export type { CallRow } from "./types";

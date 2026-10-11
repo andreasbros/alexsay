@@ -39,6 +39,22 @@ export interface AppEnv {
   Variables: { user: User; voice?: VoiceClient };
 }
 
+/** Anything that can reach the bindings: a Hono context, a tool context, a Durable Object. */
+export interface Scope {
+  env: Env;
+}
+
+/**
+ * The context a tool runs in, whether called from the browser through a route or from the assistant
+ * on a phone call inside the call agent, which has no request to speak of.
+ */
+export interface ToolContext extends Scope {
+  user: User;
+  /** Where this app is served, for the webhook URLs Twilio is given. */
+  origin: string;
+  voice: VoiceClient;
+}
+
 export type ConversationSource = "app" | "device";
 export type TurnRole = "user" | "assistant" | "tool";
 export const MEMORY_CATEGORIES = [
@@ -123,6 +139,7 @@ export interface CallRow {
   conference: string | null;
   role: "host" | "guest" | "assistant" | "";
   brief: string | null;
+  answered_by: string | null;
   sid: string | null;
   status: string;
   at: number;

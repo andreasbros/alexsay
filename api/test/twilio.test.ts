@@ -351,7 +351,7 @@ describe("twilio", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM calls").first<{ n: number }>()).toEqual({ n: 0 });
   });
 
-  it("rings the user's mobile into a conference with Mum when asked for the mobile", async () => {
+  it("rings the user's mobile first and dials Mum once they are on, when asked for the mobile", async () => {
     await connectTwilio(maria);
     const legs: Record<string, string>[] = [];
     const upstream = mockUpstream({
@@ -361,15 +361,24 @@ describe("twilio", () => {
       },
     });
     const result = await tool(maria, "place_call", { name: "mum", via: "mobile" });
-    upstream.done();
-    expect(result).toMatchObject({ ok: true, host: "mobile", assistant: false });
+    expect(result).toMatchObject({ ok: true, host: "mobile", assistant: false, pending: ["Mum"] });
     expect((result as { note: string }).note).toContain("the user's mobile is ringing");
-    expect(legs.map((l) => l.To)).toEqual([MY_NUMBER, MUM]);
+    expect(legs.map((l) => l.To)).toEqual([MY_NUMBER]);
     expect(legs[0]).toMatchObject({
       Label: "host",
       EndConferenceOnExit: "true",
       StatusCallback: `${APP}/v1/twilio/status`,
+      StatusCallbackEvent: "answered completed",
     });
+
+    // The mobile picks up: only now is Mum dialled, with machine detection reporting back to us
+    expect((await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" })).status).toBe(204);
+    expect(legs.map((l) => l.To)).toEqual([MY_NUMBER, MUM]);
+    expect(legs[1]).toMatchObject({ MachineDetection: "Enable", AmdStatusCallback: `${APP}/v1/twilio/amd` });
+    // A repeated callback does not dial her twice
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
+    upstream.done();
+    expect(legs).toHaveLength(2);
     const contact = await env.DB.prepare("SELECT last_called_at FROM contacts WHERE phone = ?").bind(MUM).first();
     expect(contact?.last_called_at).toBeTypeOf("number");
 
@@ -411,7 +420,7 @@ describe("twilio", () => {
       error: "no WhatsApp sender is set in Connections",
     });
     expect(await tool(maria, "add_to_call", { name: "mum" })).toEqual({
-      error: "there is no group call in progress; start one first",
+      error: "there is no call in progress; start one first",
     });
     await json(`${APP}/api/contacts`, "POST", { name: "John Smith", phone: "07700900200" }, maria);
     await json(`${APP}/api/contacts`, "POST", { name: "John Doe", phone: "07700900201" }, maria);
@@ -472,17 +481,16 @@ describe("twilio", () => {
     const started = (await tool(maria, "start_conference", {
       participants: [{ name: "Mum" }, { name: "Dad" }],
       via: "mobile",
-    })) as {
-      ok: boolean;
-      conference: string;
-      joined: { contact: string }[];
-    };
+    })) as { ok: boolean; conference: string; pending: string[] };
     expect(started.ok).toBe(true);
-    expect(started.joined.map((j) => j.contact)).toEqual(["Mum", "Dad"]);
-    expect(legs).toHaveLength(3);
+    expect(started.pending).toEqual(["Mum", "Dad"]);
+    expect(legs).toHaveLength(1);
     expect(legs[0]?.url).toBe(`${TWILIO}/Conferences/${started.conference}/Participants.json`);
     expect(legs[0]?.form).toMatchObject({ To: MY_NUMBER, Label: "host", EndConferenceOnExit: "true" });
-    expect(legs[1]?.form).toMatchObject({ To: MUM, From: TWILIO_NUMBER, EndConferenceOnExit: "false" });
+
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
+    expect(legs.map((l) => l.form.To)).toEqual([MY_NUMBER, MUM, "+447700900124"]);
+    expect(legs[1]?.form).toMatchObject({ From: TWILIO_NUMBER, EndConferenceOnExit: "false" });
 
     await json(`${APP}/api/contacts`, "POST", { name: "Sam", phone: "07700900125" }, maria);
     const added = await tool(maria, "add_to_call", { name: "Sam" });
@@ -596,7 +604,7 @@ describe("twilio", () => {
     second.done();
   });
 
-  it("opens a browser call as a conference with the assistant dialled in over SIP", async () => {
+  it("opens a browser call in stages: the page, then Mum, then the assistant once she answered", async () => {
     await connectTwilio(maria);
     await connectOpenaiForCalls();
     const legs: { url: string; form: Record<string, string> }[] = [];
@@ -618,20 +626,34 @@ describe("twilio", () => {
         maria,
       )
     ).json()) as { output: { ok: boolean; conference: string; assistant: boolean; host: string; note: string } };
-    upstream.done();
     expect(result.output).toMatchObject({ ok: true, assistant: true, host: "browser" });
-    expect(result.output.note).toContain("carry out the task");
+    expect(result.output.note).toContain("it answers the moment you stop talking");
+    expect(result.output.note).toContain("You join the call yourself");
     const name = result.output.conference;
+    expect(legs.map((l) => l.form.To)).toEqual([`client:alexsay-app?conference=${name}`]);
+    expect(legs[0]?.form).toMatchObject({ Label: "host", EndConferenceOnExit: "true" });
+
+    // The page answered: Mum is dialled. The assistant is not on the line yet.
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
+    expect(legs.map((l) => l.form.To)).toEqual([`client:alexsay-app?conference=${name}`, MUM]);
+
+    // Machine detection says a person picked up: now the assistant joins, briefed accordingly
+    await twilioWebhook("/v1/twilio/amd", { CallSid: "CA2", AnsweredBy: "human" });
     expect(legs.map((l) => l.form.To)).toEqual([
       `client:alexsay-app?conference=${name}`,
       MUM,
       `sip:proj_abc12345@sip.api.openai.com;transport=tls?X-Alexsay-Conference=${name}`,
     ]);
-    expect(legs[0]?.form).toMatchObject({ Label: "host", EndConferenceOnExit: "true" });
     expect(legs[2]?.form).toMatchObject({ Label: "assistant", From: "alexsay" });
+    // A second report (the answered callback racing the detection) does not seat a second assistant
+    await twilioWebhook("/v1/twilio/amd", { CallSid: "CA2", AnsweredBy: "human" });
+    upstream.done();
+    expect(legs).toHaveLength(3);
     const brief = await env.DB.prepare("SELECT brief FROM calls WHERE role = 'assistant'").first<{ brief: string }>();
     expect(brief?.brief).toContain("Mum (+447700900123)");
+    expect(brief?.brief).toContain("A person answered.");
     expect(brief?.brief).toContain("ask whether Sunday lunch is still on");
+    expect(brief?.brief).toContain("end_call");
 
     // Without the OpenAI SIP setup, the same call still opens in the browser, just without the assistant
     await json(`${APP}/api/connections/openai`, "PUT", { settings: { project_id: "" } }, maria);
@@ -648,14 +670,15 @@ describe("twilio", () => {
     ).json()) as { output: { assistant: boolean; note: string } };
     plain.done();
     expect(second.output).toMatchObject({ assistant: false });
-    expect(second.output.note).toContain("you are not on the line");
+    expect(second.output.note).toContain("You are not on the line");
   });
 
-  it("accepts OpenAI's SIP webhook for a known conference with the stored briefing", async () => {
+  it("accepts OpenAI's SIP webhook for a known conference with the briefing and every tool", async () => {
     await connectTwilio(maria);
     await connectOpenaiForCalls();
+    let n = 0;
     const legs = mockUpstream({
-      [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: `CA${Math.random()}`, status: "queued" }),
+      [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: `CA${++n}`, status: "queued" }),
     });
     const placedCall = (await (
       await json(
@@ -665,24 +688,33 @@ describe("twilio", () => {
         maria,
       )
     ).json()) as { output: { conference: string } };
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
+    await twilioWebhook("/v1/twilio/amd", { CallSid: "CA2", AnsweredBy: "machine_start" });
     legs.done();
     const conference = placedCall.output.conference;
     const event = {
       type: "realtime.call.incoming",
       data: { call_id: "rtc_1", sip_headers: [{ name: "x-alexsay-conference", value: conference }] },
     };
-    let accepted: Record<string, unknown> = {};
+    let accepted: { instructions: string; tools: { name: string }[]; model: string } | null = null;
     const upstream = mockUpstream({
       "POST https://api.openai.com/v1/realtime/calls/rtc_1/accept": (_req, body) => {
-        accepted = JSON.parse(body) as Record<string, unknown>;
+        accepted = JSON.parse(body);
         return reply(200, {});
       },
     });
     const res = await openaiWebhook(event);
     upstream.done();
     expect(res.status).toBe(200);
-    expect(accepted).toMatchObject({ type: "realtime", model: "gpt-realtime", audio: { output: { voice: "cedar" } } });
-    expect(accepted.instructions).toContain("Stay silent unless maria addresses you by name");
+    const session = accepted as { instructions: string; tools: { name: string }[]; model: string } | null;
+    expect(session).toMatchObject({ model: "gpt-realtime" });
+    expect(session?.instructions).toContain("A machine answered");
+    expect(session?.instructions).toContain("Do not introduce yourself and do not speak first");
+    const toolNames = session?.tools.map((t) => t.name) ?? [];
+    expect(toolNames).toEqual(
+      expect.arrayContaining(["end_call", "add_to_call", "find_contact", "remember", "send_text"]),
+    );
+    expect(toolNames).not.toContain("end_conversation");
 
     expect((await openaiWebhook(event, `whsec_${btoa("wrong-secret-0123456789")}`)).status).toBe(403);
     expect(

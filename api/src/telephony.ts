@@ -1,7 +1,6 @@
-import type { Context } from "hono";
 import { canJoinCalls, openaiConnection, type TwilioConnection, twilioConnection } from "./connections";
-import { calls, contacts, messages } from "./db";
-import { contextInstructions, loadContext } from "./memory";
+import { type CallRow, calls, contacts, messages } from "./db";
+import { contextInstructions, currentConversation, loadContext } from "./memory";
 import { toWhatsapp } from "./phone";
 import {
   addParticipant,
@@ -13,7 +12,7 @@ import {
 } from "./providers/twilio";
 import type { Recipient } from "./recipients";
 import { announceTwiml } from "./twiml";
-import type { AppEnv, Channel, VoiceClient } from "./types";
+import type { Channel, Scope, ToolContext, VoiceClient } from "./types";
 
 /** A precondition the user can fix in Connections, told apart from a Twilio failure. */
 export class TelephonyError extends Error {
@@ -46,20 +45,40 @@ export interface CallOptions {
   host: VoiceClient;
 }
 
+/** A conference as it starts: only the host is ringing; guests and the assistant follow in stages. */
 export interface Conference {
   conference: string;
-  joined: Placed[];
-  /** True when the assistant was dialled in as well. */
-  assistant: boolean;
-  /** Where the user is on the call. */
   host: VoiceClient;
+  /** Who will be dialled once the host is on the line. */
+  pending: string[];
+  /** True when the assistant will join once someone has answered. */
+  assistant: boolean;
 }
 
-export const statusCallbackUrl = (c: Context<AppEnv>) => `${new URL(c.req.url).origin}/v1/twilio/status`;
+/** A guest to dial once the host answered, kept on the host leg until then. */
+interface Guest {
+  phone: string;
+  contact_id: string | null;
+  name: string | null;
+  note: string | null;
+}
+
+interface HostBrief {
+  task?: string;
+  guests: Guest[];
+  dialled?: boolean;
+}
+
+/** Where the app lives, for the URLs Twilio calls back; a tool context or a webhook request both know it. */
+export interface Place extends Scope {
+  origin: string;
+}
+
+export const statusCallbackUrl = (place: Place) => `${place.origin}/v1/twilio/status`;
+const amdCallbackUrl = (place: Place) => `${place.origin}/v1/twilio/amd`;
 
 /** The URLs a Twilio number is pointed at, derived from the request so local and live differ naturally. */
-export function webhooks(c: Context<AppEnv>): Webhooks {
-  const origin = new URL(c.req.url).origin;
+export function webhooks(origin: string): Webhooks {
   return {
     voiceUrl: `${origin}/v1/twilio/voice`,
     smsUrl: `${origin}/v1/twilio/messages`,
@@ -69,8 +88,8 @@ export function webhooks(c: Context<AppEnv>): Webhooks {
 
 type Ready = TwilioConnection & { from: string };
 
-async function ready(c: Context<AppEnv>, username: string): Promise<Ready> {
-  const connection = await twilioConnection(c, username);
+async function ready(scope: Scope, username: string): Promise<Ready> {
+  const connection = await twilioConnection(scope, username);
   if (!connection) {
     throw new TelephonyError("no_twilio_connection", "Twilio is not connected");
   }
@@ -88,12 +107,13 @@ function myNumber(connection: TwilioConnection): string {
 }
 
 /**
- * A call for the user: a conference the user joins from the Assistant page (or their mobile, when
- * they asked for that), with the person asked for and, when OpenAI's SIP endpoint is set up, the
- * assistant on the line too. With a message, the person is phoned and the message read out instead.
+ * A call for the user. With a message, the person is phoned and the message read out. Otherwise a
+ * conference opens in stages: the user's side rings first (the Assistant page, or their mobile when
+ * they asked for it); once they are on, the person is dialled; once that person has answered, the
+ * assistant joins over SIP, knowing whether a human or a machine picked up.
  */
 export async function placeCall(
-  c: Context<AppEnv>,
+  c: ToolContext,
   username: string,
   recipient: Recipient,
   options: CallOptions,
@@ -106,7 +126,7 @@ export async function placeCall(
 }
 
 async function announce(
-  c: Context<AppEnv>,
+  c: Place,
   username: string,
   connection: Ready,
   recipient: Recipient,
@@ -142,7 +162,7 @@ const placed = (sent: { sid: string; status: string }, recipient: Recipient): Pl
 });
 
 export async function sendText(
-  c: Context<AppEnv>,
+  c: Scope,
   username: string,
   recipient: Recipient,
   body: string,
@@ -174,120 +194,213 @@ export async function sendText(
   return placed(sent, recipient);
 }
 
-/** A group call: the user joins as host (hanging up ends it), then everyone else, then the assistant. */
+/** A group call, opened the same staged way as a single call. */
 export async function startConference(
-  c: Context<AppEnv>,
+  c: ToolContext,
   username: string,
   participants: Recipient[],
-  voice: VoiceClient,
+  host: VoiceClient,
 ): Promise<Conference> {
   const connection = await ready(c, username);
-  return openConference(c, username, connection, participants, voice);
+  return openConference(c, username, connection, participants, host);
 }
 
 async function openConference(
-  c: Context<AppEnv>,
+  c: Place,
   username: string,
   connection: Ready,
   recipients: Recipient[],
-  voice: VoiceClient,
+  host: VoiceClient,
   task?: string,
 ): Promise<Conference> {
   const conference = `ay-${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
-  const callback = statusCallbackUrl(c);
-  const now = Date.now();
-  const hostTo = voice === "browser" ? `client:${CLIENT_IDENTITY}?conference=${conference}` : myNumber(connection);
+  const hostTo = host === "browser" ? `client:${CLIENT_IDENTITY}?conference=${conference}` : myNumber(connection);
+  const brief: HostBrief = {
+    task,
+    guests: recipients.map((r) => ({
+      phone: r.phone,
+      contact_id: r.contact?.id ?? null,
+      name: r.contact?.name ?? null,
+      note: r.contact?.note || null,
+    })),
+  };
   const hostLeg = await addParticipant(connection.client, conference, {
     to: hostTo,
     from: connection.from,
     label: "host",
     host: true,
-    statusCallback: callback,
+    statusCallback: statusCallbackUrl(c),
   });
   await calls.create(c.env.DB, {
     username,
     contact_id: null,
     direction: "out",
     kind: "conference",
-    phone: voice === "browser" ? "browser" : hostTo,
+    phone: host === "browser" ? "browser" : hostTo,
     conference,
     role: "host",
+    brief: JSON.stringify(brief),
     sid: hostLeg.sid,
     status: hostLeg.status,
-    at: now,
+    at: Date.now(),
   });
-  const joined: Placed[] = [];
-  for (const recipient of recipients) {
-    joined.push(await joinConference(c, username, connection, conference, recipient));
-  }
   const openai = await openaiConnection(c, username);
-  let assistant = false;
-  if (canJoinCalls(openai)) {
-    const brief = await callBrief(c, username, recipients, task);
-    const to = `sip:${openai.settings.project_id}@${OPENAI_SIP_HOST};transport=tls?${CONFERENCE_HEADER}=${conference}`;
-    const leg = await addParticipant(connection.client, conference, {
-      to,
-      from: "alexsay",
-      label: "assistant",
-      host: false,
-      statusCallback: callback,
-    });
-    await calls.create(c.env.DB, {
-      username,
-      contact_id: null,
-      direction: "out",
-      kind: "conference",
-      phone: "assistant",
-      conference,
-      role: "assistant",
-      brief,
-      sid: leg.sid,
-      status: leg.status,
-      at: now,
-    });
-    assistant = true;
-  }
-  return { conference, joined, assistant, host: voice };
+  return {
+    conference,
+    host,
+    pending: brief.guests.map((g) => g.name ?? g.phone),
+    assistant: canJoinCalls(openai),
+  };
 }
 
-/** What the assistant on the line is told: who is on the call, what to do, and what it remembers. */
+/** The host picked up: dial everyone who was waiting for them, once. */
+export async function hostAnswered(place: Place, hostLeg: CallRow): Promise<void> {
+  const brief = parseBrief(hostLeg.brief);
+  if (!hostLeg.conference || !brief || brief.dialled || brief.guests.length === 0) {
+    return;
+  }
+  await calls.setBrief(place.env.DB, hostLeg.id, JSON.stringify({ ...brief, dialled: true }));
+  const connection = await ready(place, hostLeg.username);
+  for (const guest of brief.guests) {
+    await dialGuest(place, hostLeg.username, connection, hostLeg.conference, guest);
+  }
+}
+
+async function dialGuest(place: Place, username: string, connection: Ready, conference: string, guest: Guest) {
+  const now = Date.now();
+  const leg = await addParticipant(connection.client, conference, {
+    to: guest.phone,
+    from: connection.from,
+    label: guest.name ?? guest.phone,
+    host: false,
+    statusCallback: statusCallbackUrl(place),
+    amdCallback: amdCallbackUrl(place),
+  });
+  await calls.create(place.env.DB, {
+    username,
+    contact_id: guest.contact_id,
+    direction: "out",
+    kind: "conference",
+    phone: guest.phone,
+    conference,
+    role: "guest",
+    sid: leg.sid,
+    status: leg.status,
+    at: now,
+  });
+  await contacts.stamp(place.env.DB, username, guest.phone, "last_called_at", now);
+  return placed(leg, { phone: guest.phone, contact: null });
+}
+
+/**
+ * A guest picked up (or Twilio's machine detection reported who did): the assistant joins now, so it
+ * hears the greeting rather than speaking into a ringing line. Only the first report wins the seat.
+ */
+export async function guestAnswered(place: Place, guestLeg: CallRow, answeredBy: string | null): Promise<void> {
+  if (!guestLeg.conference) {
+    return;
+  }
+  const openai = await openaiConnection(place, guestLeg.username);
+  if (!canJoinCalls(openai)) {
+    return;
+  }
+  const seat = {
+    id: crypto.randomUUID(),
+    username: guestLeg.username,
+    conference: guestLeg.conference,
+    at: Date.now(),
+  };
+  if (!(await calls.claimAssistant(place.env.DB, seat))) {
+    return;
+  }
+  const connection = await ready(place, guestLeg.username);
+  const host = await calls.hostLeg(place.env.DB, guestLeg.username, guestLeg.conference);
+  const brief = await callBrief(place, guestLeg.username, parseBrief(host?.brief ?? null), answeredBy);
+  const to = `sip:${openai.settings.project_id}@${OPENAI_SIP_HOST};transport=tls?${CONFERENCE_HEADER}=${guestLeg.conference}`;
+  const leg = await addParticipant(connection.client, guestLeg.conference, {
+    to,
+    from: "alexsay",
+    label: "assistant",
+    host: false,
+    statusCallback: statusCallbackUrl(place),
+  });
+  await calls.setBrief(place.env.DB, seat.id, brief);
+  await calls.setLeg(place.env.DB, seat.id, leg.sid, leg.status);
+}
+
+const parseBrief = (text: string | null): HostBrief | null => {
+  if (!text) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text) as HostBrief;
+    return Array.isArray(parsed.guests) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+/** What the assistant on the line is told: who is there, who answered, what to do, and what it remembers. */
 async function callBrief(
-  c: Context<AppEnv>,
+  place: Scope,
   username: string,
-  recipients: Recipient[],
-  task: string | undefined,
+  hostBrief: HostBrief | null,
+  answeredBy: string | null,
 ): Promise<string> {
-  const people = recipients.map((r) => (r.contact ? `${r.contact.name} (${r.phone})` : r.phone)).join(", ");
-  const notes = recipients
-    .filter((r) => r.contact?.note)
-    .map((r) => `About ${r.contact?.name}: ${r.contact?.note}`)
+  const guests = hostBrief?.guests ?? [];
+  const people = guests.map((g) => (g.name ? `${g.name} (${g.phone})` : g.phone)).join(", ") || "the person called";
+  const notes = guests
+    .filter((g) => g.note)
+    .map((g) => `About ${g.name ?? g.phone}: ${g.note}`)
     .join("\n");
-  const conduct = task
-    ? `${username} asked you to handle this: ${task}. Introduce yourself briefly as Alexsay calling on behalf of ` +
-      `${username}, get it done politely and concisely, and hand over whenever ${username} speaks.`
-    : `Stay silent unless ${username} addresses you by name (Alexsay, Aleksey); then help briefly and go quiet again.`;
+  const picked =
+    answeredBy === "human"
+      ? "A person answered."
+      : answeredBy?.startsWith("machine")
+        ? "A machine answered: voicemail or an automated menu."
+        : "It is not yet clear whether a person or a machine answered: listen first.";
+  const conduct = hostBrief?.task
+    ? `${username} asked you to handle this: ${hostBrief.task}. Wait for the other side to finish their greeting. ` +
+      `If a person answered, introduce yourself as Alexsay calling on behalf of ${username} and get it done politely ` +
+      `and concisely; hand over whenever ${username} speaks. If an automated menu answered, say nothing until ` +
+      `${username} tells you what to press or say, unless the task plainly requires navigating it.`
+    : `Do not introduce yourself and do not speak first. Stay silent unless ${username} addresses you by name ` +
+      "(Alexsay, Aleksey) or asks you to introduce yourself; then help briefly and go quiet again.";
   const parts = [
-    'Your name is Alexsay, pronounced "Aleksey". You are on a phone call together with ' +
-      `${username}, who placed it from their speaker app, and ${people}. ${conduct} Keep every turn short. ` +
-      `Never read out numbers, addresses or other personal details that ${username} has not asked you to share.`,
+    'Your name is Alexsay, pronounced "Aleksey". You have just joined a phone call that ' +
+      `${username} placed from their speaker app. On the line: ${username}, and ${people}. ${picked} ${conduct} ` +
+      `Keep every turn short. Never read out numbers, addresses or other personal details ${username} has not asked ` +
+      "you to share.",
+    `Tools: when ${username} asks you to hang up or end the call, say a brief goodbye to the other side and call ` +
+      "end_call. When they ask to add someone, use find_contact if you need the number, then add_to_call, once per " +
+      "person. The other tools (contacts, memory, lights, messages) work as usual. Speak only in the language the " +
+      "people on the call use.",
     notes,
-    contextInstructions(await loadContext(c.env.DB, username)),
+    await currentConversation(place.env.DB, username),
+    contextInstructions(await loadContext(place.env.DB, username)),
   ];
   return parts.filter(Boolean).join("\n\n");
 }
 
 /** Brings one more person into the conference the user is in. */
-export async function addToConference(c: Context<AppEnv>, username: string, recipient: Recipient): Promise<Placed> {
+export async function addToConference(c: ToolContext, username: string, recipient: Recipient): Promise<Placed> {
   const connection = await ready(c, username);
   const conference = await calls.openConference(c.env.DB, username, Date.now() - CONFERENCE_WINDOW_MS);
   if (!conference) {
-    throw new TelephonyError("no_open_conference", "there is no group call in progress; start one first");
+    throw new TelephonyError("no_open_conference", "there is no call in progress; start one first");
   }
-  return joinConference(c, username, connection, conference, recipient);
+  const guest: Guest = {
+    phone: recipient.phone,
+    contact_id: recipient.contact?.id ?? null,
+    name: recipient.contact?.name ?? null,
+    note: recipient.contact?.note || null,
+  };
+  const result = await dialGuest(c, username, connection, conference, guest);
+  return { ...result, contact: recipient.contact?.name ?? null };
 }
 
 /** Hangs up the user's current call by ending the host leg, which takes the whole conference down. */
-export async function endCall(c: Context<AppEnv>, username: string): Promise<{ conference: string }> {
+export async function endCall(c: Scope, username: string): Promise<{ conference: string }> {
   const connection = await ready(c, username);
   const conference = await calls.openConference(c.env.DB, username, Date.now() - CONFERENCE_WINDOW_MS);
   const host = conference ? await calls.hostLeg(c.env.DB, username, conference) : null;
@@ -299,33 +412,5 @@ export async function endCall(c: Context<AppEnv>, username: string): Promise<{ c
   return { conference };
 }
 
-async function joinConference(
-  c: Context<AppEnv>,
-  username: string,
-  connection: Ready,
-  conference: string,
-  recipient: Recipient,
-): Promise<Placed> {
-  const now = Date.now();
-  const leg = await addParticipant(connection.client, conference, {
-    to: recipient.phone,
-    from: connection.from,
-    label: recipient.contact?.name ?? recipient.phone,
-    host: false,
-    statusCallback: statusCallbackUrl(c),
-  });
-  await calls.create(c.env.DB, {
-    username,
-    contact_id: recipient.contact?.id ?? null,
-    direction: "out",
-    kind: "conference",
-    phone: recipient.phone,
-    conference,
-    role: "guest",
-    sid: leg.sid,
-    status: leg.status,
-    at: now,
-  });
-  await contacts.stamp(c.env.DB, username, recipient.phone, "last_called_at", now);
-  return placed(leg, recipient);
-}
+/** The assistant on the line has the whole registry except the one that ends the app's own session. */
+export const notOnCalls = (name: string) => name === "end_conversation";

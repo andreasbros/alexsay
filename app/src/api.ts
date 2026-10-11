@@ -315,6 +315,8 @@ export const api = {
   voiceToken: () => request<{ token: string; identity: string; ttl: number }>("GET", "/api/twilio/voice-token"),
   recentCalls: () => request<RecentCall[]>("GET", "/api/twilio/calls"),
   endCall: () => request<{ conference: string }>("POST", "/api/twilio/calls/end"),
+  addToCall: (ref: { contact_id?: string; to?: string }) =>
+    request<Placed>("POST", "/api/twilio/conferences/participants", ref),
 
   users: () => request<User[]>("GET", "/api/users"),
   setRole: (username: string, role: Role) =>

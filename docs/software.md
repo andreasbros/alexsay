@@ -151,8 +151,8 @@ Ending a session. GPT-Live has no idle timeout of its own and bills open voice t
 
 | Flow | Path |
 |---|---|
-| Assistant calls someone from the app | `place_call` with `client.voice=browser`: conference with the browser (`client:alexsay-app`, host), the person, and the assistant over SIP (`sip:{project_id}@sip.api.openai.com`, header `X-Alexsay-Conference`); OpenAI's `realtime.call.incoming` webhook at `/v1/openai/webhook` is accepted with the stored briefing |
-| Assistant calls someone from a speaker | `POST Calls.json` to `my_number` with `<Dial callerId=from_number><Number>to</Number></Dial>`; with `message`, calls `to` with `<Say>` |
+| Assistant calls someone | `place_call`: conference in stages. Host leg first (the page as `client:alexsay-app`, or `my_number` on request); host `in-progress` callback dials the guests with AMD; first AMD report seats the assistant over SIP (`sip:{project_id}@sip.api.openai.com`, header `X-Alexsay-Conference`). OpenAI's `realtime.call.incoming` webhook at `/v1/openai/webhook` is accepted with the briefing and all tools; the `CallAgent` Durable Object runs the assistant's function calls over `wss://api.openai.com/v1/realtime?call_id=` |
+| Spoken message | `place_call` with `message`: `POST Calls.json` to the person with `<Say>` |
 | Browser phone line | `GET /api/twilio/voice-token` (Access Token, Voice grant, incoming only; API key created once via `Keys.json`); the page registers on Start talking, auto-accepts its own conference legs, shows Answer/Decline for real calls, mutes GPT-Live while connected |
 | Group call | `start_conference`: `POST Conferences/{name}/Participants.json` for the host (`EndConferenceOnExit`) then each person; `add_to_call` adds to the latest open conference |
 | Text, WhatsApp | `send_text`, `send_whatsapp`: `POST Messages.json`, `whatsapp:` prefix on both ends; free text only inside the 24 h window |

@@ -1,8 +1,10 @@
 import { Hono } from "hono";
+import type { CallAgentStart } from "../call_agent";
 import { openaiConnection } from "../connections";
-import { calls } from "../db";
+import { calls, connections } from "../db";
 import { acceptCall, ProviderError, rejectCall, verifyWebhook } from "../providers/openai";
-import { CONFERENCE_HEADER } from "../telephony";
+import { CONFERENCE_HEADER, notOnCalls } from "../telephony";
+import { toolDefinitions } from "../tools";
 import type { AppEnv } from "../types";
 
 interface IncomingCall {
@@ -43,11 +45,24 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
     return c.text("forbidden", 403);
   }
   try {
+    const hasLights = (await connections.get(c.env.DB, leg.username, "lightwave")) !== null;
     await acceptCall(c.env.OPENAI_BASE_URL, openai.apiKey, callId, {
       model: openai.settings.call_model,
       instructions: leg.brief ?? "",
       voice: openai.settings.voice,
+      tools: toolDefinitions(hasLights, true).filter((t) => !notOnCalls(t.name)),
     });
+    const start: CallAgentStart = {
+      callId,
+      apiKey: openai.apiKey,
+      baseUrl: c.env.OPENAI_BASE_URL.replace(/^http/, "ws"),
+      username: leg.username,
+      origin: new URL(c.req.url).origin,
+    };
+    const agent = c.env.CALL_AGENT.get(c.env.CALL_AGENT.idFromName(callId));
+    c.executionCtx.waitUntil(
+      agent.fetch("https://call-agent/start", { method: "POST", body: JSON.stringify(start) }).catch(() => undefined),
+    );
   } catch (err) {
     const detail = err instanceof ProviderError ? err.detail : err instanceof Error ? err.message : "accept failed";
     console.warn(JSON.stringify({ provider: "openai", webhook: "call.incoming", user: leg.username, error: detail }));

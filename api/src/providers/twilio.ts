@@ -207,14 +207,25 @@ export async function createCall(
   });
 }
 
+export interface ParticipantOptions {
+  to: string;
+  from: string;
+  label: string;
+  host: boolean;
+  statusCallback: string;
+  /** Ask Twilio whether a human or a machine answered; the result is posted here. */
+  amdCallback?: string;
+}
+
 /**
  * Dials someone into a named conference, creating it on the first participant. Twilio accepts the
- * friendly name in place of the conference SID.
+ * friendly name in place of the conference SID. We hear about answer and hang-up through the status
+ * callback, so guests can be dialled once the host is on, and the assistant once a guest answered.
  */
 export async function addParticipant(
   client: TwilioClient,
   conference: string,
-  participant: { to: string; from: string; label: string; host: boolean; statusCallback: string },
+  participant: ParticipantOptions,
 ): Promise<Sent> {
   const body = await request<{ call_sid: string; status: string }>(
     client,
@@ -227,8 +238,16 @@ export async function addParticipant(
       StartConferenceOnEnter: participant.host ? "true" : "false",
       Beep: "onEnter",
       StatusCallback: participant.statusCallback,
-      StatusCallbackEvent: "completed",
+      StatusCallbackEvent: "answered completed",
       StatusCallbackMethod: "POST",
+      ...(participant.amdCallback
+        ? {
+            MachineDetection: "Enable",
+            MachineDetectionTimeout: "10",
+            AmdStatusCallback: participant.amdCallback,
+            AmdStatusCallbackMethod: "POST",
+          }
+        : {}),
     },
   );
   return { sid: body.call_sid, status: body.status };

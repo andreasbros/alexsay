@@ -172,6 +172,7 @@ export interface CallSession {
   model: string;
   instructions: string;
   voice: string;
+  tools: FunctionTool[];
 }
 
 /** Answers a SIP call OpenAI announced through realtime.call.incoming with a configured realtime session. */
@@ -184,6 +185,8 @@ export async function acceptCall(baseUrl: string, apiKey: string, callId: string
       model: session.model,
       instructions: session.instructions,
       audio: { output: { voice: session.voice } },
+      tools: session.tools,
+      tool_choice: "auto",
     }),
   });
   if (!res.ok) {

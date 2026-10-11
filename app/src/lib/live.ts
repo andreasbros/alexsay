@@ -31,8 +31,23 @@ const LEVEL_POLL_MS = 50;
 /** After the assistant asked to hang up, how long its goodbye may trail off before the line closes. */
 const HANGUP_QUIET_MS = 1500;
 /** What the user says to end the call; the app hangs up itself if the model forgets its tool. */
-const GOODBYES =
-  /\b(end (the |this )?conversation|stop (the |this )?conversation|goodbye|good bye|bye bye|that'?s all)\b/i;
+export const USER_FAREWELL =
+  /\b(end (the |this )?conversation|stop (the |this )?conversation|good ?bye|bye( bye)?|see you( later| soon)?|good ?night|that'?s (all|it)( for now)?|talk (to you )?later|speak (to you )?later|i'?m done|thanks,? that'?s (all|it))\b/i;
+/** What the assistant says when it is signing off. */
+export const ASSISTANT_FAREWELL =
+  /\b(good ?bye|bye( bye| for now)?|take care|talk (to you )?(later|soon)|speak (to you )?(later|soon)|see you( later| soon)?|good ?night|sleep well|have a (good|great|nice|lovely) (day|evening|night|one))\b/i;
+/** A farewell in a reply this short is a sign-off, not a passing phrase. */
+const SHORT_REPLY_WORDS = 16;
+const USER_FAREWELL_WINDOW_MS = 25_000;
+
+/** Both sides said their goodbyes, or the reply is a short sign-off: the call should end after it. */
+export function isSignOff(reply: string, userFarewellAgoMs: number | null): boolean {
+  if (!ASSISTANT_FAREWELL.test(reply)) {
+    return false;
+  }
+  const words = reply.trim().split(/\s+/).filter(Boolean).length;
+  return words <= SHORT_REPLY_WORDS || (userFarewellAgoMs !== null && userFarewellAgoMs < USER_FAREWELL_WINDOW_MS);
+}
 
 /**
  * One conversation: microphone and speaker travel over WebRTC straight to GPT-Live, the JSON

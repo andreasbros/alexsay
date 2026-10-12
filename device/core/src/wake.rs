@@ -20,6 +20,10 @@ pub struct Detection {
     pub name: String,
     /// 0 to 1, how sure the model was.
     pub score: f32,
+    /// Frames that scored above the threshold before it fired.
+    pub frames: usize,
+    /// How much the gain normaliser amplified the microphone to match the model's level.
+    pub gain: f32,
 }
 
 pub struct WakeWord {
@@ -118,10 +122,22 @@ impl WakeWord {
                 fired = Some(Detection {
                     name: detection.name,
                     score: detection.score,
+                    frames: detection.counter,
+                    gain: detection.gain,
                 });
             }
         }
         fired
+    }
+
+    /// The best score of a detection in progress (one not yet confirmed by enough frames).
+    pub fn partial_score(&self) -> Option<f32> {
+        self.detector.get_partial_detection().map(|d| d.score)
+    }
+
+    /// The microphone's level as the detector sees it, and the gain it applies to reach the model's level.
+    pub fn levels(&self) -> (f32, f32) {
+        (self.detector.get_rms_level(), self.detector.get_gain())
     }
 
     pub fn reset(&mut self) {

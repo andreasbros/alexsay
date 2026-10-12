@@ -100,16 +100,35 @@ async fn connect_once(
     let (mut sink, mut stream) = socket.split();
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
+    // Frames each way per second, logged at debug while a call carries audio
+    let mut report = tokio::time::interval(Duration::from_secs(1));
+    let (mut frames_in, mut frames_out) = (0u32, 0u32);
     loop {
         tokio::select! {
+            _ = report.tick() => {
+                if frames_in > 0 || frames_out > 0 {
+                    tracing::debug!(frames_in, frames_out, "line audio per second (Twilio sends 50)");
+                    (frames_in, frames_out) = (0, 0);
+                }
+            }
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(()) };
+                if matches!(command, LineCommand::Audio { .. }) {
+                    frames_out += 1;
+                } else {
+                    tracing::debug!(?command, "line: to the server");
+                }
                 let text = serde_json::to_string(&command)?;
                 sink.send(Message::Text(text.into())).await?;
             }
             message = stream.next() => {
                 match message {
                     Some(Ok(Message::Text(text))) => {
+                        if text.contains(r#""type":"audio""#) {
+                            frames_in += 1;
+                        } else {
+                            tracing::debug!(message = %text, "line: from the server");
+                        }
                         if let Some(signal) = decode(&text) {
                             let _ = signals.send(signal);
                         }

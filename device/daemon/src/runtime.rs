@@ -171,6 +171,7 @@ impl Runtime {
         let heartbeat = tokio::spawn(heartbeat_loop(Arc::clone(&runtime)));
         let updates = tokio::spawn(update_loop(Arc::clone(&runtime)));
         let listening = tokio::spawn(listen_loop(Arc::clone(&runtime)));
+        let monitor = tokio::spawn(playback_monitor(Arc::clone(&runtime)));
         tokio::select! {
             () = shutdown_signal() => info!("stopping"),
             result = listening => {
@@ -183,6 +184,7 @@ impl Runtime {
         }
         heartbeat.abort();
         updates.abort();
+        monitor.abort();
         control.abort();
         runtime.player.clear();
         Ok(())
@@ -191,19 +193,34 @@ impl Runtime {
 
 /// What the phone line reports: a call starting, its audio, its end (then the report for the assistant).
 async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<LineSignal>) {
+    // What the call sent us, so a silent call shows whether the audio never came or never played
+    let mut heard = CallAudio::default();
     while let Some(signal) = signals.recv().await {
         match signal {
             LineSignal::CallStart { conference, who } => {
                 info!(conference = %conference, who = %who, "on a call");
                 runtime.player.clear();
                 runtime.call.begin(&conference);
+                heard = CallAudio::default();
             }
-            LineSignal::Audio(samples) => runtime.player.play(&samples),
+            LineSignal::Audio(samples) => {
+                if heard.samples == 0 {
+                    tracing::debug!(rms = pcm::rms(&samples), "first call audio from the line");
+                }
+                heard.add(&samples, runtime.player.queued_ms());
+                runtime.player.play(&samples);
+            }
             LineSignal::CallEnd => {
                 let Some(conference) = runtime.call.end() else {
                     continue;
                 };
-                info!(conference = %conference, "call ended");
+                info!(
+                    conference = %conference,
+                    seconds = heard.samples / u64::from(LIVE_RATE),
+                    loudest = format!("{:.1}%", heard.loudest * 100.0),
+                    most_queued_ms = heard.most_queued_ms,
+                    "call ended"
+                );
                 runtime.player.clear();
                 runtime.play_clip(sounds::END);
                 let handed = Arc::clone(&runtime);
@@ -213,10 +230,47 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
     }
 }
 
+/// Once a second while anything plays (debug only): how far behind playback is and how often it ran dry.
+async fn playback_monitor(runtime: Arc<Runtime>) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+    let mut every = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        every.tick().await;
+        let queued_ms = runtime.player.queued_ms();
+        let underruns = runtime.player.take_underruns();
+        if queued_ms > 0 || underruns > 0 {
+            tracing::debug!(
+                queued_ms,
+                underruns,
+                on_call = runtime.call.on_call(),
+                "playback"
+            );
+        }
+    }
+}
+
+#[derive(Default)]
+struct CallAudio {
+    samples: u64,
+    loudest: f32,
+    most_queued_ms: u64,
+}
+
+impl CallAudio {
+    fn add(&mut self, samples: &[i16], queued_ms: u64) {
+        self.samples += samples.len() as u64;
+        self.loudest = self.loudest.max(pcm::rms(samples));
+        self.most_queued_ms = self.most_queued_ms.max(queued_ms);
+    }
+}
+
 /// Fetches the call's report once it is whole (or after a few seconds) and hands it to the conversation.
 async fn hand_back(runtime: &Runtime, conference: &str) {
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
+        tracing::debug!(conference, "polling the call report");
         match runtime.server.call_report(conference).await {
             Ok(report) if report["ready"] == true || Instant::now() > deadline => {
                 let _ = runtime.notes_tx.send(alexsay_core::report::note(&report));
@@ -364,6 +418,7 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
     let mut last_refusal = Instant::now()
         .checked_sub(Duration::from_secs(3_600))
         .unwrap_or_else(Instant::now);
+    let mut listening = Listening::default();
     // Sound cards start with a burst of garbage; the wake word does not get to hear it
     let warm_up_until = Instant::now() + Duration::from_millis(1_500);
     loop {
@@ -384,10 +439,20 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
         let Some(engine) = wake.as_mut() else {
             continue;
         };
-        let Some(detection) = engine.feed(&chunk) else {
+        let detection = engine.feed(&chunk);
+        listening.add(&chunk, engine);
+        if listening.due() {
+            listening.report();
+        }
+        let Some(detection) = detection else {
             continue;
         };
         info!(score = detection.score, "wake word");
+        tracing::debug!(
+            frames = detection.frames,
+            gain = detection.gain,
+            "wake word detail"
+        );
         runtime.play_clip(sounds::READY);
         let head: Vec<i16> = preroll.drain(..).collect();
         match converse(&runtime, &mut mic, head).await {
@@ -409,6 +474,42 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
         while mic.try_recv().is_ok() {}
     }
 }
+
+/// What the wake word heard over the last second, logged at debug: the level, the gain the detector
+/// applied to it, and the closest any moment came to the wake word.
+#[derive(Default)]
+struct Listening {
+    samples: usize,
+    loudest: f32,
+    best_score: f32,
+    gain: f32,
+}
+
+impl Listening {
+    fn add(&mut self, chunk: &[i16], engine: &alexsay_core::wake::WakeWord) {
+        self.samples += chunk.len();
+        self.loudest = self.loudest.max(pcm::rms(chunk));
+        self.best_score = self.best_score.max(engine.partial_score().unwrap_or(0.0));
+        self.gain = self.gain.max(engine.levels().1);
+    }
+
+    fn due(&self) -> bool {
+        self.samples >= LIVE_RATE as usize
+    }
+
+    fn report(&mut self) {
+        tracing::debug!(
+            mic = format!("{:.1}%", self.loudest * 100.0),
+            gain = format!("{:.1}", self.gain),
+            best_score = format!("{:.2}", self.best_score),
+            "listening"
+        );
+        *self = Self::default();
+    }
+}
+
+/// A pause between reply audio deltas longer than this, with nothing queued, is heard as a break.
+const LATE_DELTA: Duration = Duration::from_millis(250);
 
 pub enum Outcome {
     Done,
@@ -432,12 +533,15 @@ pub async fn converse(
     };
     let session_body =
         alexsay_core::live::session_with_audio_format(device_session.session, LIVE_RATE);
+    let fetched = Instant::now();
+    tracing::debug!("session fetched");
     let mut live = Live::connect(
         &device_session.base_url,
         &device_session.api_key,
         session_body,
     )
     .await?;
+    tracing::debug!(ms = fetched.elapsed().as_millis(), "GPT-Live socket open");
     let conversation = runtime.server.start_conversation().await.ok();
     let mut session = Session::new(runtime.config.session.clone());
     let started = Instant::now();
@@ -458,11 +562,20 @@ pub async fn converse(
     let mut notes = runtime.notes.lock().await;
     while notes.try_recv().is_ok() {}
     let mut mute_state = runtime.call.mute_state();
+    let mut last_delta = Instant::now();
     loop {
         tokio::select! {
             chunk = mic.recv() => {
                 let Some(chunk) = chunk else { anyhow::bail!("the microphone stopped") };
                 if runtime.route_to_call(&chunk) {
+                    // GPT-Live paces its reply by its input: silence keeps it going, else a reply cut off by the call resumes after it
+                    if allow_audio {
+                        backlog.extend(std::iter::repeat_n(0, chunk.len()));
+                        while backlog.len() >= AUDIO_CHUNK {
+                            let piece: Vec<i16> = backlog.drain(..AUDIO_CHUNK).collect();
+                            live.send(ClientEvent::InputAudioAppend { audio: pcm::encode(&piece) });
+                        }
+                    }
                     continue;
                 }
                 let playing = Instant::now() < audible_until + Duration::from_millis(alexsay_core::duplex::ECHO_TAIL_MS);
@@ -503,6 +616,9 @@ pub async fn converse(
                     info!("socket closed");
                     break;
                 };
+                if event.kind() != "session.output_audio.delta" {
+                    tracing::debug!(kind = %event.kind(), "GPT-Live event");
+                }
                 for action in session.on_event(&event, now_ms()) {
                     match action {
                         Action::AllowAudio => {
@@ -518,6 +634,12 @@ pub async fn converse(
                                 continue;
                             }
                             let samples = pcm::decode(&delta);
+                            // Reply audio must arrive at least as fast as it plays, or the listener hears gaps
+                            let gap = last_delta.elapsed();
+                            last_delta = Instant::now();
+                            if gap > LATE_DELTA && runtime.player.queued_ms() < 100 {
+                                tracing::debug!(gap_ms = gap.as_millis(), audible = pcm::rms(&samples) > alexsay_core::session::AUDIBLE_RMS, "reply audio arrived late");
+                            }
                             runtime.player.play(&samples);
                             if pcm::rms(&samples) > alexsay_core::session::AUDIBLE_RMS {
                                 audible_until = Instant::now() + Duration::from_millis(runtime.player.queued_ms());
@@ -525,6 +647,7 @@ pub async fn converse(
                             tracing::trace!(rms = pcm::rms(&samples), queued_ms = runtime.player.queued_ms(), "reply audio");
                         }
                         Action::RunTool(call) => {
+                            tracing::debug!(tool = %call.name, arguments = %call.arguments, "tool call from the assistant");
                             if call.name == END_TOOL {
                                 info!("the assistant ends the conversation");
                                 session.close_after_reply();
@@ -537,8 +660,9 @@ pub async fn converse(
                             let tx = tool_tx.clone();
                             let conversation = conversation.clone();
                             tokio::spawn(async move {
+                                let asked = Instant::now();
                                 let output = server.call_tool(&call.name, &call.arguments, conversation.as_deref()).await;
-                                info!(tool = %call.name, result = %output.chars().take(160).collect::<String>(), "tool");
+                                info!(tool = %call.name, ms = asked.elapsed().as_millis(), result = %output.chars().take(160).collect::<String>(), "tool");
                                 let _ = tx.send((call.call_id, output));
                             });
                         }
@@ -568,6 +692,7 @@ pub async fn converse(
                 // A phone call or the mute button changes what the session may hear
                 let now_state = runtime.call.mute_state();
                 if now_state != mute_state {
+                    tracing::debug!(on_call = now_state.on_call, muted = now_state.muted, "session hold or mute changed");
                     if now_state.session_muted() != mute_state.session_muted() {
                         live.send(if now_state.session_muted() { ClientEvent::InputAudioMute } else { ClientEvent::InputAudioUnmute });
                     }

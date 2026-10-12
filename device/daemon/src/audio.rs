@@ -2,6 +2,7 @@
 //! the rest of the daemon sees 16 kHz mono PCM16 both ways.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -335,6 +336,8 @@ pub struct Player {
     pub device: String,
     pub sink_rate: u32,
     queue: Arc<Mutex<VecDeque<i16>>>,
+    /// Output callbacks that ran out of queued audio partway through: heard as a break in the sound.
+    underruns: Arc<AtomicU64>,
     _stop: Arc<mpsc::Sender<()>>,
 }
 
@@ -374,6 +377,8 @@ impl Player {
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::channel::<anyhow::Result<()>>();
         let shared = Arc::clone(&queue);
+        let underruns = Arc::new(AtomicU64::new(0));
+        let counted = Arc::clone(&underruns);
         std::thread::Builder::new()
             .name("alexsay-playback".into())
             .spawn(move || {
@@ -386,11 +391,15 @@ impl Player {
                         let mut q = shared
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let had = q.len();
                         for _ in 0..needed {
                             source.push(
                                 q.pop_front()
                                     .map_or(0.0, |s| f32::from(s) / 32768.0 * volume),
                             );
+                        }
+                        if had > 0 && had < needed {
+                            counted.fetch_add(1, Ordering::Relaxed);
                         }
                     }
                     if let Some(reference) = &reference {
@@ -455,6 +464,7 @@ impl Player {
             device: name,
             sink_rate,
             queue,
+            underruns,
             _stop: Arc::new(stop_tx),
         })
     }
@@ -488,6 +498,11 @@ impl Player {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+    }
+
+    /// Underruns since the last call: each one is a gap the listener hears.
+    pub fn take_underruns(&self) -> u64 {
+        self.underruns.swap(0, Ordering::Relaxed)
     }
 
     pub fn queued_ms(&self) -> u64 {

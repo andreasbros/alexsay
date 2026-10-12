@@ -77,8 +77,8 @@ impl Duplex {
     /// `level` is the chunk's rms; `playing` is whether the speaker is audible now (or just was).
     pub fn decide(&mut self, level: f32, playing: bool) -> Decision {
         let floor = self.floor();
-        // The assistant's own voice must not count as room noise
-        if !playing {
+        // The assistant's own voice, and digital silence (an injected recording, a muted input), are not room noise
+        if !playing && level > 0.000_5 {
             if self.levels.len() == WINDOW {
                 self.levels.pop_front();
             }

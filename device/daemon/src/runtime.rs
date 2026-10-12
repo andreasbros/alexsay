@@ -25,8 +25,6 @@ use crate::server::{Server, Turn};
 use crate::{paths, tts, update};
 
 /// A chunk this loud counts as the user speaking (keeps the session alive); louder still interrupts playback.
-/// Reply audio quieter than this is the silence GPT-Live streams between words.
-const AUDIBLE_RMS: f32 = 0.003;
 const TICK: Duration = Duration::from_millis(250);
 const AUDIO_CHUNK: usize = 1_600;
 
@@ -485,13 +483,14 @@ pub async fn converse(
                         Action::PlayAudio(delta) => {
                             let samples = pcm::decode(&delta);
                             runtime.player.play(&samples);
-                            if pcm::rms(&samples) > AUDIBLE_RMS {
+                            if pcm::rms(&samples) > alexsay_core::session::AUDIBLE_RMS {
                                 audible_until = Instant::now() + Duration::from_millis(runtime.player.queued_ms());
                             }
-                            tracing::trace!(ms = samples.len() * 1_000 / LIVE_RATE as usize, queued_ms = runtime.player.queued_ms(), "reply audio");
+                            tracing::trace!(rms = pcm::rms(&samples), queued_ms = runtime.player.queued_ms(), "reply audio");
                         }
                         Action::RunTool(call) => {
                             if call.name == END_TOOL {
+                                info!("the assistant ends the conversation");
                                 session.close_after_reply();
                                 live.send(ClientEvent::ResponseItemCreate { item: Item::FunctionCallOutput { call_id: call.call_id, output: r#"{"ok":true}"#.to_owned() } });
                                 live.send(ClientEvent::ResponseCreate);
@@ -540,6 +539,9 @@ pub async fn converse(
                         session.hold(now_state.on_call, now_ms());
                     }
                     mute_state = now_state;
+                }
+                if now_ms() % 1_000 < u64::try_from(TICK.as_millis()).unwrap_or(250) {
+                    tracing::debug!("{}", session.describe(now_ms()));
                 }
                 for action in session.on_tick(now_ms()) {
                     match action {

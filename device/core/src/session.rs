@@ -9,6 +9,12 @@ pub const END_TOOL: &str = "end_conversation";
 const REPLY_GAP_MS: u64 = 900;
 const FAREWELL_WINDOW_MS: u64 = 25_000;
 const SHORT_REPLY_WORDS: usize = 16;
+/// The user's words are a finished line once transcription has paused this long.
+const USER_LINE_GAP_MS: u64 = 1_200;
+/// The microphone has to be quiet this long before "quiet after the reply" may close the session.
+const USER_QUIET_MS: u64 = 1_000;
+/// Reply audio quieter than this is the silence GPT-Live streams between words for the whole session.
+pub const AUDIBLE_RMS: f32 = 0.003;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {
@@ -48,6 +54,10 @@ pub struct Session {
     held: bool,
     user_text: String,
     assistant_text: String,
+    /// The last finished reply, kept after it is printed so the goodbye rule can still read it.
+    last_reply: String,
+    last_user_text_ms: u64,
+    last_assistant_text_ms: u64,
     user_farewell_at: Option<u64>,
 }
 
@@ -70,6 +80,9 @@ impl Session {
             held: false,
             user_text: String::new(),
             assistant_text: String::new(),
+            last_reply: String::new(),
+            last_user_text_ms: 0,
+            last_assistant_text_ms: 0,
             user_farewell_at: None,
         }
     }
@@ -88,7 +101,21 @@ impl Session {
         self.close_after_reply = false;
         self.user_text.clear();
         self.assistant_text.clear();
+        self.last_reply.clear();
         self.user_farewell_at = None;
+    }
+
+    /// Where the session's clocks stand, for the debug log.
+    pub fn describe(&self, now_ms: u64) -> String {
+        format!(
+            "state {:?} held {} tools {} since user {} ms, since assistant {} ms, reply {:?}",
+            self.state,
+            self.held,
+            self.pending_tools,
+            now_ms.saturating_sub(self.last_input_ms),
+            now_ms.saturating_sub(self.last_output_ms),
+            self.last_reply
+        )
     }
 
     pub fn tool_finished(&mut self) {
@@ -133,11 +160,15 @@ impl Session {
                 ]
             }
             KnownServerEvent::OutputAudioDelta { delta, .. } => {
-                self.last_output_ms = now_ms;
+                // Only audible audio is the assistant talking: the stream carries silence between replies
+                if crate::pcm::rms(&crate::pcm::decode(delta)) > AUDIBLE_RMS {
+                    self.last_output_ms = now_ms;
+                }
                 vec![Action::PlayAudio(delta.clone())]
             }
             KnownServerEvent::InputTranscriptDelta { delta, .. } => {
                 self.last_input_ms = now_ms;
+                self.last_user_text_ms = now_ms;
                 self.user_text.push_str(delta);
                 if self.policy.end_on_farewell && is_user_farewell(&self.user_text) {
                     self.user_farewell_at = Some(now_ms);
@@ -146,6 +177,7 @@ impl Session {
             }
             KnownServerEvent::OutputTranscriptDelta { delta, .. } => {
                 self.last_output_ms = now_ms;
+                self.last_assistant_text_ms = now_ms;
                 self.assistant_text.push_str(delta);
                 self.flush_user_text()
             }
@@ -187,22 +219,38 @@ impl Session {
         if self.state != SessionState::Open || self.held {
             return Vec::new();
         }
+        // Lines are printed as soon as each side pauses, not when the other side next speaks
+        let mut lines = Vec::new();
+        if !self.user_text.trim().is_empty()
+            && now_ms.saturating_sub(self.last_user_text_ms) >= USER_LINE_GAP_MS
+        {
+            lines.extend(self.flush_user_text());
+        }
+        if !self.assistant_text.trim().is_empty()
+            && now_ms.saturating_sub(self.last_assistant_text_ms) >= REPLY_GAP_MS
+        {
+            lines.extend(self.flush_assistant_text());
+        }
         let reply_over =
             self.last_output_ms > 0 && now_ms.saturating_sub(self.last_output_ms) >= REPLY_GAP_MS;
-        let assistant_spoke_last = self.last_output_ms > self.last_input_ms;
+        // Turn order comes from the transcripts: the microphone's level cannot tell speech from noise or echo
+        let assistant_spoke_last = self.last_assistant_text_ms > self.last_user_text_ms;
+        // ... but someone audibly talking right now is not to be cut off
+        let user_quiet = now_ms.saturating_sub(self.last_input_ms) >= USER_QUIET_MS;
         let capped = now_ms.saturating_sub(self.started_at_ms) >= self.policy.max_minutes * 60_000;
         let last_speech = self.last_input_ms.max(self.last_output_ms);
         let idle = self.pending_tools == 0
             && now_ms.saturating_sub(last_speech) >= self.policy.idle_timeout_s * 1_000;
         let after_reply = self.pending_tools == 0
             && assistant_spoke_last
+            && user_quiet
             && now_ms.saturating_sub(self.last_output_ms) >= self.policy.after_reply_s * 1_000;
         let asked = self.close_after_reply && self.pending_tools == 0 && reply_over;
         let farewell = self.policy.end_on_farewell
             && reply_over
             && assistant_spoke_last
             && is_sign_off(
-                &self.assistant_text,
+                &self.last_reply,
                 self.user_farewell_at.map(|at| now_ms.saturating_sub(at)),
             );
         let why = if capped {
@@ -216,10 +264,11 @@ impl Session {
         } else if idle {
             "idle"
         } else {
-            return Vec::new();
+            return lines;
         };
         self.state = SessionState::Closing;
-        let mut actions = self.flush_user_text();
+        let mut actions = lines;
+        actions.extend(self.flush_user_text());
         actions.extend(self.flush_assistant_text());
         actions.push(Action::Log(format!("closing: {why}")));
         actions.push(Action::Close);
@@ -244,6 +293,7 @@ impl Session {
         if trimmed.is_empty() {
             return Vec::new();
         }
+        trimmed.clone_into(&mut self.last_reply);
         vec![Action::Transcript {
             role: "assistant",
             text: trimmed.to_owned(),
@@ -253,6 +303,11 @@ impl Session {
 
 const USER_FAREWELLS: &[&str] = &[
     "end the conversation",
+    "end the session",
+    "end this session",
+    "stop the session",
+    "close the session",
+    "end the call",
     "end this conversation",
     "stop the conversation",
     "stop this conversation",
@@ -280,6 +335,11 @@ const USER_FAREWELLS: &[&str] = &[
 ];
 
 const ASSISTANT_FAREWELLS: &[&str] = &[
+    "ending it now",
+    "ending now",
+    "ending the session",
+    "ending the conversation",
+    "closing the session",
     "goodbye",
     "good bye",
     "bye bye",
@@ -372,13 +432,27 @@ mod tests {
         session
     }
 
-    fn output(session: &mut Session, at: u64) {
+    /// 10 ms of audible reply audio.
+    fn voice() -> String {
+        crate::pcm::encode(&[8_000i16; 160])
+    }
+
+    /// The silence GPT-Live streams between replies.
+    fn silence() -> String {
+        crate::pcm::encode(&[0i16; 160])
+    }
+
+    fn audio(session: &mut Session, delta: &str, at: u64) -> Vec<Action> {
         session.on_event(
-            &event(
-                r#"{"type":"session.output_audio.delta","delta":"AAEC","start_ms":0,"end_ms":100}"#,
-            ),
+            &event(&format!(
+                r#"{{"type":"session.output_audio.delta","delta":"{delta}"}}"#
+            )),
             at,
-        );
+        )
+    }
+
+    fn output(session: &mut Session, at: u64) {
+        audio(session, &voice(), at);
     }
 
     #[test]
@@ -397,13 +471,12 @@ mod tests {
     #[test]
     fn output_audio_is_played_and_quiet_after_a_reply_closes_sooner_than_idle() {
         let mut session = open_session();
-        let actions = session.on_event(
-            &event(
-                r#"{"type":"session.output_audio.delta","delta":"AAEC","start_ms":0,"end_ms":100}"#,
-            ),
+        session.on_event(
+            &event(r#"{"type":"session.output_transcript.delta","delta":"Done."}"#),
             9_000,
         );
-        assert_eq!(actions, vec![Action::PlayAudio("AAEC".to_owned())]);
+        let actions = audio(&mut session, &voice(), 9_000);
+        assert_eq!(actions, vec![Action::PlayAudio(voice())]);
         assert_eq!(session.on_tick(13_999), Vec::new());
         assert_eq!(
             session.on_tick(14_000),
@@ -514,11 +587,114 @@ mod tests {
     }
 
     #[test]
+    fn streamed_silence_is_not_talking_so_the_session_still_ends() {
+        let mut session = open_session();
+        session.on_event(
+            &event(r#"{"type":"session.output_transcript.delta","delta":"Done."}"#),
+            2_000,
+        );
+        output(&mut session, 2_000);
+        for t in (2_100..20_000).step_by(100) {
+            audio(&mut session, &silence(), t);
+        }
+        assert_eq!(
+            session.on_tick(7_000),
+            vec![
+                Action::Log("closing: quiet after the reply".to_owned()),
+                Action::Close
+            ]
+        );
+    }
+
+    #[test]
+    fn asked_to_stop_closes_after_the_reply_even_while_silence_streams() {
+        let mut session = open_session();
+        session.close_after_reply();
+        output(&mut session, 2_000);
+        audio(&mut session, &silence(), 2_500);
+        audio(&mut session, &silence(), 2_900);
+        assert_eq!(
+            session.on_tick(3_000),
+            vec![
+                Action::Log("closing: asked to stop".to_owned()),
+                Action::Close
+            ]
+        );
+    }
+
+    #[test]
+    fn lines_print_when_each_side_pauses() {
+        let mut session = open_session();
+        session.on_event(
+            &event(r#"{"type":"session.input_transcript.delta","delta":"what time is it"}"#),
+            2_000,
+        );
+        assert_eq!(session.on_tick(2_500), Vec::new());
+        assert_eq!(
+            session.on_tick(3_200),
+            vec![Action::Transcript {
+                role: "user",
+                text: "what time is it".to_owned()
+            }]
+        );
+        session.on_event(
+            &event(r#"{"type":"session.output_transcript.delta","delta":"It is ten."}"#),
+            4_000,
+        );
+        output(&mut session, 4_000);
+        assert_eq!(
+            session.on_tick(4_900),
+            vec![Action::Transcript {
+                role: "assistant",
+                text: "It is ten.".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_goodbye_ends_it_even_when_room_noise_keeps_the_microphone_busy() {
+        let mut session = open_session();
+        session.on_event(
+            &event(
+                r#"{"type":"session.input_transcript.delta","delta":"Thanks, that's all. Bye"}"#,
+            ),
+            2_000,
+        );
+        session.on_event(
+            &event(r#"{"type":"session.output_transcript.delta","delta":"Bye."}"#),
+            3_000,
+        );
+        output(&mut session, 3_000);
+        // Noise, echo or a fan keeps registering as sound after the reply
+        for t in (3_100..6_000).step_by(100) {
+            session.heard_user(t);
+        }
+        let actions = session.on_tick(4_000);
+        assert!(actions.contains(&Action::Close), "{actions:?}");
+    }
+
+    #[test]
+    fn quiet_after_the_reply_waits_while_someone_is_audibly_talking() {
+        let mut session = open_session();
+        session.on_event(
+            &event(r#"{"type":"session.output_transcript.delta","delta":"It is ten."}"#),
+            2_000,
+        );
+        output(&mut session, 2_000);
+        session.heard_user(7_500);
+        assert!(!session.on_tick(8_000).contains(&Action::Close));
+        assert!(session.on_tick(8_600).contains(&Action::Close));
+    }
+
+    #[test]
     fn farewell_phrases() {
         assert!(is_user_farewell("OK goodbye then"));
         assert!(is_user_farewell("thanks, that's all"));
+        assert!(is_user_farewell("Okay, end the session"));
+        assert!(is_user_farewell("End this session"));
         assert!(!is_user_farewell("buy some bread"));
         assert!(is_sign_off("Take care, Andreas.", None));
+        assert!(is_sign_off("Okay, ending it now.", None));
         assert!(!is_sign_off(
             "Sure. Have a good day at work and then let me know how the long meeting with the whole team went, bye.",
             None

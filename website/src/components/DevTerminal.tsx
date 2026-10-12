@@ -18,7 +18,7 @@ interface Writer {
   write: (text: string) => void;
 }
 
-async function play(term: Writer, act: Act, signal: AbortSignal, typing: boolean): Promise<void> {
+async function play(term: Writer, act: Act, signal: AbortSignal, typing: boolean, wide: boolean): Promise<void> {
   term.write(PROMPT);
   for (const ch of act.command) {
     term.write(ch);
@@ -31,7 +31,7 @@ async function play(term: Writer, act: Act, signal: AbortSignal, typing: boolean
     if (typing) {
       await sleep(line.delay, signal);
     }
-    term.write(`${line.text}\r\n`);
+    term.write(`${wide && line.stamp ? `${line.stamp} ` : ""}${line.text}\r\n`);
   }
 }
 
@@ -67,6 +67,8 @@ export function DevTerminal() {
     const controller = new AbortController();
     const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     setStill(still);
+    // Phones: smaller type and no timestamps, so log lines fit the width
+    const narrow = window.innerWidth < 640;
     let dispose = () => {};
     void (async () => {
       const [{ Terminal }, { FitAddon }] = await Promise.all([
@@ -82,7 +84,7 @@ export function DevTerminal() {
         cursorBlink: true,
         disableStdin: true,
         fontFamily: '"JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace',
-        fontSize: window.innerWidth < 640 ? 10.5 : 13,
+        fontSize: narrow ? 6.5 : 13,
         lineHeight: 1.35,
         scrollback: 400,
         theme: {
@@ -111,7 +113,7 @@ export function DevTerminal() {
           term.reset();
           for (const [index, current] of ACTS.entries()) {
             setAct(index);
-            await play(term, current, controller.signal, !still);
+            await play(term, current, controller.signal, !still, !narrow);
             if (!still) {
               await sleep(PAUSE_BETWEEN_ACTS, controller.signal);
             }

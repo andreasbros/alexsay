@@ -43,6 +43,9 @@ describe("home page", () => {
     const poses = new Set(ACTS.map((act) => JSON.stringify(act.pose)));
     expect(poses.size).toBe(ACTS.length);
     expect(ACTS.at(-1)?.lines.at(-1)?.text).toContain("How else can I help?");
+    const run = ACTS.at(-1)?.lines ?? [];
+    expect(run.every((line) => line.stamp?.includes("2026-10-12T"))).toBe(true);
+    expect(run.some((line) => line.text.includes("2026-10-12T"))).toBe(false);
     for (const act of ACTS) {
       for (const line of act.lines) {
         expect(line.text).not.toMatch(/\u2014/);

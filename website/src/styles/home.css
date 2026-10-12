@@ -267,6 +267,17 @@
   height: clamp(320px, 52vh, 460px);
   padding: 14px 6px 10px 16px;
 }
+/* Scrolling stays, the scrollbar does not: xterm draws its own, the viewport may show the native one */
+.term-screen .xterm .xterm-scrollable-element > .scrollbar,
+.term-screen .xterm .xterm-scrollable-element > .shadow {
+  display: none;
+}
+.term-screen .xterm .xterm-viewport {
+  scrollbar-width: none;
+}
+.term-screen .xterm .xterm-viewport::-webkit-scrollbar {
+  display: none;
+}
 .dev-install {
   max-width: 560px;
   margin: 8px auto 0;

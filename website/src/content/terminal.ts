@@ -19,6 +19,8 @@ export const PROMPT = `${green("robin@kitchen")}${dim(":")}${blue("~")}${dim("$"
 export interface Line {
   text: string;
   delay: number;
+  /** A log line's timestamp, left out on narrow screens. */
+  stamp?: string;
 }
 
 export interface Act {
@@ -30,16 +32,22 @@ export interface Act {
 
 const field = (name: string, value: string) => `${italic(name)}${dim("=")}${value}`;
 
+interface Logged {
+  stamp: string;
+  text: string;
+}
+
 /** A line as tracing-subscriber prints it: time, level, message, fields. */
-function log(time: string, level: "INFO" | "DEBUG", message: string, ...fields: string[]): string {
+function log(time: string, level: "INFO" | "DEBUG", message: string, ...fields: string[]): Logged {
   const tag = level === "INFO" ? green(" INFO") : blue("DEBUG");
-  return [dim(`2026-10-12T${time}Z`), tag, message, ...fields].join(" ");
+  return { stamp: dim(`2026-10-12T${time}Z`), text: [tag, message, ...fields].join(" ") };
 }
 
 const say = (who: "user" | "assistant", text: string) =>
   who === "user" ? `${bold(yellow("user:"))} ${text}` : `${bold(magenta("assistant:"))} ${text}`;
 
-const at = (delay: number, text: string): Line => ({ delay, text });
+const at = (delay: number, line: string | Logged): Line =>
+  typeof line === "string" ? { delay, text: line } : { delay, ...line };
 
 export const ACTS: Act[] = [
   {

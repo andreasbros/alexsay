@@ -27,7 +27,10 @@ const SPEAKER_INSTRUCTIONS =
   "Use the available tools for anything about the home; never pretend a device changed. " +
   "For lights, call list_lights once to learn the names and ids. One light: set_light. A room or group such as " +
   '"the kitchen lights": set_lights with the room words, which handles them all at once. Every light in the home: ' +
-  'ask the user to confirm first, then set_lights with match "all". Report the tool\'s result truthfully.';
+  'ask the user to confirm first, then set_lights with match "all". Report the tool\'s result truthfully. ' +
+  "The conversation ends only through the end_conversation tool: whenever the user wants to stop, in any words " +
+  '("end the conversation", "that\'s all", "stop listening", "bye"), say a short goodbye and call it. ' +
+  "Never just agree without calling it: the speaker keeps listening until you do.";
 
 const WEB_SEARCH_INSTRUCTIONS =
   "You can search the web for current information such as news, weather, opening hours or facts you are unsure of; " +

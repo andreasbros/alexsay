@@ -182,5 +182,7 @@ describe("assistant sessions", () => {
     });
     expect(String(config.instructions)).toMatch(/Call me Andreas\.\n\nToday is 2026-10-11\.$/);
     expect(String(config.instructions)).toMatch(/pronounced "Aleksey"/);
+    // GPT-Live's speech layer only ends a session by delegating to the tool, so it must be told to
+    expect(String(config.instructions)).toContain("ends only through the end_conversation tool");
   });
 });

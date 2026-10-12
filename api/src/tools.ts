@@ -148,8 +148,9 @@ export const TOOLS: Tool[] = [
       type: "function",
       name: "end_conversation",
       description:
-        "Ends the conversation after the user said goodbye, thanks or that is all. Say a short goodbye first; the " +
-        "session closes once you finish speaking.",
+        "Ends the conversation and stops the speaker listening. Call it whenever the user wants to stop, in any " +
+        'words: "end the conversation", "finish", "stop listening", "that\'s all", "goodbye", or thanks that close ' +
+        "the exchange. Say a short goodbye first; the session closes once you finish speaking.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
     run: async () => ({ ok: true, note: "say goodbye; the session closes when you finish speaking" }),

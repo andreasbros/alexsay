@@ -8,8 +8,6 @@ pub const END_TOOL: &str = "end_conversation";
 /// Output audio stops arriving for this long: the reply is over.
 const REPLY_GAP_MS: u64 = 900;
 const FAREWELL_WINDOW_MS: u64 = 25_000;
-/// After the user asks to end, the assistant gets this long to answer before the session closes anyway.
-const END_REPLY_WAIT_MS: u64 = 4_000;
 const SHORT_REPLY_WORDS: usize = 16;
 /// The user's words are a finished line once transcription has paused this long.
 const USER_LINE_GAP_MS: u64 = 1_200;
@@ -59,8 +57,6 @@ pub struct Session {
     last_user_text_ms: u64,
     last_assistant_text_ms: u64,
     user_farewell_at: Option<u64>,
-    /// The user asked to end ("end the conversation"): the session closes after the reply, whatever it says.
-    end_requested_at: Option<u64>,
 }
 
 impl Default for Session {
@@ -85,7 +81,6 @@ impl Session {
             last_user_text_ms: 0,
             last_assistant_text_ms: 0,
             user_farewell_at: None,
-            end_requested_at: None,
         }
     }
 
@@ -105,7 +100,6 @@ impl Session {
         self.assistant_text.clear();
         self.last_reply.clear();
         self.user_farewell_at = None;
-        self.end_requested_at = None;
     }
 
     /// Where the session's clocks stand, for the debug log.
@@ -164,9 +158,6 @@ impl Session {
                 self.user_text.push_str(delta);
                 if self.policy.end_on_farewell && is_user_farewell(&self.user_text) {
                     self.user_farewell_at = Some(now_ms);
-                }
-                if is_end_request(&self.user_text) {
-                    self.end_requested_at.get_or_insert(now_ms);
                 }
                 self.flush_assistant_text()
             }
@@ -240,32 +231,20 @@ impl Session {
             && assistant_spoke_last
             && user_quiet
             && now_ms.saturating_sub(self.last_output_ms) >= self.policy.after_reply_s * 1_000;
-        // GPT-Live's voice often answers "okay" to "end the conversation" without calling the end tool
-        let answered_request = self.end_requested_at.is_some_and(|at| {
-            self.last_assistant_text_ms > at || now_ms.saturating_sub(at) >= END_REPLY_WAIT_MS
-        });
-        let requested = answered_request
-            && self.pending_tools == 0
-            && user_quiet
-            && now_ms.saturating_sub(self.last_output_ms) >= REPLY_GAP_MS;
-        let asked = (self.close_after_reply && self.pending_tools == 0 && reply_over) || requested;
-        // Goodbyes go both ways: the user saying "bye" back to the assistant's "bye" ends it too
-        let user_said_bye = self
-            .user_farewell_at
-            .is_some_and(|at| now_ms.saturating_sub(at) < FAREWELL_WINDOW_MS);
+        let asked = self.close_after_reply && self.pending_tools == 0 && reply_over;
         let farewell = self.policy.end_on_farewell
             && reply_over
-            && (assistant_spoke_last || (user_said_bye && user_quiet))
+            && assistant_spoke_last
             && is_sign_off(
                 &self.last_reply,
                 self.user_farewell_at.map(|at| now_ms.saturating_sub(at)),
             );
         let why = if capped {
             "hard cap"
-        } else if farewell {
-            "goodbye"
         } else if asked {
             "asked to stop"
+        } else if farewell {
+            "goodbye"
         } else if after_reply {
             "quiet after the reply"
         } else if idle {
@@ -308,40 +287,16 @@ impl Session {
     }
 }
 
-/// Asking for the end outright: honoured after the reply even when the reply is not a goodbye.
-const END_REQUESTS: &[&str] = &[
-    "end conversation",
-    "end session",
-    "stop conversation",
-    "stop session",
-    "finish conversation",
-    "finish session",
-    "close conversation",
-    "close session",
-    "close the conversation",
-    "end the chat",
+const USER_FAREWELLS: &[&str] = &[
     "end the conversation",
-    "end this conversation",
-    "end our conversation",
     "end the session",
     "end this session",
     "stop the session",
     "close the session",
+    "end the call",
+    "end this conversation",
     "stop the conversation",
     "stop this conversation",
-    "finish the conversation",
-    "finish this conversation",
-    "finish the session",
-    "stop listening",
-    "you can stop listening",
-    "that's all",
-    "thats all",
-    "i'm done",
-    "im done",
-];
-
-const USER_FAREWELLS: &[&str] = &[
-    "end the call",
     "goodbye",
     "good bye",
     "bye bye",
@@ -351,12 +306,16 @@ const USER_FAREWELLS: &[&str] = &[
     "see you",
     "good night",
     "goodnight",
+    "that's all",
     "that's it",
+    "thats all",
     "thats it",
     "talk later",
     "talk to you later",
     "speak later",
     "speak to you later",
+    "i'm done",
+    "im done",
     "thanks, that's all",
     "thanks that's all",
 ];
@@ -422,11 +381,7 @@ fn contains_phrase(text: &str, phrases: &[&str]) -> bool {
 
 /// What the user says to end the conversation.
 pub fn is_user_farewell(text: &str) -> bool {
-    contains_phrase(text, USER_FAREWELLS) || is_end_request(text)
-}
-
-pub fn is_end_request(text: &str) -> bool {
-    contains_phrase(text, END_REQUESTS)
+    contains_phrase(text, USER_FAREWELLS)
 }
 
 /// Both sides said their goodbyes, or the reply is a short sign-off: the session ends after it.
@@ -608,70 +563,6 @@ mod tests {
                 Action::Close
             ]
         );
-    }
-
-    fn say(session: &mut Session, who: &str, text: &str, at: u64) {
-        let kind = if who == "user" { "input" } else { "output" };
-        let line = serde_json::json!({ "type": format!("session.{kind}_transcript.delta"), "delta": text });
-        session.on_event(&event(&line.to_string()), at);
-        if who == "assistant" {
-            output(session, at);
-        }
-    }
-
-    fn closed_because(actions: &[Action]) -> Option<&str> {
-        actions.iter().find_map(|a| match a {
-            Action::Log(note) => note.strip_prefix("closing: "),
-            _ => None,
-        })
-    }
-
-    #[test]
-    fn asking_to_end_closes_after_the_reply_even_when_it_is_only_okay() {
-        // Seen on 12 Oct: "End the conversation" got "Okay." and no end tool, and the session stayed open
-        let mut session = open_session();
-        say(&mut session, "user", "End the conversation", 2_000);
-        say(&mut session, "assistant", "Okay.", 3_000);
-        assert_eq!(closed_because(&session.on_tick(3_500)), None);
-        assert_eq!(
-            closed_because(&session.on_tick(4_100)),
-            Some("asked to stop")
-        );
-    }
-
-    #[test]
-    fn asking_to_end_is_heard_with_or_without_the_article() {
-        for request in [
-            "end conversation",
-            "End the session.",
-            "finish conversation please",
-            "Like, finish the conversation",
-        ] {
-            assert!(is_end_request(request), "{request}");
-        }
-        assert!(!is_end_request("how does a conversation end"));
-    }
-
-    #[test]
-    fn asking_to_end_closes_even_without_a_reply() {
-        let mut session = open_session();
-        say(&mut session, "user", "Please stop listening", 2_000);
-        assert_eq!(closed_because(&session.on_tick(5_000)), None);
-        assert_eq!(
-            closed_because(&session.on_tick(6_100)),
-            Some("asked to stop")
-        );
-    }
-
-    #[test]
-    fn the_user_saying_bye_back_ends_it() {
-        // Seen on 12 Oct: assistant "Bye.", user "Bye", and the session waited for the idle timeout
-        let mut session = open_session();
-        say(&mut session, "user", "Okay. Thanks", 2_000);
-        say(&mut session, "assistant", "Bye.", 3_000);
-        say(&mut session, "user", "Bye", 4_000);
-        assert_eq!(closed_because(&session.on_tick(4_500)), None);
-        assert_eq!(closed_because(&session.on_tick(5_100)), Some("goodbye"));
     }
 
     #[test]

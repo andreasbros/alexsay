@@ -13,6 +13,7 @@
       "e2e/**",
       "*.json",
       "!**/worker-configuration.d.ts",
+      "!**/*.generated.ts",
       "!device",
       "!docs"
     ]

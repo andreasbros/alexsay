@@ -50,7 +50,14 @@ impl WakeWord {
                 score_mode: ScoreMode::Max,
                 ..DetectorConfig::default()
             },
-            filters: rustpotter::FiltersConfig::default(),
+            filters: rustpotter::FiltersConfig {
+                // Levels the microphone against the model's own loudness: a quiet "Alexsay" across the room counts
+                gain_normalizer: rustpotter::GainNormalizationConfig {
+                    enabled: true,
+                    ..rustpotter::GainNormalizationConfig::default()
+                },
+                band_pass: rustpotter::BandPassConfig::default(),
+            },
         };
         let mut detector = Rustpotter::new(&config)?;
         let model = WakewordModel::load_from_buffer(model)?;
@@ -108,9 +115,10 @@ impl WakeWord {
     }
 }
 
-/// rustpotter scores a model's output probability against this; 0.5 sensitivity is its default of 0.5.
+/// The shipped model scores a clear "Alexsay" from about 0.89 up and near-misses ("Alexa", "excellent")
+/// up to about 0.85, so the band sits high: 0.82 at the default sensitivity, 0.69 at the most eager.
 fn threshold_for(sensitivity: f32) -> f32 {
-    0.3 + (1.0 - sensitivity.clamp(0.0, 1.0)) * 0.4
+    0.95 - sensitivity.clamp(0.0, 1.0) * 0.26
 }
 
 /// A sample's file name carries its label: `[alexsay]kitchen-3.wav`.
@@ -249,8 +257,8 @@ mod tests {
 
     #[test]
     fn sensitivity_maps_to_a_threshold() {
-        assert!((threshold_for(0.5) - 0.5).abs() < 0.001);
+        assert!((threshold_for(0.5) - 0.82).abs() < 0.001);
         assert!(threshold_for(1.0) < threshold_for(0.0));
-        assert!((threshold_for(2.0) - 0.3).abs() < 0.001);
+        assert!((threshold_for(2.0) - 0.69).abs() < 0.001);
     }
 }

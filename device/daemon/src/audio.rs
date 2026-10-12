@@ -145,15 +145,28 @@ impl Capture {
         let (tx, rx) = mpsc::channel::<Vec<i16>>();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::channel::<anyhow::Result<()>>();
+        // The device callback only copies: channel picking and resampling run on their own thread,
+        // because this card's 21 ms buffer overruns if the callback does any real work
+        let (raw_tx, raw_rx) = mpsc::channel::<Vec<f32>>();
+        std::thread::Builder::new()
+            .name("alexsay-resample".into())
+            .spawn(move || {
+                let mut resampler = Downsampler::new(source_rate, LIVE_RATE);
+                while let Ok(frames) = raw_rx.recv() {
+                    let mono = pcm::pick_channel(&frames, channels, channel);
+                    for chunk in resampler.push(&mono) {
+                        if tx.send(pcm::to_i16(&chunk, gain)).is_err() {
+                            return;
+                        }
+                    }
+                }
+            })
+            .context("starting the resampling thread")?;
         std::thread::Builder::new()
             .name("alexsay-capture".into())
             .spawn(move || {
-                let mut resampler = Downsampler::new(source_rate, LIVE_RATE);
                 let data = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let mono = pcm::pick_channel(data, channels, channel);
-                    for chunk in resampler.push(&mono) {
-                        let _ = tx.send(pcm::to_i16(&chunk, gain));
-                    }
+                    let _ = raw_tx.send(data.to_vec());
                 };
                 let err = |err: cpal::Error| tracing::warn!("input stream: {err}");
                 if supported.sample_format() != cpal::SampleFormat::F32 {
@@ -180,7 +193,11 @@ impl Capture {
                 };
                 let stream = device
                     .build_input_stream(generous, callback.clone(), err, None)
-                    .or_else(|_| device.build_input_stream(config, callback, err, None));
+                    .inspect(|_| tracing::debug!("input buffer: {PREFERRED_BUFFER_FRAMES} frames"))
+                    .or_else(|e| {
+                        tracing::debug!("input buffer: device default ({e})");
+                        device.build_input_stream(config, callback, err, None)
+                    });
                 let stream = match stream.and_then(|s| s.play().map(|()| s)) {
                     Ok(stream) => stream,
                     Err(e) => {
@@ -216,6 +233,7 @@ pub struct Player {
 }
 
 impl Player {
+    #[allow(clippy::too_many_lines)]
     pub fn open(settings: &Audio) -> anyhow::Result<Self> {
         let host = cpal::default_host();
         let devices: Vec<cpal::Device> = host
@@ -295,7 +313,11 @@ impl Player {
                 };
                 let stream = device
                     .build_output_stream(generous, callback.clone(), err, None)
-                    .or_else(|_| device.build_output_stream(config, callback, err, None));
+                    .inspect(|_| tracing::debug!("output buffer: {PREFERRED_BUFFER_FRAMES} frames"))
+                    .or_else(|e| {
+                        tracing::debug!("output buffer: device default ({e})");
+                        device.build_output_stream(config, callback, err, None)
+                    });
                 let stream = match stream.and_then(|s| s.play().map(|()| s)) {
                     Ok(stream) => stream,
                     Err(e) => {

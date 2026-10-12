@@ -158,25 +158,33 @@ pub fn train(
     Ok(path)
 }
 
-/// Listens and prints every detection, for checking a model or the sensitivity.
+/// Listens and prints every detection and the microphone level, for checking a model or the sensitivity.
 pub fn test(config: &Config, model: &[u8]) -> anyhow::Result<()> {
     let mut wake = wake::WakeWord::new(model, config.wake.sensitivity, config.wake.refractory_s)
         .map_err(anyhow::Error::msg)?;
     let capture = Capture::open(&config.audio).context("opening the microphone")?;
     println!(
-        "Listening on {} for \"Alexsay\" (sensitivity {}). Ctrl-C to stop.",
+        "Listening on {} for \"Alexsay\" (sensitivity {}). The level prints every second; Ctrl-C to stop.",
         capture.device, config.wake.sensitivity
     );
-    let mut quiet_chunks = 0u32;
+    let mut peak = 0.0f32;
+    let mut since_print = 0usize;
     loop {
         let chunk = capture.chunks.recv().context("the microphone stopped")?;
-        if pcm::rms(&chunk) < 0.005 {
-            quiet_chunks += 1;
-            if quiet_chunks == 200 {
-                println!("(the microphone has been silent for a while: is it the right device?)");
-            }
-        } else {
-            quiet_chunks = 0;
+        peak = peak.max(pcm::rms(&chunk));
+        since_print += chunk.len();
+        if since_print >= LIVE_RATE as usize {
+            println!(
+                "level {:>5.1}%{}",
+                peak * 100.0,
+                if peak < 0.005 {
+                    "  (silent: is it the right device?)"
+                } else {
+                    ""
+                }
+            );
+            peak = 0.0;
+            since_print = 0;
         }
         if let Some(detection) = wake.feed(&chunk) {
             println!(
@@ -185,4 +193,40 @@ pub fn test(config: &Config, model: &[u8]) -> anyhow::Result<()> {
             );
         }
     }
+}
+
+/// Runs the engine over a WAV file (16-bit, any rate) and prints what it would have fired on.
+pub fn test_file(config: &Config, model: &[u8], path: &std::path::Path) -> anyhow::Result<()> {
+    let mut wake = wake::WakeWord::new(model, config.wake.sensitivity, config.wake.refractory_s)
+        .map_err(anyhow::Error::msg)?;
+    let mut reader =
+        hound::WavReader::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let spec = reader.spec();
+    let samples: Vec<i16> = reader.samples::<i16>().filter_map(Result::ok).collect();
+    let mono = pcm::pick_channel(&pcm::to_f32(&samples), usize::from(spec.channels), None);
+    let mut converter = crate::audio::Downsampler::new(spec.sample_rate, LIVE_RATE);
+    let mut at16: Vec<i16> = Vec::new();
+    for chunk in converter.push(&mono) {
+        at16.extend(pcm::to_i16(&chunk, 1.0));
+    }
+    at16.extend(pcm::to_i16(&converter.flush(), 1.0));
+    let mut fired = 0;
+    for chunk in at16.chunks(480) {
+        if let Some(detection) = wake.feed(chunk) {
+            fired += 1;
+            println!(
+                "{}: detected (score {:.2})",
+                path.display(),
+                detection.score
+            );
+        }
+    }
+    if fired == 0 {
+        println!(
+            "{}: no detection (level {:.1}%)",
+            path.display(),
+            pcm::rms(&at16) * 100.0
+        );
+    }
+    Ok(())
 }

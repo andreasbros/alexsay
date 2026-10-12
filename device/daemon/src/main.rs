@@ -137,8 +137,11 @@ enum WakeAction {
         #[arg(long)]
         dir: Vec<PathBuf>,
     },
-    /// Listen and print every detection
-    Test,
+    /// Listen and print every detection and the microphone level; with --file, run over a WAV instead
+    Test {
+        #[arg(long)]
+        file: Vec<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -406,13 +409,20 @@ async fn dispatch(
                 WakeAction::Train { epochs, dir } => {
                     wake_cli::train(&paths, &dir, epochs).map(|_| ())
                 }
-                WakeAction::Test => {
+                WakeAction::Test { file } => {
                     let bytes = if config.wake.model == "builtin" {
                         runtime::BUILTIN_MODEL.to_vec()
                     } else {
                         std::fs::read(paths.home.join(&config.wake.model))?
                     };
-                    wake_cli::test(&config, &bytes)
+                    if file.is_empty() {
+                        wake_cli::test(&config, &bytes)
+                    } else {
+                        for path in &file {
+                            wake_cli::test_file(&config, &bytes, path)?;
+                        }
+                        Ok(())
+                    }
                 }
             }
         }

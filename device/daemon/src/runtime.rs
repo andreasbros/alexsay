@@ -339,10 +339,15 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
     let mut last_refusal = Instant::now()
         .checked_sub(Duration::from_secs(3_600))
         .unwrap_or_else(Instant::now);
+    // Sound cards start with a burst of garbage; the wake word does not get to hear it
+    let warm_up_until = Instant::now() + Duration::from_millis(1_500);
     loop {
         let Some(chunk) = mic.recv().await else {
             anyhow::bail!("the microphone stopped");
         };
+        if Instant::now() < warm_up_until {
+            continue;
+        }
         if runtime.route_to_call(&chunk) {
             preroll.clear();
             continue;

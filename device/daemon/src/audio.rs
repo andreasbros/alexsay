@@ -20,6 +20,8 @@ const PREFERRED_BUFFER_FRAMES: u32 = 2_400;
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
     pub name: String,
+    /// The host's exact id (for ALSA, the PCM name such as `plughw:CARD=PCH,DEV=0`); config accepts it too.
+    pub id: String,
     pub channels: u16,
     pub sample_rate: u32,
     pub default: bool,
@@ -35,6 +37,7 @@ pub fn list_devices() -> anyhow::Result<(Vec<DeviceInfo>, Vec<DeviceInfo>)> {
         let name = device_name(&device);
         if let Ok(config) = device.default_input_config() {
             inputs.push(DeviceInfo {
+                id: device_id(&device),
                 default: default_in.as_deref() == Some(name.as_str()),
                 channels: config.channels(),
                 sample_rate: config.sample_rate(),
@@ -47,6 +50,7 @@ pub fn list_devices() -> anyhow::Result<(Vec<DeviceInfo>, Vec<DeviceInfo>)> {
         let name = device_name(&device);
         if let Ok(config) = device.default_output_config() {
             outputs.push(DeviceInfo {
+                id: device_id(&device),
                 default: default_out.as_deref() == Some(name.as_str()),
                 channels: config.channels(),
                 sample_rate: config.sample_rate(),
@@ -62,6 +66,39 @@ fn device_name(device: &cpal::Device) -> String {
     device
         .description()
         .map_or_else(|_| "?".to_owned(), |d| d.name().to_owned())
+}
+
+fn device_id(device: &cpal::Device) -> String {
+    device
+        .id()
+        .map_or_else(|_| String::new(), |id| id.to_string())
+}
+
+/// Among names for the same card, the ones that convert and buffer for us come first.
+fn alsa_rank(id: &str) -> u8 {
+    let name = id.trim_start_matches("alsa:");
+    if name.starts_with("plughw:") {
+        0
+    } else if name.starts_with("sysdefault:") || name.starts_with("default") {
+        1
+    } else if name.starts_with("front:") {
+        2
+    } else if name.starts_with("hw:") {
+        4
+    } else {
+        3
+    }
+}
+
+/// A device matches the config by its exact id, or by part of its name.
+fn matches(device: &cpal::Device, wanted: &str) -> bool {
+    let id = device_id(device);
+    if !id.is_empty() && (id == wanted || id.ends_with(&format!(":{wanted}"))) {
+        return true;
+    }
+    device_name(device)
+        .to_lowercase()
+        .contains(&wanted.to_lowercase())
 }
 
 /// Names the Seeed ReSpeaker Flex carries on USB; preferred automatically when built for it.
@@ -82,10 +119,18 @@ fn pick(
 ) -> Option<cpal::Device> {
     let named = device_name;
     if wanted != "auto" && !wanted.is_empty() {
-        let lower = wanted.to_lowercase();
-        return devices
-            .into_iter()
-            .find(|d| named(d).to_lowercase().contains(&lower));
+        // An exact id wins over a name that several devices share
+        if let Some(exact) = devices.iter().find(|d| {
+            let id = device_id(d);
+            id == wanted || id.ends_with(&format!(":{wanted}"))
+        }) {
+            return Some(exact.clone());
+        }
+        // Several ALSA names share one description; plughw takes larger buffers than the raw device
+        let mut candidates: Vec<cpal::Device> =
+            devices.into_iter().filter(|d| matches(d, wanted)).collect();
+        candidates.sort_by_key(|d| alsa_rank(&device_id(d)));
+        return candidates.into_iter().next();
     }
     for hint in preferred {
         if let Some(device) = devices.iter().find(|d| named(d).contains(hint)) {

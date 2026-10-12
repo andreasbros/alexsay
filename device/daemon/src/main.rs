@@ -248,21 +248,23 @@ async fn dispatch(
             println!("Input devices:");
             for d in inputs {
                 println!(
-                    "  {}{} ({} ch, {} Hz)",
+                    "  {}{} ({} ch, {} Hz)\n      id: {}",
                     d.name,
                     if d.default { " [default]" } else { "" },
                     d.channels,
-                    d.sample_rate
+                    d.sample_rate,
+                    d.id
                 );
             }
             println!("Output devices:");
             for d in outputs {
                 println!(
-                    "  {}{} ({} ch, {} Hz)",
+                    "  {}{} ({} ch, {} Hz)\n      id: {}",
                     d.name,
                     if d.default { " [default]" } else { "" },
                     d.channels,
-                    d.sample_rate
+                    d.sample_rate,
+                    d.id
                 );
             }
             Ok(())

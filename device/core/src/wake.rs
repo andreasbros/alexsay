@@ -36,9 +36,9 @@ impl WakeWord {
         Self::build(model, threshold_for(sensitivity), 3, false, refractory_s)
     }
 
-    /// A diagnostic engine: reports every frame scoring above 0.3, as `alexsay wake test --scores` shows.
+    /// A diagnostic engine: reports each word's best score once it ends, from 0.3 up, as `alexsay wake test --scores` shows.
     pub fn probe(model: &[u8]) -> Result<Self, String> {
-        Self::build(model, 0.3, 1, true, 0.0)
+        Self::build(model, 0.3, 1, false, 0.0)
     }
 
     fn build(
@@ -133,7 +133,7 @@ impl WakeWord {
 
 /// The shipped model scores a clear "Alexsay" from about 0.89 up and near-misses ("Alexa", "excellent")
 /// up to about 0.85, so the band sits high: 0.82 at the default sensitivity, 0.69 at the most eager.
-fn threshold_for(sensitivity: f32) -> f32 {
+pub fn threshold_for(sensitivity: f32) -> f32 {
     0.95 - sensitivity.clamp(0.0, 1.0) * 0.26
 }
 

@@ -235,9 +235,47 @@ pub fn train(
     Ok(path)
 }
 
-/// Listens and prints every detection and the microphone level, for checking a model or the sensitivity.
-/// With `scores`, the best partial score of each second is shown too, so a near miss is visible.
+/// Terminal colours, only when stdout is a terminal.
+struct Paint(bool);
+
+impl Paint {
+    fn wrap(&self, code: &str, text: &str) -> String {
+        if self.0 {
+            format!("\x1b[{code}m{text}\x1b[0m")
+        } else {
+            text.to_owned()
+        }
+    }
+    fn dim(&self, text: &str) -> String {
+        self.wrap("2", text)
+    }
+    fn red(&self, text: &str) -> String {
+        self.wrap("31", text)
+    }
+    fn yellow(&self, text: &str) -> String {
+        self.wrap("33", text)
+    }
+    fn green(&self, text: &str) -> String {
+        self.wrap("32", text)
+    }
+    fn banner(&self, text: &str) -> String {
+        self.wrap("1;30;42", text)
+    }
+}
+
+/// A 20-character bar for a level or score, 0 to 1.
+fn bar(value: f32) -> String {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let filled = ((value.clamp(0.0, 1.0) * 20.0).round()) as usize;
+    format!("{}{}", "#".repeat(filled), ".".repeat(20 - filled))
+}
+
+/// Listens and prints the microphone level each second and every detection, in colour on a terminal.
+/// With `scores`, each second also shows how close the best moment came to the wake word.
 pub fn test(config: &Config, model: &[u8], scores: bool) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
+    let paint = Paint(std::io::stdout().is_terminal());
+    let threshold = wake::threshold_for(config.wake.sensitivity);
     let mut wake = wake::WakeWord::new(model, config.wake.sensitivity, config.wake.refractory_s)
         .map_err(anyhow::Error::msg)?;
     let mut probe = if scores {
@@ -247,20 +285,26 @@ pub fn test(config: &Config, model: &[u8], scores: bool) -> anyhow::Result<()> {
     };
     let capture = Capture::open(&config.audio).context("opening the microphone")?;
     println!(
-        "Listening on {} for \"Alexsay\" (sensitivity {}). The level prints every second; Ctrl-C to stop.",
-        capture.device, config.wake.sensitivity
+        "Listening on {} ({}) for \"Alexsay\". Detection needs {threshold:.2} (sensitivity {}). Ctrl-C to stop.",
+        capture.device, config.wake.model, config.wake.sensitivity
     );
     if scores {
         println!(
-            "The best score of each second is shown; a detection needs three frames in a row above the threshold."
+            "Each line is one second: the loudest moment, then the best score. {} far, {} close, {} enough.",
+            paint.red("red"),
+            paint.yellow("yellow"),
+            paint.green("green")
         );
     }
     let mut peak = 0.0f32;
     let mut best = 0.0f32;
     let mut since_print = 0usize;
+    let mut quiet = f32::MAX;
     loop {
         let chunk = capture.chunks.recv().context("the microphone stopped")?;
-        peak = peak.max(pcm::rms(&chunk));
+        let level = pcm::rms(&chunk);
+        peak = peak.max(level);
+        quiet = quiet.min(level.max(0.001));
         since_print += chunk.len();
         if let Some(probe) = probe.as_mut()
             && let Some(partial) = probe.feed(&chunk)
@@ -268,25 +312,53 @@ pub fn test(config: &Config, model: &[u8], scores: bool) -> anyhow::Result<()> {
             best = best.max(partial.score);
         }
         if since_print >= LIVE_RATE as usize {
-            let score = if scores && best > 0.0 {
-                format!("  best score {best:.2}")
+            let speech = peak > quiet * 3.0 && peak > 0.02;
+            let level_text = format!("level {} {:>5.1}%", bar(peak), peak * 100.0);
+            let mut line = if speech {
+                level_text
             } else {
-                String::new()
+                paint.dim(&level_text)
             };
-            let silent = if peak < 0.005 {
-                "  (silent: is it the right device?)"
-            } else {
-                ""
-            };
-            println!("level {:>5.1}%{score}{silent}", peak * 100.0);
+            if scores {
+                let score_text = if best > 0.0 {
+                    format!("score {} {best:.2}", bar(best))
+                } else {
+                    format!("score {} -", bar(0.0))
+                };
+                let coloured = if best >= threshold {
+                    paint.green(&score_text)
+                } else if best >= threshold - 0.2 {
+                    paint.yellow(&score_text)
+                } else if speech {
+                    paint.red(&score_text)
+                } else {
+                    paint.dim(&score_text)
+                };
+                line = format!("{line}   {coloured}");
+            }
+            if peak > 0.9 {
+                line = format!(
+                    "{line}  {}",
+                    paint.yellow("(clipping: lower the capture level)")
+                );
+            } else if peak < 0.005 {
+                line = format!(
+                    "{line}  {}",
+                    paint.yellow("(silent: is it the right device?)")
+                );
+            }
+            println!("{line}");
             peak = 0.0;
             best = 0.0;
             since_print = 0;
         }
         if let Some(detection) = wake.feed(&chunk) {
             println!(
-                "detected: {} (score {:.2})",
-                detection.name, detection.score
+                "{}",
+                paint.banner(&format!(
+                    "  WAKE WORD DETECTED: {} (score {:.2})  ",
+                    detection.name, detection.score
+                ))
             );
         }
     }

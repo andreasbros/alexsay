@@ -1,13 +1,11 @@
 import { Hono } from "hono";
-import { lightwaveToken, lightwaveUrls, openaiConnection } from "../connections";
-import { connections, users } from "../db";
+import { sessionFor } from "../assistant_api";
+import { lightwaveToken, lightwaveUrls } from "../connections";
 import { logFor } from "../log";
-import { contextInstructions, loadContext } from "../memory";
 import { providerFailure } from "../provider_errors";
 import { lights, writeFeature, writeFeatures } from "../providers/lightwave";
 import { createLiveSession, ProviderError } from "../providers/openai";
 import * as schemas from "../schemas";
-import { toolDefinitions } from "../tools";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
 
@@ -15,31 +13,19 @@ import { jsonBody } from "../validate";
 export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) => {
   const { sdp, resume_from } = await jsonBody(c, schemas.assistantSession);
   const me = c.get("user");
-  const connection = await openaiConnection(c, me.username);
-  if (!connection) {
+  const built = await sessionFor({ env: c.env, user: me, origin: new URL(c.req.url).origin });
+  if (!built) {
     return c.json({ error: "no_openai_connection" }, 412);
   }
-  const [hasLights, hasPhone, logAccess, callTest] = await Promise.all([
-    connections.get(c.env.DB, me.username, "lightwave").then((row) => row !== null),
-    connections.get(c.env.DB, me.username, "twilio").then((row) => row !== null),
-    users.logAccess(c.env.DB, me.username),
-    users.callTest(c.env.DB, me.username),
-  ]);
   try {
-    const context = contextInstructions(await loadContext(c.env.DB, me.username));
-    const input = {
-      settings: connection.settings,
-      tools: toolDefinitions(hasLights, hasPhone, logAccess, callTest),
-      context,
-      sdp,
-    };
-    const session = await createLiveSession(c.env.OPENAI_BASE_URL, connection.apiKey, {
+    const input = { session: built.session, sdp };
+    const session = await createLiveSession(c.env.OPENAI_BASE_URL, built.apiKey, {
       ...input,
       resumeFrom: resume_from,
     }).catch(async (err: unknown) => {
       // An expired or unknown source session falls back to a fresh conversation
       if (resume_from && err instanceof ProviderError && err.status < 500) {
-        return { ...(await createLiveSession(c.env.OPENAI_BASE_URL, connection.apiKey, input)), fresh: true };
+        return { ...(await createLiveSession(c.env.OPENAI_BASE_URL, built.apiKey, input)), fresh: true };
       }
       throw err;
     });
@@ -47,7 +33,7 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
     return c.json({
       session_id: session.sessionId,
       sdp: session.sdp,
-      tools: [...(hasLights ? ["lights"] : []), ...(hasPhone ? ["phone"] : [])],
+      tools: [...(built.hasLights ? ["lights"] : []), ...(built.hasPhone ? ["phone"] : [])],
       resumed: !!resume_from && !("fresh" in session),
     });
   } catch (err) {

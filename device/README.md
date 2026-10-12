@@ -1,41 +1,35 @@
 # device
 
-The Raspberry Pi side of alexsay, a Rust workspace.
+The speaker, a Rust workspace. `core` holds everything deterministic and host-tested; `daemon` is the `alexsay` binary.
 
 | Crate | What |
 |---|---|
-| `core` (`alexsay-core`) | No I/O, host-tested: device identity, config, heartbeat contract, GPT-Live event types, session state machine |
-| `daemon` (`alexsay`) | The binary: `alexsay id` prints the speaker's UUID, `alexsay run` calls home and keeps the owner's assistant settings |
+| `core` (`alexsay-core`) | Config and paths, identity, heartbeat and GPT-Live event types, session rules (idle, after-reply, farewell, hard cap), earcons, PCM helpers, the rustpotter wake-word engine and training, signed release verification, persisted state |
+| `daemon` (`alexsay`) | cpal audio in and out (any rate and channel count, resampled to 16 kHz mono), the GPT-Live WebSocket, the server's tools and conversation record, speech announcements, self-update, service install, the CLI |
 
-Audio (ALSA capture and playback, wake word, the GPT-Live socket) lands once the hardware is on the bench; see `docs/software.md`.
+## Commands
 
-## Build and test
+`run`, `setup`, `id`, `status`, `devices`, `smoke [--voice] [--json] [--no-audio]`, `config {show|init|path|set}`, `update [--check]`, `service {install|uninstall|status}`, `reset --yes`, `clean`, `logs [-f]`, `wake {record|train|test}`. `--home` or `ALEXSAY_HOME` moves the data root (default `~/.local/alexsay`).
+
+## Build
 
 Inside `nix develop` from the repo root:
 
 ```sh
-cd device && cargo test --workspace                                   # host
-cd device && cargo build --release --target aarch64-unknown-linux-gnu -p alexsay-daemon
+cd device && cargo test --workspace            # host
+cargo build -p alexsay-daemon                  # debug binary for this machine (target/nix/debug/alexsay)
+just build-speaker x86_64-linux                # static musl release, ALSA compiled in
+just build-speaker aarch64-linux               # Raspberry Pi 5 build with the `flex` feature (ReSpeaker Flex: ASR beam channel)
 ```
 
-The Pi binary is `target/nix/aarch64-unknown-linux-gnu/release/alexsay`.
+macOS and Windows builds run on their own runners in `.github/workflows/release.yml` with plain cargo.
 
-## Install on the Pi
+The `flex` feature prefers a ReSpeaker Flex device and its ASR beam (channel 1); without it any USB microphone is used and the channels are averaged.
 
-```sh
-scp target/nix/aarch64-unknown-linux-gnu/release/alexsay pi@alexsay.local:/tmp/alexsay
-ssh pi@alexsay.local 'sudo install -m 755 /tmp/alexsay /usr/local/bin/alexsay && sudo useradd -r -s /usr/sbin/nologin alexsay 2>/dev/null; sudo install -d -m 755 /etc/alexsay'
-scp deploy/alexsay.toml pi@alexsay.local:/tmp/alexsay.toml && ssh pi@alexsay.local 'sudo install -m 644 /tmp/alexsay.toml /etc/alexsay/alexsay.toml'
-scp deploy/alexsay.service pi@alexsay.local:/tmp/alexsay.service && ssh pi@alexsay.local 'sudo install -m 644 /tmp/alexsay.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now alexsay'
-ssh pi@alexsay.local 'sudo -u alexsay alexsay id'                    # the UUID to add in the app
-```
+## Wake word
 
-## Config (`/etc/alexsay/alexsay.toml`)
+`models/alexsay.rpw` ships inside the binary: a rustpotter model trained from synthetic takes (`scripts` in the release notes). `alexsay wake record` and `alexsay wake train` make a model from your own voice into `data/models/alexsay.rpw`; point `[wake] model` at it. A missing `models/alexsay.rpw` still builds (empty model, wake word off).
 
-| Key | Default | Meaning |
-|---|---|---|
-| `api_url` | `https://app.alexsay.com` | The server |
-| `state_dir` | `/var/lib/alexsay` | Holds `device-id` (0600, created on first run) |
-| `poll_s` | `30` | Heartbeat interval until the server sends its own |
+## Releases
 
-Secrets never live in the config: the server hands the owner's assistant credentials to a claimed speaker in the heartbeat reply, over TLS, and the daemon keeps them in memory only.
+`just release patch` bumps the version, tags and creates the release; the workflow builds every target, writes `SHA256SUMS`, signs it with the Ed25519 release key (`ALEXSAY_RELEASE_KEY` secret; public key in `core/src/update.rs`) and attaches everything. The binary checks GitHub every `update.check_hours`, verifies the asset against the signed list, swaps itself and restarts.

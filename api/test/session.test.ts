@@ -52,6 +52,34 @@ describe("session", () => {
     expect((await login("andreas", "correct horse")).status).toBe(429);
   });
 
+  it("a stranger's failures lock their address, not your account", async () => {
+    const from = (ip: string, username: string, password: string) =>
+      call(`${APP}/api/session/login`, {
+        method: "POST",
+        headers: { "cf-connecting-ip": ip },
+        body: JSON.stringify({ username, password }),
+      });
+    for (let i = 0; i < 5; i++) {
+      await from("203.0.113.9", "andreas", "wrong");
+    }
+    expect((await from("203.0.113.9", "andreas", "correct horse")).status).toBe(429);
+    expect((await from("198.51.100.1", "andreas", "correct horse")).status).toBe(200);
+  });
+
+  it("limits registrations per address", async () => {
+    const from = (ip: string, username: string) =>
+      call(`${APP}/api/session/register`, {
+        method: "POST",
+        headers: { "cf-connecting-ip": ip },
+        body: JSON.stringify({ username, password: "long enough password" }),
+      });
+    for (let i = 0; i < 40; i++) {
+      expect((await from("203.0.113.5", `fresh${i}`)).status).toBe(201);
+    }
+    expect((await from("203.0.113.5", "fresh40")).status).toBe(429);
+    expect((await from("203.0.113.6", "fresh41")).status).toBe(201);
+  }, 60_000);
+
   it("logs out by revoking the session", async () => {
     const cookie = await signIn("andreas", "correct horse");
     await call(`${APP}/api/session/logout`, { method: "POST" }, cookie);

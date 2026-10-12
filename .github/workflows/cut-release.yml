@@ -1,0 +1,36 @@
+# Bumps the version, tags, creates the release and runs the release build, from the Actions tab.
+name: cut-release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "patch, minor, major, or an exact X.Y.Z"
+        required: true
+        default: patch
+permissions:
+  contents: write
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: bump
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          scripts/release-tag.sh "${{ inputs.version }}" --no-release
+          echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+          git push origin HEAD:main --follow-tags
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ steps.bump.outputs.tag }}" --title "alexsay ${{ steps.bump.outputs.tag }}" --generate-notes
+  build:
+    needs: cut
+    uses: ./.github/workflows/release.yml
+    secrets: inherit
+    with:
+      tag: ${{ needs.cut.outputs.tag }}

@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "alexsay-app",
   "main": "src/index.ts",
+  "workers_dev": false,
   "compatibility_date": "2026-08-15",
   "routes": [{ "pattern": "app.alexsay.com", "custom_domain": true }],
   "assets": {

@@ -1,3 +1,4 @@
+import { constantTimeEqual } from "../crypto";
 import type { OpenAiSettings } from "../schemas";
 
 export class ProviderError extends Error {
@@ -54,10 +55,8 @@ const ADDRESSED_INSTRUCTIONS =
   "broadcast voices get no reply at all: stay silent and keep listening.";
 
 export interface SessionInput {
-  settings: OpenAiSettings;
-  tools: LiveTool[];
-  /** What the assistant remembers and how to use the memory tools, from memory.ts. */
-  context?: string;
+  /** The session body from sessionConfig(), shared with the speaker's own WebSocket client. */
+  session: Record<string, unknown>;
   sdp: string;
   /** A session to continue from, so a dropped call picks up with its memory of the conversation. */
   resumeFrom?: string;
@@ -107,7 +106,7 @@ export async function createLiveSession(
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
     body: JSON.stringify({
-      session: sessionConfig(input.settings, input.tools, input.context),
+      session: input.session,
       transport: { type: "webrtc", sdp: input.sdp },
     }),
   });
@@ -171,7 +170,7 @@ export async function verifyWebhook(
   return headers.signature
     .split(" ")
     .map((part) => part.split(",")[1] ?? "")
-    .some((candidate) => candidate.length === expected.length && candidate === expected);
+    .some((candidate) => constantTimeEqual(candidate, expected));
 }
 
 /**

@@ -125,7 +125,11 @@ export const TWILIO_NUMBER = "+447700900000";
 export const MY_NUMBER = "+447700900999";
 
 /** Saving Twilio verifies the account and points the chosen number's webhooks here, so both are mocked. */
-export async function connectTwilio(cookie: string, settings: Record<string, unknown> = {}): Promise<Response> {
+export async function connectTwilio(
+  cookie: string,
+  settings: Record<string, unknown> = {},
+  token = TWILIO_TOKEN,
+): Promise<Response> {
   const upstream = mockUpstream({
     [`GET ${TWILIO}.json`]: () => reply(200, { friendly_name: "Alexsay", status: "active" }),
     [`GET ${TWILIO}/IncomingPhoneNumbers.json?PageSize=100`]: () =>
@@ -143,7 +147,7 @@ export async function connectTwilio(cookie: string, settings: Record<string, unk
     "PUT",
     {
       account_sid: TWILIO_SID,
-      auth_token: TWILIO_TOKEN,
+      auth_token: token,
       settings: { from_number: TWILIO_NUMBER, my_number: MY_NUMBER, ...settings },
     },
     cookie,

@@ -23,6 +23,8 @@ export const publicContact = (row: ContactRow) => ({
 });
 
 /** The phone book: paged and searchable for the app, the same rows the assistant's contact tools read. */
+export const MAX_CONTACTS = 5000;
+
 export const contactRoutes = new Hono<AppEnv>()
   .get("/", async (c) => {
     const { q, page, favourites } = parse(schemas.contactList, c.req.query());
@@ -53,6 +55,10 @@ export const contactRoutes = new Hono<AppEnv>()
   .post("/import", async (c) => {
     const { contacts: pasted } = await jsonBody(c, schemas.importContacts);
     const username = c.get("user").username;
+    const existing = await contacts.list(c.env.DB, username, { page: 1, pageSize: 1 });
+    if (existing.total + pasted.length > MAX_CONTACTS) {
+      return c.json({ error: "limit", limit: MAX_CONTACTS }, 413);
+    }
     const code = await countryCode(c, username);
     const byPhone = new Map<string, NewContact>();
     for (const entry of pasted) {

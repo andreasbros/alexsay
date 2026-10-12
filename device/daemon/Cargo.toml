@@ -10,19 +10,41 @@ publish.workspace = true
 name = "alexsay"
 path = "src/main.rs"
 
+[features]
+default = []
+# The Seeed ReSpeaker XVF3800 (Flex) on the Raspberry Pi: its ASR beam channel and card name
+flex = []
+
 [dependencies]
 alexsay-core = { path = "../core" }
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots", "http2"] }
+clap = { version = "4", features = ["derive", "env"] }
+cpal = "0.18"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots", "http2", "stream"] }
+serde.workspace = true
 serde_json.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "signal", "sync", "process"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+rubato = "0.16"
+base64.workspace = true
+sha2.workspace = true
+semver.workspace = true
+hound.workspace = true
+flate2 = "1"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+self-replace = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["net", "io-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
+
+[build-dependencies]
 
 [lints]
 workspace = true

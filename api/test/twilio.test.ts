@@ -514,7 +514,7 @@ describe("twilio", () => {
     });
     expect(unsigned.status).toBe(403);
     const unknown = await twilioWebhook("/v1/twilio/voice", { To: "+447700900555", From: MUM, CallSid: "CA9" });
-    expect(unknown.status).toBe(404);
+    expect(unknown.status).toBe(403);
 
     const res = await twilioWebhook("/v1/twilio/voice", {
       To: TWILIO_NUMBER,
@@ -750,6 +750,33 @@ describe("twilio", () => {
       ).status,
     ).toBe(404);
     expect((await openaiWebhook({ type: "realtime.something.else" })).status).toBe(200);
+    // A conference that is over cannot be joined again with the owner's key
+    await env.DB.prepare("UPDATE calls SET status = 'completed' WHERE role = 'assistant'").run();
+    expect((await openaiWebhook(event)).status).toBe(404);
+  });
+
+  it("tells users of the shared WhatsApp sandbox sender apart by the signature", async () => {
+    await addUser("anna", "anna-pass", "user");
+    const anna = await signIn("anna", "anna-pass");
+    const sandbox = "whatsapp:+14155238886";
+    await connectTwilio(maria, { whatsapp_from: sandbox });
+    await connectTwilio(anna, { whatsapp_from: sandbox }, "0123456789abcdef0123456789abcdef");
+    const forAnna = await twilioWebhook(
+      "/v1/twilio/messages",
+      { To: sandbox, From: "whatsapp:+447700900777", Body: "hi anna", MessageSid: "SM-anna" },
+      "0123456789abcdef0123456789abcdef",
+    );
+    expect(forAnna.status).toBe(200);
+    const stored = await env.DB.prepare("SELECT username FROM messages WHERE sid = 'SM-anna'").first<{
+      username: string;
+    }>();
+    expect(stored?.username).toBe("anna");
+    const forged = await twilioWebhook(
+      "/v1/twilio/messages",
+      { To: sandbox, From: "whatsapp:+447700900777", Body: "x", MessageSid: "SM-x" },
+      "ffffffffffffffffffffffffffffffff",
+    );
+    expect(forged.status).toBe(403);
   });
 
   it("dials the guests on the conference join event when the leg callbacks go missing, and reports progress", async () => {

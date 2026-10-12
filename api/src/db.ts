@@ -237,15 +237,19 @@ export const connections = {
     db.prepare("DELETE FROM connections WHERE username = ? AND provider = ?").bind(username, provider).run(),
 
   /** Whose Twilio number (or WhatsApp sender) an incoming call or message was addressed to. */
-  twilioByNumber: (db: D1Database, number: string) =>
-    db
-      .prepare(
-        `SELECT * FROM connections WHERE provider = 'twilio' AND (
-           json_extract(settings, '$.from_number') = ?1 OR
-           json_extract(settings, '$.whatsapp_from') IN (?1, 'whatsapp:' || ?1))`,
-      )
-      .bind(number)
-      .first<ConnectionRow>(),
+  /** Every user whose Twilio number or WhatsApp sender this is: the sandbox sender is shared by all. */
+  twilioByNumber: async (db: D1Database, number: string) =>
+    (
+      await db
+        .prepare(
+          `SELECT * FROM connections WHERE provider = 'twilio' AND (
+             json_extract(settings, '$.from_number') = ?1 OR
+             json_extract(settings, '$.whatsapp_from') IN (?1, 'whatsapp:' || ?1))
+           ORDER BY username`,
+        )
+        .bind(number)
+        .all<ConnectionRow>()
+    ).results,
 };
 
 /** Nightly: drops expired sessions and old login failures. */
@@ -347,6 +351,10 @@ export const memories = {
       )
       .bind(row.id, row.username, row.category, row.content, row.source, Date.now(), Date.now())
       .run(),
+
+  count: async (db: D1Database, username: string) =>
+    (await db.prepare("SELECT COUNT(*) AS n FROM memories WHERE username = ?").bind(username).first<{ n: number }>())
+      ?.n ?? 0,
 
   update: (db: D1Database, username: string, id: string, changes: { category?: MemoryCategory; content?: string }) =>
     db

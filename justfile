@@ -30,28 +30,29 @@ test-js: deps
     pnpm --filter app --filter website build
     pnpm --filter api --filter app --filter website test
 
-# Release build of the speaker daemon for the Raspberry Pi 5 (aarch64), prints the binary path
-build-device:
-    cd device && cargo build --release --target aarch64-unknown-linux-gnu -p alexsay-daemon
-    @readlink -f device/target/nix/aarch64-unknown-linux-gnu/release/alexsay
+# Static release build of the speaker: x86_64-linux (any distro) or aarch64-linux (Raspberry Pi 5 with the Flex)
+build-speaker target="x86_64-linux":
+    nix build .#alexsay-{{target}} --print-build-logs --out-link result-{{target}}
+    @ls -l result-{{target}}/bin/alexsay
 
-# Copy the daemon, unit and example config to the Pi and (re)start the service
-deploy-device host="pi@alexsay.local": build-device
-    #!/usr/bin/env bash
-    set -euo pipefail
-    scp device/target/nix/aarch64-unknown-linux-gnu/release/alexsay deploy/alexsay.service deploy/alexsay.toml {{host}}:/tmp/
-    ssh {{host}} bash -s <<'REMOTE'
-    set -euo pipefail
-    sudo install -m 755 /tmp/alexsay /usr/local/bin/alexsay
-    id alexsay >/dev/null 2>&1 || sudo useradd -r -s /usr/sbin/nologin -G audio alexsay
-    sudo install -d -m 755 /etc/alexsay
-    [ -f /etc/alexsay/alexsay.toml ] || sudo install -m 644 /tmp/alexsay.toml /etc/alexsay/alexsay.toml
-    sudo install -m 644 /tmp/alexsay.service /etc/systemd/system/alexsay.service
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now alexsay
-    sudo systemctl restart alexsay
-    sudo -u alexsay alexsay id
-    REMOTE
+# Debug build of the speaker for this machine, installed as ~/.local/bin/alexsay
+install-speaker:
+    cd device && cargo build -p alexsay-daemon
+    install -m 755 device/target/nix/debug/alexsay ~/.local/bin/alexsay
+    @echo "installed ~/.local/bin/alexsay ($(~/.local/bin/alexsay --version))"
+
+# The speaker binary against the deployed server with the e2e account; audio checks included (ALEXSAY_E2E_AUDIO=0 to skip)
+e2e-device:
+    cd device && ALEXSAY_E2E=1 ALEXSAY_E2E_AUDIO="${ALEXSAY_E2E_AUDIO:-1}" ALEXSAY_E2E_CONFIG="${ALEXSAY_E2E_CONFIG:-}" cargo test -p alexsay-daemon --test e2e -- --nocapture
+
+# Copy the Pi build to a Raspberry Pi and start it as a service
+deploy-device host="pi@alexsay.local": (build-speaker "aarch64-linux")
+    scp result-aarch64-linux/bin/alexsay {{host}}:/tmp/alexsay
+    ssh {{host}} 'mkdir -p ~/.local/bin && install -m 755 /tmp/alexsay ~/.local/bin/alexsay && ~/.local/bin/alexsay setup && ~/.local/bin/alexsay service install'
+
+# Cut a release: bumps the version, tags, pushes and creates the GitHub release (CI builds and attaches the binaries)
+release bump="patch":
+    scripts/release-tag.sh {{bump}}
 
 # Render brand/logo.svg into every icon size the app and website use
 icons:
@@ -81,7 +82,7 @@ add-user username role="user" where="--remote":
     hash=$(node scripts/hash-password.mjs "$password")
     unset password
     pnpm --filter api exec wrangler d1 execute alexsay {{where}} --command \
-      "INSERT INTO users (username, password_hash, role, created_at) VALUES ('{{username}}', '$hash', '{{role}}', unixepoch() * 1000) ON CONFLICT (username) DO UPDATE SET password_hash = excluded.password_hash, role = excluded.role"
+      "INSERT INTO users (username, password_hash, role, created_at) VALUES ('{{username}}', '$hash', '{{role}}', unixepoch() * 1000) ON CONFLICT (username) DO UPDATE SET password_hash = excluded.password_hash, role = excluded.role; DELETE FROM sessions WHERE username = '{{username}}'"
 
 # Create the two e2e accounts on the deployed site from the passwords in .env
 e2e-users:

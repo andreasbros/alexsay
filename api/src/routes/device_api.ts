@@ -1,9 +1,27 @@
 import { Hono } from "hono";
+import { createMiddleware } from "hono/factory";
+import { addTurns, endConversation, runToolFor, sessionFor, startConversation } from "../assistant_api";
 import { openaiConnection, twilioConnection } from "../connections";
 import { devices, users } from "../db";
 import * as schemas from "../schemas";
 import type { AppEnv } from "../types";
-import { jsonBody } from "../validate";
+import { jsonBody, parse } from "../validate";
+
+/** A claimed speaker acts as its owner: the UUID in the header is the credential. */
+const requireClaimedDevice = createMiddleware<AppEnv>(async (c, next) => {
+  const parsed = schemas.deviceId.safeParse(c.req.header("x-device-id") ?? "");
+  if (!parsed.success) {
+    return c.json({ error: "device_id" }, 400);
+  }
+  const row = await devices.get(c.env.DB, parsed.data);
+  const owner = row?.owner ? await users.get(c.env.DB, row.owner) : null;
+  if (!row?.owner || !owner) {
+    return c.json({ error: "unclaimed" }, 403);
+  }
+  c.set("user", { username: owner.username, role: owner.role });
+  c.set("device", { id: row.id, name: row.name });
+  await next();
+});
 
 /**
  * What a speaker calls. Its UUID is both its identity and its secret: whoever adds that UUID
@@ -47,4 +65,36 @@ export const deviceApiRoutes = new Hono<AppEnv>()
       telephony,
       account,
     });
+  })
+  .use("/session", requireClaimedDevice)
+  .use("/tools/*", requireClaimedDevice)
+  .use("/conversations", requireClaimedDevice)
+  .use("/conversations/*", requireClaimedDevice)
+  /** The GPT-Live session to start, built exactly as for the web page, with the owner's key for the socket. */
+  .get("/session", async (c) => {
+    const built = await sessionFor({ env: c.env, user: c.get("user"), origin: new URL(c.req.url).origin });
+    if (!built) {
+      return c.json({ error: "no_openai_connection" }, 412);
+    }
+    return c.json({ api_key: built.apiKey, session: built.session, device: c.get("device") });
+  })
+  .post("/tools/call", async (c) => {
+    const { name, arguments: args, conversation_id } = await jsonBody(c, schemas.toolCall);
+    const context = { env: c.env, user: c.get("user"), origin: new URL(c.req.url).origin, voice: "mobile" as const };
+    return c.json({ output: await runToolFor(context, name, args, conversation_id ?? null) });
+  })
+  .post("/conversations", async (c) => {
+    const id = await startConversation(c.env, c.get("user").username, "device", c.get("device").id);
+    return c.json({ id }, 201);
+  })
+  .post("/conversations/:id/turns", async (c) => {
+    const id = parse(schemas.memoryId, c.req.param("id"));
+    const { turns } = await jsonBody(c, schemas.addTurns);
+    const ok = await addTurns(c.env, c.get("user").username, id, turns);
+    return ok ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
+  })
+  .post("/conversations/:id/end", async (c) => {
+    const id = parse(schemas.memoryId, c.req.param("id"));
+    const ok = await endConversation(c.env, c.executionCtx, c.get("user").username, id);
+    return ok ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
   });

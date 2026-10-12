@@ -649,7 +649,7 @@ export const TOOLS: Tool[] = [
       },
     },
     run: async (c, args) => {
-      const refs = Array.isArray(args.participants) ? (args.participants as Record<string, unknown>[]) : [];
+      const refs = Array.isArray(args.participants) ? (args.participants as Record<string, unknown>[]).slice(0, 9) : [];
       if (refs.length === 0) {
         return { error: "participants are required" };
       }

@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "alexsay-www",
   "main": "src/worker.ts",
+  "workers_dev": false,
   "compatibility_date": "2026-08-15",
   "routes": [
     { "pattern": "www.alexsay.com", "custom_domain": true },

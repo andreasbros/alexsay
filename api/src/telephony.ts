@@ -587,6 +587,10 @@ async function legProgress(c: Scope, connection: Ready, conference: string): Pro
 }
 
 const TERMINAL_STATUSES = new Set(["completed", "busy", "failed", "no-answer", "canceled"]);
+
+/** A leg that may still be answered: dialled within the conference window and not over. */
+export const isLiveLeg = (leg: CallRow, now: number): boolean =>
+  !TERMINAL_STATUSES.has(leg.status) && now - leg.at < CONFERENCE_WINDOW_MS;
 /** After the end of a call, how long the assistant's leg may take to close before the report is final. */
 const REPORT_SETTLE_MS = 4000;
 const REPORT_TURNS = 400;

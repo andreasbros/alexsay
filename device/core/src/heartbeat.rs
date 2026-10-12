@@ -19,6 +19,18 @@ pub struct HeartbeatReply {
     pub poll_s: u64,
     #[serde(default)]
     pub assistant: Option<Assistant>,
+    #[serde(default)]
+    pub account: Option<Account>,
+    /// Twilio SIP details for the speaker's own phone line, once set up in the app.
+    #[serde(default)]
+    pub telephony: Option<serde_json::Value>,
+}
+
+/// Where the owner lives: the language and clock the assistant uses; also in the session instructions.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Account {
+    pub locale: String,
+    pub timezone: String,
 }
 
 /// The owner's voice backend, handed over once the speaker is claimed. Never log `api_key`.
@@ -39,7 +51,7 @@ impl Default for Assistant {
             provider: "openai".to_owned(),
             api_key: String::new(),
             model: "gpt-live-1".to_owned(),
-            backend_model: "gpt-5.5".to_owned(),
+            backend_model: "gpt-6-luna".to_owned(),
             voice: "marin".to_owned(),
             instructions: String::new(),
         }
@@ -74,7 +86,9 @@ mod tests {
                 name: None,
                 time: 1,
                 poll_s: 30,
-                assistant: None
+                assistant: None,
+                account: None,
+                telephony: None,
             }
         );
     }
@@ -82,7 +96,7 @@ mod tests {
     #[test]
     fn claimed_reply_with_assistant() {
         let json = r#"{"claimed":true,"name":"Kitchen","time":2,"poll_s":60,
-            "assistant":{"provider":"openai","api_key":"sk-x","model":"gpt-live-1","backend_model":"gpt-5.5",
+            "assistant":{"provider":"openai","api_key":"sk-x","model":"gpt-live-1","backend_model":"gpt-6-luna",
                          "voice":"cedar","instructions":""}}"#;
         let reply: HeartbeatReply = serde_json::from_str(json).unwrap();
         assert!(reply.claimed);

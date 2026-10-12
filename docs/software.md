@@ -167,40 +167,25 @@ Ending a session. GPT-Live has no idle timeout of its own and bills open voice t
 
 ## Configuration
 
-`/etc/alexsay/config.toml` (no secrets):
+`~/.local/alexsay/config.toml` (no secrets; `alexsay config init` writes it with every default and a comment):
 
 ```toml
-[audio]
-card = "<Flex card name from arecord -l>"
-firmware = "io16-6ch"          # or "io48"
-asr_channel = 1
-eq = { highpass_hz = 150, peak_hz = 240, peak_gain_db = -6.0, peak_q = 2.0 }
-
-[wake]
-model = "/var/lib/alexsay/alex.onnx"
-threshold = 0.5
-
-[session]
-backend = "live"               # or "realtime"
-delegate_model = "<backend text model for Responses delegation>"
-voice = "<voice>"
-idle_close_s = 10
-max_minutes = 10
-daily_minutes = 60
-
-[home_assistant]
-url = "http://127.0.0.1:8123"
-exposed = ["light.kitchen", "light.hallway"]
+[server]      url = "https://app.alexsay.com", poll_s = 30
+[audio]       input = "auto", output = "auto", channel = 1 (Flex ASR beam; unset = average), volume = 0.8, gain = 1.0
+[wake]        enabled = true, model = "builtin" | "data/models/alexsay.rpw", sensitivity = 0.5, refractory_s = 2.0
+[session]     idle_timeout_s = 20, after_reply_s = 8, max_minutes = 10, end_on_farewell = true, preroll_s = 1.5
+[sounds]      enabled = true, startup = true
+[update]      auto = true, check_hours = 6, repository = "andreasbros/alexsay"
+[log]         level = "info", keep_days = 7
 ```
 
-`/etc/alexsay/env` (0600): `OPENAI_API_KEY`, `HA_TOKEN`.
+`data/` beside it: `identity` (0600), `state.json`, `logs/`, `models/`, `recordings/`, `cache/`. The owner's OpenAI key arrives in the heartbeat over TLS and stays in memory.
 
 ## Deployment
 
-- **OS:** Raspberry Pi OS Lite 64-bit, headless, SSH key only.
-- **`alexsay.service`:** `CPUAffinity=2 3`, `LimitRTPRIO=50`, `SupplementaryGroups=audio`, `EnvironmentFile=/etc/alexsay/env`, `StateDirectory=alexsay`, `Restart=always`, `Type=notify`.
-- **Home Assistant:** Docker Compose, `network_mode: host`, `cpuset: "0,1"`, `restart: unless-stopped`, config in `/srv/homeassistant`. Not HA OS: the Pi runs our daemon too, and HA Supervised/Core installs are deprecated.
-- **Build:** cross-compile to `aarch64-unknown-linux-gnu` in the flake, `just deploy-device` copies the binary and restarts the unit.
+- One static binary per platform from the GitHub release (`just release`, `.github/workflows/release.yml`); `curl -fsSL https://alexsay.com/install.sh | sh` or `irm https://alexsay.com/install.ps1 | iex` installs it; `alexsay setup`, `alexsay service install`.
+- **Pi:** Raspberry Pi OS Lite 64-bit, the aarch64 build (musl, `flex` feature), `alexsay service install` as the `pi` user with `loginctl enable-linger`, or as root for a system unit. Home Assistant in Docker Compose (`network_mode: host`) alongside.
+- **Updates:** the binary checks GitHub every `update.check_hours`, verifies `SHA256SUMS.sig` with the release key built in, swaps itself and restarts, announcing the version by voice.
 
 ## Latency budget
 

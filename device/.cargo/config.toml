@@ -1,3 +1,0 @@
-# Raspberry Pi OS keeps its loader at the FHS path, not where the Nix cross glibc lives
-[target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-Wl,--dynamic-linker=/lib/ld-linux-aarch64.so.1"]

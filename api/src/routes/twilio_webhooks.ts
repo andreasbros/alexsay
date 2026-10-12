@@ -26,11 +26,8 @@ interface Owner {
 export const twilioWebhookRoutes = new Hono<AppEnv>()
   .post("/voice", async (c) => {
     const params = await form(c);
-    const owner = await ownerOfNumber(c, params.To ?? "");
+    const owner = await signedOwnerOfNumber(c, params);
     if (!owner) {
-      return xml(c, rejectTwiml("This number is not set up."), 404);
-    }
-    if (!(await signed(c, owner, params))) {
       return c.text("forbidden", 403);
     }
     const from = params.From ?? "";
@@ -72,7 +69,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       return c.text("forbidden", 403);
     }
     const dialled = SIP_USER.exec(params.To ?? "")?.[1] ?? "";
-    const to = normalisePhone(decodeURIComponent(dialled), owner.connection.settings.country_code);
+    const to = normalisePhone(decodeSafe(dialled), owner.connection.settings.country_code);
     if (!to || !owner.connection.settings.from_number) {
       return xml(c, rejectTwiml("That number cannot be dialled."));
     }
@@ -94,11 +91,8 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
   })
   .post("/messages", async (c) => {
     const params = await form(c);
-    const owner = await ownerOfNumber(c, params.To ?? "");
+    const owner = await signedOwnerOfNumber(c, params);
     if (!owner) {
-      return c.text("not found", 404);
-    }
-    if (!(await signed(c, owner, params))) {
       return c.text("forbidden", 403);
     }
     const from = bareNumber(params.From ?? "");
@@ -199,9 +193,26 @@ async function form(c: Context<AppEnv>): Promise<Params> {
   return params;
 }
 
-async function ownerOfNumber(c: Context<AppEnv>, to: string): Promise<Owner | null> {
-  const row = await connections.twilioByNumber(c.env.DB, bareNumber(to));
-  return row ? { username: row.username, connection: await twilioFromRow(c, row) } : null;
+/**
+ * The user this webhook is for: of everyone who claims the number (the WhatsApp sandbox sender is
+ * shared), the one whose auth token signed the request. Unknown and unsigned look the same (403).
+ */
+async function signedOwnerOfNumber(c: Context<AppEnv>, params: Params): Promise<Owner | null> {
+  for (const row of await connections.twilioByNumber(c.env.DB, bareNumber(params.To ?? ""))) {
+    const owner = { username: row.username, connection: await twilioFromRow(c, row) };
+    if (await signed(c, owner, params)) {
+      return owner;
+    }
+  }
+  return null;
+}
+
+function decodeSafe(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return "";
+  }
 }
 
 const signed = (c: Context<AppEnv>, owner: Owner, params: Params) =>

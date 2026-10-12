@@ -4,7 +4,7 @@ import { openaiConnection } from "../connections";
 import { calls, connections, users } from "../db";
 import { logFor } from "../log";
 import { acceptCall, ProviderError, rejectCall, verifyWebhook } from "../providers/openai";
-import { AGENT_HEADER, agentBrief, CONFERENCE_HEADER, notOnCalls, parseAgent } from "../telephony";
+import { AGENT_HEADER, agentBrief, CONFERENCE_HEADER, isLiveLeg, notOnCalls, parseAgent } from "../telephony";
 import { agentToolDefinitions, toolDefinitions } from "../tools";
 import type { AppEnv } from "../types";
 
@@ -36,7 +36,8 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
   const agentLegId = header(AGENT_HEADER);
   const agentLeg = agentLegId ? await calls.get(c.env.DB, agentLegId) : null;
   const agent = agentLeg?.conference === conference ? parseAgent(agentLeg.brief) : null;
-  const leg = agent ? agentLeg : conference ? await calls.assistantLeg(c.env.DB, conference) : null;
+  const candidate = agent ? agentLeg : conference ? await calls.assistantLeg(c.env.DB, conference) : null;
+  const leg = candidate && isLiveLeg(candidate, Date.now()) ? candidate : null;
   const openai = leg ? await openaiConnection(c, leg.username) : null;
   if (!leg || !openai?.webhookSecret || !callId) {
     return c.json({ error: "not_found" }, 404);

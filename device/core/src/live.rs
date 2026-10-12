@@ -1,51 +1,23 @@
 //! GPT-Live over WebSocket (`wss://api.openai.com/v1/live/sessions`): the events the daemon sends and reads.
-//! Audio is raw PCM16 mono 24 kHz, base64 in JSON. Unknown server events deserialise as `Other`.
+//! Audio is raw PCM16 mono 16 kHz, base64 in JSON. Unknown server events deserialise as `Other`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const LIVE_URL: &str = "wss://api.openai.com/v1/live/sessions";
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Tool {
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ResponsesDelegation {
-    pub model: String,
-    pub instructions: String,
-    pub tools: Vec<Tool>,
-    pub tool_choice: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Delegation {
-    Client,
-    Responses { responses: ResponsesDelegation },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OutputAudio {
-    pub voice: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AudioConfig {
-    pub output: OutputAudio,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SessionConfig {
-    pub model: String,
-    pub instructions: String,
-    pub audio: AudioConfig,
-    pub delegation: Delegation,
+/// The session body the server built for this user (`GET /v1/device/session`), with the daemon's audio format added.
+pub fn session_with_audio_format(mut session: Value, rate: u32) -> Value {
+    let format = serde_json::json!({ "type": "audio/pcm", "rate": rate });
+    match session.get_mut("audio") {
+        Some(Value::Object(audio)) => {
+            audio.insert("format".to_owned(), format);
+        }
+        _ => {
+            session["audio"] = serde_json::json!({ "format": format });
+        }
+    }
+    session
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -59,7 +31,7 @@ pub enum Item {
 #[serde(tag = "type")]
 pub enum ClientEvent {
     #[serde(rename = "session.start")]
-    SessionStart { session: SessionConfig },
+    SessionStart { session: Value },
     #[serde(rename = "session.input_audio.append")]
     InputAudioAppend { audio: String },
     #[serde(rename = "session.input_audio.mute")]
@@ -193,52 +165,38 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn config() -> SessionConfig {
-        SessionConfig {
-            model: "gpt-live-1".to_owned(),
-            instructions: "Be concise.".to_owned(),
-            audio: AudioConfig {
-                output: OutputAudio {
-                    voice: "marin".to_owned(),
-                },
-            },
-            delegation: Delegation::Responses {
-                responses: ResponsesDelegation {
-                    model: "gpt-5.5".to_owned(),
-                    instructions: "Use tools.".to_owned(),
-                    tools: vec![Tool {
-                        kind: "function".to_owned(),
-                        name: "set_light".to_owned(),
-                        description: "Switch a light".to_owned(),
-                        parameters: json!({"type": "object", "properties": {}}),
-                    }],
-                    tool_choice: "auto".to_owned(),
-                },
-            },
-        }
+    fn config() -> Value {
+        json!({
+            "model": "gpt-live-1",
+            "instructions": "Be concise.",
+            "audio": {"output": {"voice": "marin"}},
+            "delegation": {"type": "responses", "responses": {"model": "gpt-6-luna", "instructions": "Use tools.",
+                "tools": [{"type": "function", "name": "set_light", "description": "Switch a light", "parameters": {"type": "object", "properties": {}}}],
+                "tool_choice": "auto"}}
+        })
     }
 
     #[test]
-    fn session_start_matches_the_documented_shape() {
-        let value = serde_json::to_value(ClientEvent::SessionStart { session: config() }).unwrap();
+    fn session_start_carries_the_server_body_with_the_audio_format() {
+        let session = session_with_audio_format(config(), 16_000);
+        let value = serde_json::to_value(ClientEvent::SessionStart { session }).unwrap();
         assert_eq!(value["type"], "session.start");
         assert_eq!(value["session"]["model"], "gpt-live-1");
         assert_eq!(value["session"]["audio"]["output"]["voice"], "marin");
-        assert_eq!(value["session"]["delegation"]["type"], "responses");
+        assert_eq!(
+            value["session"]["audio"]["format"],
+            json!({"type": "audio/pcm", "rate": 16000})
+        );
         assert_eq!(
             value["session"]["delegation"]["responses"]["tools"][0]["name"],
             "set_light"
         );
-        assert_eq!(
-            value["session"]["delegation"]["responses"]["tool_choice"],
-            "auto"
-        );
+        let bare = session_with_audio_format(json!({"model": "m"}), 24_000);
+        assert_eq!(bare["audio"]["format"]["rate"], 24_000);
     }
 
     #[test]
     fn client_delegation_and_simple_events() {
-        let client = serde_json::to_value(Delegation::Client).unwrap();
-        assert_eq!(client, json!({"type": "client"}));
         assert_eq!(
             serde_json::to_string(&ClientEvent::SessionClose).unwrap(),
             r#"{"type":"session.close"}"#

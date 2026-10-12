@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { login, logout, requireUser, startSession } from "../auth";
+import { login, logout, registrationAllowed, requireUser, startSession } from "../auth";
 import { hashPassword } from "../crypto";
 import { users } from "../db";
 import * as schemas from "../schemas";
@@ -9,6 +9,9 @@ import { jsonBody } from "../validate";
 export const sessionRoutes = new Hono<AppEnv>()
   .post("/register", async (c) => {
     const { username, password } = await jsonBody(c, schemas.register);
+    if (!(await registrationAllowed(c))) {
+      return c.json({ error: "too_many" }, 429);
+    }
     if (await users.get(c.env.DB, username)) {
       return c.json({ error: "exists" }, 409);
     }

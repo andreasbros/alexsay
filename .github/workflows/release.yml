@@ -1,0 +1,140 @@
+# Builds the speaker for every platform, signs the checksum list with the release key, and attaches
+# everything to the GitHub release for the tag. Assets are named by target triple (no version), so
+# "latest" download links and the binary's self-update never change shape.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+permissions:
+  contents: write
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - package: alexsay-x86_64-linux
+            target: x86_64-unknown-linux-musl
+          - package: alexsay-aarch64-linux
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - name: Build (static musl, ALSA compiled in)
+        run: nix build .#${{ matrix.package }} --print-build-logs
+      - name: Package
+        run: |
+          mkdir -p dist/stage
+          cp result/bin/alexsay dist/stage/alexsay
+          tar -C dist/stage -czf dist/alexsay-${{ matrix.target }}.tar.gz alexsay
+          rm -r dist/stage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz
+  macos:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - run: rustup show && rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: device
+      - name: Build
+        run: cd device && cargo build --release -p alexsay-daemon --target ${{ matrix.target }}
+      - name: Import the Developer ID certificate
+        if: env.MACOS_CERT_P12 != ''
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN=$RUNNER_TEMP/signing.keychain-db; KEYCHAIN_PW=$(uuidgen)
+          echo "$MACOS_CERT_P12" | base64 -d > $RUNNER_TEMP/cert.p12
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import $RUNNER_TEMP/cert.p12 -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/ {print $2; exit}')
+          echo "CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+      - name: Prepare notarisation credentials
+        if: env.APP_STORE_CONNECT_KEY != ''
+        env:
+          APP_STORE_CONNECT_KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+        run: |
+          echo "$APP_STORE_CONNECT_KEY" | base64 -d > $RUNNER_TEMP/asc.p8
+          echo "NOTARY_KEY_FILE=$RUNNER_TEMP/asc.p8" >> "$GITHUB_ENV"
+          echo "NOTARY_KEY_ID=${{ secrets.APP_STORE_CONNECT_KEY_ID }}" >> "$GITHUB_ENV"
+          echo "NOTARY_ISSUER_ID=${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" >> "$GITHUB_ENV"
+      - name: Sign, notarise and package
+        run: scripts/macos-sign.sh device/target/${{ matrix.target }}/release/alexsay dist/alexsay-${{ matrix.target }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: device
+      - name: Build (static CRT, no redistributable needed)
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cd device && cargo build --release -p alexsay-daemon --target x86_64-pc-windows-msvc
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path device/target/x86_64-pc-windows-msvc/release/alexsay.exe -DestinationPath dist/alexsay-x86_64-pc-windows-msvc.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x86_64-pc-windows-msvc
+          path: dist/*.zip
+  publish:
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums, signed with the release key
+        env:
+          ALEXSAY_RELEASE_KEY: ${{ secrets.ALEXSAY_RELEASE_KEY }}
+        run: |
+          cd dist
+          sha256sum alexsay-* > SHA256SUMS
+          tar -xzf alexsay-x86_64-unknown-linux-musl.tar.gz alexsay
+          ./alexsay release sign-sums SHA256SUMS > SHA256SUMS.sig
+          rm alexsay
+          cat SHA256SUMS
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "alexsay $TAG" --generate-notes
+          gh release upload "$TAG" dist/* --clobber

@@ -36,7 +36,7 @@ export type VoiceClient = "browser" | "mobile";
 
 export interface AppEnv {
   Bindings: Env;
-  Variables: { user: User; voice?: VoiceClient };
+  Variables: { user: User; voice?: VoiceClient; device: { id: string; name: string } };
 }
 
 /** Anything that can reach the bindings: a Hono context, a tool context, a Durable Object. */

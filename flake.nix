@@ -8,9 +8,10 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    crane.url = "github:ipetkov/crane";
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, crane }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -18,12 +19,62 @@
           overlays = [ rust-overlay.overlays.default ];
         };
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./device/rust-toolchain.toml;
-        # The daemon runs on a Raspberry Pi 5 (aarch64); the cross gcc links the release build
-        piCc = pkgs.pkgsCross.aarch64-multiplatform.stdenv.cc;
         # e2e/package.json must pin @playwright/test to this driver's version
         playwrightBrowsers = pkgs.playwright-driver.browsers;
+
+        # The speaker binary, fully static (musl, ALSA compiled in) for the Linux targets.
+        # crossPkgs supplies the musl C toolchain and a static alsa-lib for that architecture.
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+        speakerSrc = pkgs.lib.cleanSourceWith {
+          src = craneLib.path ./device;
+          # The wake word model ships inside the binary, so it rides along with the Cargo sources
+          filter = path: type: (craneLib.filterCargoSources path type) || (pkgs.lib.hasSuffix ".rpw" path);
+        };
+        speakerFor = { crossPkgs, target, features ? [ ] }:
+          let
+            cc = crossPkgs.stdenv.cc;
+            alsa = pkgs.lib.getDev crossPkgs.pkgsStatic.alsa-lib;
+            upper = builtins.replaceStrings [ "-" ] [ "_" ] (pkgs.lib.toUpper target);
+            envTarget = builtins.replaceStrings [ "-" ] [ "_" ] target;
+            args = {
+              src = speakerSrc;
+              strictDeps = true;
+              pname = "alexsay";
+              cargoExtraArgs = "-p alexsay-daemon" + pkgs.lib.optionalString (features != [ ]) " --features ${builtins.concatStringsSep "," features}";
+              doCheck = false;
+              nativeBuildInputs = [ pkgs.pkg-config pkgs.file ];
+              CARGO_BUILD_TARGET = target;
+              "CARGO_TARGET_${upper}_LINKER" = "${cc}/bin/${cc.targetPrefix}cc";
+              "CC_${envTarget}" = "${cc}/bin/${cc.targetPrefix}cc";
+              "AR_${envTarget}" = "${cc}/bin/${cc.targetPrefix}ar";
+              HOST_CC = "${pkgs.stdenv.cc.nativePrefix}cc";
+              CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
+              PKG_CONFIG_ALL_STATIC = "1";
+              PKG_CONFIG_PATH = "${alsa}/lib/pkgconfig";
+              "PKG_CONFIG_PATH_${envTarget}" = "${alsa}/lib/pkgconfig";
+            };
+            cargoArtifacts = craneLib.buildDepsOnly args;
+          in
+          craneLib.buildPackage (args // {
+            inherit cargoArtifacts;
+            postInstall = ''
+              file $out/bin/alexsay
+              file $out/bin/alexsay | grep -Eq "statically linked|static-pie linked" || (echo "alexsay is not static"; exit 1)
+            '';
+          });
+        muslX86 = pkgs.pkgsCross.musl64;
+        muslArm = pkgs.pkgsCross.aarch64-multiplatform-musl;
       in
       {
+        packages = {
+          # Linux x86_64, any distribution: USB microphone and speaker through ALSA
+          alexsay-x86_64-linux = speakerFor { crossPkgs = muslX86; target = "x86_64-unknown-linux-musl"; };
+          # Raspberry Pi 5 with the ReSpeaker Flex (its ASR beam channel is the default input)
+          alexsay-aarch64-linux = speakerFor { crossPkgs = muslArm; target = "aarch64-unknown-linux-musl"; features = [ "flex" ]; };
+          # Raspberry Pi or any aarch64 Linux with a plain USB microphone
+          alexsay-aarch64-linux-generic = speakerFor { crossPkgs = muslArm; target = "aarch64-unknown-linux-musl"; };
+        };
+
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             rustToolchain
@@ -34,18 +85,19 @@
             resvg
             imagemagick
             openssl
+            pkg-config
+            alsa-lib
+            file
+            gh
           ];
 
           CARGO_TARGET_DIR = "target/nix";
-          # Referenced by path rather than put on PATH, so host C builds keep the host gcc
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "${piCc}/bin/${piCc.targetPrefix}cc";
-          CC_aarch64_unknown_linux_gnu = "${piCc}/bin/${piCc.targetPrefix}cc";
-          AR_aarch64_unknown_linux_gnu = "${piCc}/bin/${piCc.targetPrefix}ar";
           PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsers;
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
 
           shellHook = ''
             export WRANGLER_SEND_METRICS=false
+            export LD_LIBRARY_PATH="${pkgs.alsa-lib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             echo "alexsay shell: just --list"
           '';
         };

@@ -10,7 +10,7 @@ An open-source smart speaker. Say **"Alexsay"** and it opens a full-duplex OpenA
 
 | Path | What |
 |---|---|
-| `device/` | Rust workspace: `core` (host-tested protocol, config, GPT-Live events, session state machine) and `daemon` (the `alexsay` binary: identity, heartbeat; audio comes with the hardware) |
+| `device/` | Rust workspace: `core` (host-tested: config, GPT-Live events, session rules, wake-word training, signed updates) and `daemon` (the `alexsay` binary: audio, wake word, GPT-Live, the server's tools, self-update, service install) |
 | `api/` | Cloudflare Worker (Hono + D1) at `app.alexsay.com`: accounts, devices, connections, GPT-Live session broker; serves `app/dist` |
 | `app/` | The web app (Vite, React, Radix Themes): login, register, devices, assistant sphere, connections, admin users |
 | `website/` | The marketing site (Vite, React, prerendered) at `www.alexsay.com` and `alexsay.com`, its own Worker |
@@ -28,10 +28,26 @@ All tooling comes from the Nix flake (`nix develop`, or `direnv allow` once). `j
 | `just dev` | local Worker (:8787) with local D1 + app dev server (:5173); `just dev-website` for the site |
 | `just e2e` | Playwright against the deployed site (`E2E_*` in `.env`); `just deploy` runs it last |
 | `just deploy` / `just deploy-website` | deploy the app Worker (with D1 migrations) / the website Worker |
-| `just build-device` / `just deploy-device` | aarch64 release build of the daemon / install it on the Pi as a systemd service |
+| `just build-speaker [x86_64-linux\|aarch64-linux]` / `just deploy-device` | static musl build of the speaker / install it on the Pi as a service |
+| `just e2e-device` / `just install-speaker` | the binary against the deployed server with the e2e account / a debug build into `~/.local/bin` |
+| `just release [patch\|minor\|major]` | bump, tag and create the GitHub release; CI builds and signs the binaries |
 | `just add-user <name> [admin]` / `just e2e-users` | create or update an account in D1 / the two e2e accounts from `.env` |
 | `just secrets-key` / `just create-db` / `just logs` | one-off Cloudflare setup, Worker logs |
 | `just icons` | re-render the icon set from `brand/logo.svg` |
+
+## The speaker binary
+
+One static binary per platform, from the GitHub release: Linux x86_64 and aarch64 (musl, ALSA compiled in), macOS (Apple Silicon and Intel, signed and notarised), Windows x64.
+
+```sh
+curl -fsSL https://alexsay.com/install.sh | sh        # Linux, macOS, Raspberry Pi
+irm https://alexsay.com/install.ps1 | iex             # Windows
+alexsay setup                                          # id to add in the app, audio check
+alexsay run                                            # say "Alexsay" and talk
+alexsay service install                                # run at boot
+```
+
+It keeps everything under `~/.local/alexsay` (`config.toml`, `data/identity`, `data/logs`, `data/models`, `data/recordings`, `data/cache`); `ALEXSAY_HOME` or `--home` moves it. `alexsay config show` prints the effective settings, `alexsay smoke` checks every part against the server, `alexsay wake record` and `alexsay wake train` fit the wake word to your voice, `alexsay update` installs a new release (also automatic, verified against the release key built into the binary). See [`docs/device-tests.md`](docs/device-tests.md).
 
 ## How it fits together
 

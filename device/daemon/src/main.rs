@@ -423,7 +423,7 @@ async fn dispatch(
                     };
                     wake_cli::train(&paths, &dir, epochs, previous.as_deref())?;
                     let mut config = config;
-                    config.wake.model = "data/models/alexsay.rpw".to_owned();
+                    "data/models/alexsay.rpw".clone_into(&mut config.wake.model);
                     paths::save_config(&paths, &config)?;
                     println!(
                         "The config now uses it (wake.model = data/models/alexsay.rpw); restart `alexsay run`."

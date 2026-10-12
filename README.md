@@ -11,6 +11,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Raspberry%20Pi%205%20%7C%20macOS%20%7C%20Windows-lightgrey)
 [![App](https://img.shields.io/badge/app-app.alexsay.com-6e56cf)](https://app.alexsay.com)
 [![Website](https://img.shields.io/badge/web-alexsay.com-6e56cf)](https://www.alexsay.com)
+[![Blog](https://img.shields.io/badge/blog-alexsay.com%2Fblog-6e56cf)](https://www.alexsay.com/blog)
 
 <a href="https://www.alexsay.com">
   <picture>
@@ -51,7 +52,7 @@ alexsay run                # listen for the wake word; Ctrl-C stops
 alexsay service install    # or run it at boot (systemd, launchd or a Windows task)
 ```
 
-Prefer to see it first? The **Assistant** tab in the app is the same assistant in your browser.
+Prefer to see it first? The **Assistant** tab in the app is the same assistant in your browser. Release notes and design write-ups are on [the blog](https://www.alexsay.com/blog).
 
 ### Everyday commands
 

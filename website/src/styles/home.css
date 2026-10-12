@@ -165,7 +165,12 @@
 }
 @media (max-width: 900px) {
   .integrations {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 359px) {
+  .integrations {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -325,10 +330,11 @@
   .term-screen {
     padding-left: 10px;
   }
+  /* The install line stays on one row: 46 monospace characters scaled to the screen width */
   .dev-install {
-    font-size: 12px;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    padding: 12px 10px;
+    white-space: nowrap;
+    font-size: min(13px, calc(3.5vw - 2.4px));
   }
   .term-stage {
     perspective: 900px;

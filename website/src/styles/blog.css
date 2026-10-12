@@ -129,9 +129,11 @@
   .prose {
     font-size: 17px;
   }
+  .prose pre {
+    padding: 12px 10px;
+  }
   .prose pre code {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    font-size: 13px;
+    white-space: pre;
+    font-size: min(13px, calc(3.5vw - 2.4px));
   }
 }

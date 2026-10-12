@@ -52,7 +52,5 @@ test("the owner removes a speaker, which is then unclaimed", async ({ page, devi
   expect((await removed).status()).toBe(204);
   await expect(page.getByRole("row", { name: /Spare room/ })).toHaveCount(0);
   const beat = await heartbeat(request, deviceId);
-  const body = (await beat.json()) as Record<string, unknown>;
-  console.log(`heartbeat after removal: ${beat.status()} claimed=${String(body.claimed)} name=${String(body.name)}`);
-  expect(body).toMatchObject({ claimed: false });
+  expect(await beat.json()).toMatchObject({ claimed: false });
 });

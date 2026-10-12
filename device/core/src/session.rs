@@ -477,7 +477,13 @@ mod tests {
         );
         let actions = audio(&mut session, &voice(), 9_000);
         assert_eq!(actions, vec![Action::PlayAudio(voice())]);
-        assert_eq!(session.on_tick(13_999), Vec::new());
+        assert_eq!(
+            session.on_tick(13_999),
+            vec![Action::Transcript {
+                role: "assistant",
+                text: "Done.".to_owned()
+            }]
+        );
         assert_eq!(
             session.on_tick(14_000),
             vec![
@@ -600,6 +606,10 @@ mod tests {
         assert_eq!(
             session.on_tick(7_000),
             vec![
+                Action::Transcript {
+                    role: "assistant",
+                    text: "Done.".to_owned()
+                },
                 Action::Log("closing: quiet after the reply".to_owned()),
                 Action::Close
             ]

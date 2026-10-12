@@ -1,69 +1,187 @@
-# alexsay
+<div align="center">
 
-An open-source smart speaker. Say **"Alexsay"** and it opens a full-duplex OpenAI voice conversation (GPT-Live, `gpt-live-1`) with your own API keys, and controls the home through Home Assistant and provider integrations.
+# Alexsay
 
-- **Hardware:** Raspberry Pi 5 8GB, Seeed reSpeaker Flex XVF3800 (circular 4-mic array, hardware echo cancellation, on-board amp), Visaton R 10 S 4" driver, one 3D-printed cylinder
-- **Cloud:** Cloudflare Workers + D1. The app at [app.alexsay.com](https://app.alexsay.com), the website at [www.alexsay.com](https://www.alexsay.com)
-- **Status (10 Oct 2026):** hardware ordered, nothing assembled. Software scaffold deployed: accounts, device claiming, provider connections, browser assistant
+**The open-source voice assistant speaker you build and own.**
 
-## Code
+[![CI](https://github.com/andreasbros/alexsay/actions/workflows/ci.yml/badge.svg)](https://github.com/andreasbros/alexsay/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/andreasbros/alexsay?display_name=tag&sort=semver)](https://github.com/andreasbros/alexsay/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Rust](https://img.shields.io/badge/rust-stable-orange?logo=rust)
+![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Raspberry%20Pi%205%20%7C%20macOS%20%7C%20Windows-lightgrey)
+[![App](https://img.shields.io/badge/app-app.alexsay.com-6e56cf)](https://app.alexsay.com)
+[![Website](https://img.shields.io/badge/web-alexsay.com-6e56cf)](https://www.alexsay.com)
 
-| Path | What |
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="website/src/media/home-night-wide-1600.webp">
+  <img alt="The Alexsay speaker, a charcoal fabric cylinder, on a wooden side table at home" src="website/src/media/home-day-wide-1600.webp" width="100%">
+</picture>
+
+</div>
+
+Say **"Alexsay"** and talk. A full-duplex OpenAI voice conversation answers in about a second, remembers what matters to you, switches your lights, phones your contacts and joins the call with you, all on **your own API keys**.
+
+- 🦀 **One blazing-fast Rust binary.** Static, no runtime, no Python, about 13 MB. Linux x86_64 and aarch64, macOS, Windows.
+- 👂 **On-device wake word.** "Alexsay" is spotted locally with a small neural network; train it on your own voice in two minutes.
+- 🔇 **Software echo cancellation.** WebRTC's AEC3 in pure Rust removes the speaker's own voice from the microphone, so you can talk over the assistant on any laptop or USB microphone.
+- 🍓 **Raspberry Pi 5 stack.** Pi 5, a ReSpeaker XVF3800 four-microphone array with hardware echo cancellation, a 4" driver and a printed cylinder.
+- 🧠 **Memory.** Every conversation is summarised and the durable facts are kept, so the assistant knows your people, home and routines next time.
+- 📞 **Phone calls.** Call, text and WhatsApp your contacts; the assistant joins the call, presses menu keys, hands you a summary when it ends.
+
+## Quick start
+
+Install the speaker, give it an id, claim it in the app and talk.
+
+```sh
+curl -fsSL https://alexsay.com/install.sh | sh     # Linux, Raspberry Pi, macOS
+irm https://alexsay.com/install.ps1 | iex          # Windows (PowerShell)
+
+alexsay setup              # prints this speaker's id and checks the microphone and speaker
+```
+
+1. Open [app.alexsay.com](https://app.alexsay.com), create an account, and paste your OpenAI API key under **Connections**.
+2. Add the id from `alexsay setup` under **Speakers**.
+3. Start it and say "Alexsay":
+
+```sh
+alexsay run                # listen for the wake word; Ctrl-C stops
+alexsay service install    # or run it at boot (systemd, launchd or a Windows task)
+```
+
+Prefer to see it first? The **Assistant** tab in the app is the same assistant in your browser.
+
+### Everyday commands
+
+| Command | What it does |
 |---|---|
-| `device/` | Rust workspace: `core` (host-tested: config, GPT-Live events, session rules, wake-word training, signed updates) and `daemon` (the `alexsay` binary: audio, wake word, GPT-Live, the server's tools, self-update, service install) |
-| `api/` | Cloudflare Worker (Hono + D1) at `app.alexsay.com`: accounts, devices, connections, GPT-Live session broker; serves `app/dist` |
-| `app/` | The web app (Vite, React, Radix Themes): login, register, devices, assistant sphere, connections, admin users |
-| `website/` | The marketing site (Vite, React, prerendered) at `www.alexsay.com` and `alexsay.com`, its own Worker |
-| `e2e/` | Playwright suite against the deployed site, with a fake device that calls the real device API |
-| `brand/`, `scripts/icons.sh` | The AY mark and the script that renders every icon size for app and website |
-| `deploy/` | systemd unit and example config for the Pi |
-| `docs/` | Hardware and software design, see [`docs/README.md`](docs/README.md) |
+| `alexsay status` | Claimed? Which assistant? Is the service running? |
+| `alexsay devices` | Every microphone and speaker, with the exact id to put in the config |
+| `alexsay smoke` | Checks every part against the server; `--voice` adds checks you take part in |
+| `alexsay wake test --scores` | Live levels and wake word scores, colour coded |
+| `alexsay wake record` and `alexsay wake train` | Record your own "Alexsay" and train the wake word on it |
+| `alexsay config show`, `alexsay config set audio.volume 0.6` | Read or change the settings |
+| `alexsay call status`, `call mute`, `call unmute`, `call hangup` | Control a phone call in progress |
+| `alexsay logs -f`, `alexsay update`, `alexsay clean`, `alexsay reset` | Logs, updates (also automatic), housekeeping |
 
-All tooling comes from the Nix flake (`nix develop`, or `direnv allow` once). `just` lists the recipes:
+Everything lives under `~/.local/alexsay`: `config.toml` and `data/` (identity, logs, models, recordings). `ALEXSAY_HOME` or `--home` moves it. Releases are checked every six hours, verified against a signing key built into the binary, installed and announced by voice.
+
+## How it works
+
+```
+ you ──"Alexsay"──▶ wake word (on device) ──▶ GPT-Live over WebSocket ◀──▶ OpenAI
+                                                    │ tool calls
+                                                    ▼
+                         app.alexsay.com (Cloudflare Worker + D1)
+            memory · contacts · lights (Lightwave) · phone (Twilio) · your keys, sealed
+```
+
+- **The speaker** captures audio, cancels its own echo, spots the wake word and streams 16 kHz audio to GPT-Live. Every tool the model calls runs on the server as the speaker's owner.
+- **The app** at [app.alexsay.com](https://app.alexsay.com) is where you sign in, connect providers, claim speakers, manage contacts and memories, and talk to the assistant in the browser over WebRTC.
+- **Your keys** are sealed with AES-GCM in the server's database and handed to a claimed speaker in memory only; nothing secret is written to the speaker's disk.
+
+### How the assistant builds its memory
+
+1. Every conversation, from the speaker or the browser, is recorded turn by turn.
+2. When it ends, a backend model reads the transcript with your stored memories and writes a two-sentence summary, then adds, updates or removes memory records: preferences, people, home, routines, reminders and facts.
+3. Every new session opens with those memories, the recent summaries, your locale and the time where you are.
+4. During a conversation the assistant can `remember`, `forget`, search past conversations and read a transcript back, and you can edit everything under **Memory** in the app.
+
+## Build your own speaker
+
+| Part | Role |
+|---|---|
+| Raspberry Pi 5 (8 GB) | Runs the `alexsay` binary and, if you like, Home Assistant |
+| Seeed ReSpeaker Flex XVF3800 (circular) | Four microphones, beamforming, hardware echo cancellation, amplifier |
+| Visaton R 10 S 4 Ω | The 4" driver |
+| A printed cylinder, about 150 × 210 mm | The enclosure |
+
+The full parts list, wiring, acoustics and bring-up steps are in [`docs/`](docs/README.md): [build manual](docs/build-manual.md), [device design](docs/device-design.md), [procurement](docs/procurement.md). No hardware yet? Any laptop or a USB microphone and speaker works today.
+
+## Local server or the public one
+
+| | Public: `app.alexsay.com` | Your own server |
+|---|---|---|
+| Setup | None: sign up and go | Your Cloudflare account (`just deploy`) or a laptop (`just dev`) |
+| Speaker config | Default | `alexsay config set server.url http://localhost:8787` |
+| Conversations, memory, tools, lights | ✓ | ✓ |
+| Calls opened in the browser | ✓ | ✓ |
+| Incoming calls, the assistant joining calls, speaker phone lines | ✓ | Needs a public address: run a tunnel (for example `cloudflared`) and set `PUBLIC_URL` |
+
+Twilio and OpenAI call back into the server for phone calls, so those parts need an address the internet can reach. A local server knows when it has none: it leaves your Twilio number's routing alone, keeps the assistant off calls and says why.
+
+## Development
+
+Everything runs inside the Nix flake: Rust, Node, pnpm, wrangler, Playwright, `just`.
+
+```sh
+git clone https://github.com/andreasbros/alexsay.git
+cd alexsay
+nix develop                 # or: direnv allow
+just --list                 # every recipe
+```
 
 | Recipe | Does |
 |---|---|
-| `just check` | setup check: Nix shell, toolchain, env vars, Cloudflare token |
-| `just test` | fmt, clippy, cargo test, Biome, tsc, Vitest (api runs in workerd with local D1), app and website builds |
-| `just dev` | local Worker (:8787) with local D1 + app dev server (:5173); `just dev-website` for the site |
-| `just e2e` | Playwright against the deployed site (`E2E_*` in `.env`); `just deploy` runs it last |
-| `just deploy` / `just deploy-website` | deploy the app Worker (with D1 migrations) / the website Worker |
-| `just build-speaker [x86_64-linux\|aarch64-linux]` / `just deploy-device` | static musl build of the speaker / install it on the Pi as a service |
-| `just e2e-device` / `just install-speaker` | the binary against the deployed server with the e2e account / a debug build into `~/.local/bin` |
-| `just release [patch\|minor\|major]` | bump, tag and create the GitHub release; CI builds and signs the binaries |
-| `just add-user <name> [admin]` / `just e2e-users` | create or update an account in D1 / the two e2e accounts from `.env` |
-| `just secrets-key` / `just create-db` / `just logs` | one-off Cloudflare setup, Worker logs |
-| `just icons` | re-render the icon set from `brand/logo.svg` |
+| `just test` | Every gate: rustfmt, clippy (pedantic), cargo test, Biome, tsc, Vitest (the API in workerd with a local D1), app and website builds |
+| `just dev` | Local server on :8787 with a local database, and the app on :5173 |
+| `just build-speaker x86_64-linux` | Static musl build of the speaker; `aarch64-linux` for the Raspberry Pi |
+| `just install-speaker` | Debug build into `~/.local/bin` for trying changes |
+| `just e2e` and `just e2e-device` | Playwright against the deployed site, and the binary against the deployed server |
+| `just deploy` | Tests, D1 migrations, deploy, then the e2e suite |
+| `just release patch` | Tag a release; CI builds, signs and publishes every platform |
 
-## The speaker binary
-
-One static binary per platform, from the GitHub release: Linux x86_64 and aarch64 (musl, ALSA compiled in), macOS (Apple Silicon and Intel, signed and notarised), Windows x64.
+Hacking on the speaker alone:
 
 ```sh
-curl -fsSL https://alexsay.com/install.sh | sh        # Linux, macOS, Raspberry Pi
-irm https://alexsay.com/install.ps1 | iex             # Windows
-alexsay setup                                          # id to add in the app, audio check
-alexsay run                                            # say "Alexsay" and talk
-alexsay service install                                # run at boot
+cd device
+cargo test --workspace
+cargo run -p alexsay-daemon -- devices
+cargo run -p alexsay-daemon -- run
 ```
 
-It keeps everything under `~/.local/alexsay` (`config.toml`, `data/identity`, `data/logs`, `data/models`, `data/recordings`, `data/cache`); `ALEXSAY_HOME` or `--home` moves it. `alexsay config show` prints the effective settings, `alexsay smoke` checks every part against the server, `alexsay wake record` and `alexsay wake train` fit the wake word to your voice, `alexsay update` installs a new release (also automatic, verified against the release key built into the binary). See [`docs/device-tests.md`](docs/device-tests.md).
+Self-hosting the server on your own Cloudflare account: create an API token (Workers Scripts, D1, Workers Routes, DNS), `cp .env.example .env`, paste it, `just secrets-key`, `just create-db`, put the id into `api/wrangler.jsonc`, then `just deploy`.
 
-## How it fits together
+### Repository layout
 
-- Anyone registers with a username and password. Admins (role set in the Users page or with `just add-user <name> admin`) see every account and speaker.
-- A speaker identifies itself with the UUID from `alexsay id`. Its owner adds that UUID in the app; from then on the speaker's heartbeat (`POST /v1/device/heartbeat`, header `X-Device-Id`) returns the owner's assistant settings.
-- Connections hold provider credentials, AES-GCM sealed under the `SECRETS_KEY` Worker secret: OpenAI (key, live model, backend model, voice, extra instructions), Lightwave (basic + refresh token, rotated on every refresh) and Twilio (account SID + auth token; a number, your mobile, a WhatsApp sender and an optional SIP domain for the speaker).
-- Contacts (Memory, Contacts) are imported from the phone or a vCard; the assistant can call, text and WhatsApp them, start group calls, and the speaker can receive calls.
-- The Assistant tab opens a WebRTC call straight to GPT-Live: the browser posts its SDP offer to the Worker, the Worker creates the session with the owner's key (`POST /v1/live/sessions`) and returns the answer. Events flow over the `oai-events` data channel; with Lightwave connected, the backend model gets `list_lights` and `set_light` tools that the browser runs against the Worker.
+| Path | What |
+|---|---|
+| `device/` | Rust workspace: `core` (host-tested logic: config, session rules, wake word, echo rules, signed updates) and `daemon` (the `alexsay` binary) |
+| `api/` | Cloudflare Worker (Hono and D1): accounts, speakers, connections, memory, tools, telephony |
+| `app/` | The web app (Vite, React, Radix Themes) at app.alexsay.com |
+| `website/` | The website at alexsay.com, with the install scripts |
+| `e2e/` | Playwright suite against the deployed site |
+| `docs/` | Hardware and software design, test plans, decisions |
 
-## Cloudflare access
+## Contributing
 
-1. Cloudflare dashboard > My Profile > API Tokens > Create token (custom): Account: Workers Scripts Edit, D1 Edit, Account Settings Read, Workers Observability Edit; Zone `alexsay.com`: Workers Routes Edit, DNS Edit, Zone Read.
-2. `cp .env.example .env`, paste the token, `just secrets-key`.
-3. `just create-db`, copy the id into `api/wrangler.jsonc`, `just deploy`, `just deploy-website`.
-4. e2e accounts: set `E2E_ADMIN_PASSWORD` and `E2E_USER_PASSWORD` in `.env`, then `just e2e-users`. The suite creates speakers and `e2e-*` accounts and removes them again.
+Issues and pull requests are welcome. `just test` must pass, every behaviour change comes with a test, and secrets never enter the repository. [`.claude/CLAUDE.md`](.claude/CLAUDE.md) is the project's working notes: key facts, gotchas and open tasks.
 
-## For Claude / new contributors
+## Credits
 
-[`.claude/CLAUDE.md`](.claude/CLAUDE.md) holds the project context, key facts, gotchas and open tasks. [`.claude/handover.md`](.claude/handover.md) is the history of how we got here.
+Alexsay stands on these projects. Thank you to their authors.
+
+**Rust crates in the speaker**
+
+| Crate | Used for |
+|---|---|
+| [sonora](https://crates.io/crates/sonora) | WebRTC audio processing in pure Rust: AEC3 echo cancellation |
+| [rustpotter](https://crates.io/crates/rustpotter) | The wake word: MFCC features and a small neural network |
+| [cpal](https://crates.io/crates/cpal) | Microphone and speaker on ALSA, CoreAudio and WASAPI |
+| [rubato](https://crates.io/crates/rubato) | Resampling between the device rate and 16 kHz |
+| [hound](https://crates.io/crates/hound) | WAV reading and writing |
+| [tokio](https://crates.io/crates/tokio), [futures-util](https://crates.io/crates/futures-util) | The async runtime |
+| [tokio-tungstenite](https://crates.io/crates/tokio-tungstenite) | WebSockets to GPT-Live and the phone line |
+| [reqwest](https://crates.io/crates/reqwest) | HTTPS to the server, OpenAI and GitHub (rustls) |
+| [serde](https://crates.io/crates/serde), [serde_json](https://crates.io/crates/serde_json), [toml](https://crates.io/crates/toml) | Events, API bodies and the config file |
+| [clap](https://crates.io/crates/clap) | The command line |
+| [ed25519-dalek](https://crates.io/crates/ed25519-dalek), [sha2](https://crates.io/crates/sha2), [semver](https://crates.io/crates/semver) | Signed, verified self-updates |
+| [self-replace](https://crates.io/crates/self-replace), [flate2](https://crates.io/crates/flate2), [tar](https://crates.io/crates/tar), [zip](https://crates.io/crates/zip) | Swapping in a downloaded release |
+| [base64](https://crates.io/crates/base64), [uuid](https://crates.io/crates/uuid) | Audio framing and the speaker's identity |
+| [tracing](https://crates.io/crates/tracing), [tracing-subscriber](https://crates.io/crates/tracing-subscriber), [tracing-appender](https://crates.io/crates/tracing-appender) | Logs to the terminal and daily files |
+| [anyhow](https://crates.io/crates/anyhow), [thiserror](https://crates.io/crates/thiserror) | Errors |
+
+**The rest of the stack:** [OpenAI GPT-Live](https://platform.openai.com), [Cloudflare Workers and D1](https://developers.cloudflare.com/workers/), [Hono](https://hono.dev), [Zod](https://zod.dev), [React](https://react.dev), [Radix Themes](https://www.radix-ui.com/themes), [Vite](https://vite.dev), [Twilio](https://www.twilio.com), [Lightwave](https://lightwaverf.com), [Playwright](https://playwright.dev), [Nix](https://nixos.org), [just](https://just.systems), and [Seeed Studio](https://www.seeedstudio.com) for the ReSpeaker XVF3800.
+
+## License
+
+[MIT](LICENSE) © 2026 Andreas Abros

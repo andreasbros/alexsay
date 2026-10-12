@@ -35,13 +35,15 @@ export E2E_APP_URL="$URL"
 export E2E_ADMIN_USERNAME=test-admin E2E_USER_USERNAME=test-user
 E2E_ADMIN_PASSWORD="$(openssl rand -hex 12)"; export E2E_ADMIN_PASSWORD
 E2E_USER_PASSWORD="$(openssl rand -hex 12)"; export E2E_USER_PASSWORD
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  echo "::add-mask::$E2E_ADMIN_PASSWORD"
+  echo "::add-mask::$E2E_USER_PASSWORD"
+fi
 printf '%s\n' "$E2E_ADMIN_PASSWORD" | "$BIN" --home "$HOME_DIR" add-user "$E2E_ADMIN_USERNAME" --admin
 printf '%s\n' "$E2E_USER_PASSWORD" | "$BIN" --home "$HOME_DIR" add-user "$E2E_USER_USERNAME"
 
-# The website is not part of the server
-pnpm --filter e2e exec playwright test --grep-invert "@website" --ignore-snapshots "$@" \
-  tests/admin.spec.ts tests/assistant.spec.ts tests/connections.spec.ts tests/contacts.spec.ts \
-  tests/devices.spec.ts tests/login.spec.ts tests/register.spec.ts
+# Exactly the suite that runs against app.alexsay.com, only the URL differs
+pnpm --filter e2e exec playwright test "$@"
 
 if [ "${E2E_SERVER_DEVICE:-1}" = 1 ]; then
   (cd device && ALEXSAY_E2E=1 ALEXSAY_E2E_AUDIO=0 ALEXSAY_E2E_CONFIG="$(printf '[server]\nurl = "%s"\n' "$URL")" \

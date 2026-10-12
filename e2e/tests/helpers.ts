@@ -17,6 +17,13 @@ export const env = {
   user: (): Account => ({ username: required("E2E_USER_USERNAME"), password: required("E2E_USER_PASSWORD") }),
 };
 
+/** In GitHub Actions, keeps a generated credential or speaker id out of the logs. */
+export function mask(value: string): void {
+  if (process.env.GITHUB_ACTIONS) {
+    console.log(`::add-mask::${value}`);
+  }
+}
+
 export async function login(page: Page, account: Account): Promise<void> {
   await page.goto("/");
   await page.getByLabel("Username").fill(account.username);
@@ -70,6 +77,7 @@ export const test = base.extend<{ deviceId: string; account: Account }>({
   // biome-ignore lint/correctness/noEmptyPattern: Playwright fixtures take a destructured first argument
   deviceId: async ({}, use) => {
     const id = crypto.randomUUID();
+    mask(id);
     await use(id);
     const admin = await apiSession(env.admin());
     await admin.delete(`/api/devices/${id}`);
@@ -78,6 +86,7 @@ export const test = base.extend<{ deviceId: string; account: Account }>({
   // biome-ignore lint/correctness/noEmptyPattern: Playwright fixtures take a destructured first argument
   account: async ({}, use) => {
     const account = { username: `e2e-${crypto.randomUUID().slice(0, 8)}`, password: crypto.randomUUID() };
+    mask(account.password);
     const context = await request.newContext({ baseURL: env.appUrl() });
     const res = await context.post("/api/session/register", { data: account });
     await context.dispose();

@@ -77,8 +77,6 @@ irm https://alexsay.com/install.ps1 | iex          # Windows
 
 ### Server
 
-Your own alexsay server in one binary: the API, the app, an HTTP server and an embedded SQLite database. Meant for your own machine or home network; exposing it to the internet is at your own risk. It never updates itself: download a new release to upgrade.
-
 | Platform | File |
 |---|---|
 | Linux, x86_64 (static, any distro) | [alexsay-server-x86_64-linux-musl]($DL/alexsay-server-x86_64-linux-musl) |

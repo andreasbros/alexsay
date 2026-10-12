@@ -36,6 +36,9 @@ async fn the_binary_is_claimed_and_every_server_check_passes() {
         .unwrap();
     assert!(id.status.success());
     let id = String::from_utf8(id.stdout).unwrap().trim().to_owned();
+    if std::env::var_os("GITHUB_ACTIONS").is_some() {
+        println!("::add-mask::{id}");
+    }
     assert_eq!(id.len(), 36);
 
     // An unclaimed speaker: the server knows it, the assistant endpoints refuse it

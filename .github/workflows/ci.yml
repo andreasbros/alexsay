@@ -34,6 +34,8 @@ jobs:
         with:
           workspaces: device
       - run: cd device && cargo test --workspace
+  # The same Playwright suite and speaker e2e run in both jobs; only the server they point at differs.
+  # Playwright traces and reports hold typed passwords, so they are never uploaded as artifacts.
   server-e2e:
     runs-on: ubuntu-latest
     steps:
@@ -42,3 +44,49 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@v9
       - name: The self-hosted server passes the same e2e suite as app.alexsay.com
         run: nix develop --command just e2e-server
+  prod-e2e:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Secrets live in the production environment, which only main may use; GitHub masks them in logs
+    environment: production
+    concurrency:
+      group: prod-e2e
+      cancel-in-progress: false
+    env:
+      E2E_APP_URL: https://app.alexsay.com
+      E2E_SITE_URL: https://www.alexsay.com
+      E2E_ADMIN_USERNAME: ${{ secrets.E2E_ADMIN_USERNAME }}
+      E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+      E2E_USER_USERNAME: ${{ secrets.E2E_USER_USERNAME }}
+      E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - name: The e2e suite against app.alexsay.com
+        run: nix develop --command just e2e
+      - name: The speaker binary against app.alexsay.com
+        run: nix develop --command env ALEXSAY_E2E_AUDIO=0 just e2e-device
+  server-windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.0
+      - run: rustup show
+        working-directory: server
+      - name: Build the server (static CRT)
+        shell: bash
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          pnpm install --frozen-lockfile
+          scripts/server-bundle.sh x86_64-windows
+          cd server && cargo build --release --target x86_64-pc-windows-msvc
+      - name: Run it
+        shell: bash
+        run: scripts/server-release-check.sh server/target/x86_64-pc-windows-msvc/release/alexsay-server.exe

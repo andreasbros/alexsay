@@ -39,3 +39,16 @@ test("the admin sees every speaker with its owner", async ({ page, deviceId }) =
   const row = page.getByRole("row", { name: /Owned by user/ });
   await expect(row.getByText(env.user().username)).toBeVisible();
 });
+
+test("the owner removes a speaker, which is then unclaimed", async ({ page, deviceId, account, request }) => {
+  await login(page, account);
+  await addDevice(page, deviceId, "Spare room");
+  await page
+    .getByRole("row", { name: /Spare room/ })
+    .getByRole("button", { name: "Remove" })
+    .click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByRole("row", { name: /Spare room/ })).toHaveCount(0);
+  const beat = await heartbeat(request, deviceId);
+  expect(await beat.json()).toMatchObject({ claimed: false });
+});

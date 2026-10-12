@@ -2,8 +2,9 @@
 // server's database applies exactly the migrations Cloudflare's D1 gets, in the same order.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const dir = join(root, "api/migrations");
 const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
 const entries = files.map((name) => `  { name: ${JSON.stringify(name)}, sql: ${JSON.stringify(readFileSync(join(dir, name), "utf8"))} },`);

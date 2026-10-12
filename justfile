@@ -26,8 +26,9 @@ test-device:
 
 test-js: deps
     pnpm exec biome check .
-    pnpm -r typecheck
+    # The app build writes src/build.ts, which the typecheck needs on a fresh checkout
     pnpm --filter app --filter website build
+    pnpm -r typecheck
     pnpm --filter api --filter app --filter website test
 
 # Static release build of the speaker: x86_64-linux (any distro) or aarch64-linux (Raspberry Pi 5 with the Flex)

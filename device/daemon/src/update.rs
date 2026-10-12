@@ -123,13 +123,14 @@ fn exe_suffix() -> &'static str {
     if cfg!(windows) { ".exe" } else { "" }
 }
 
-/// The `alexsay` binary out of the release archive.
+/// The `alexsay` binary out of the release asset: Linux and macOS assets are the bare binary itself.
 pub fn extract(archive: &[u8], name: &str) -> anyhow::Result<Vec<u8>> {
     let wanted = format!("alexsay{}", exe_suffix());
-    if std::path::Path::new(name)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
-    {
+    let is = |suffix: &str| name.to_ascii_lowercase().ends_with(suffix);
+    if !is(".zip") && !is(".tar.gz") {
+        return Ok(archive.to_vec());
+    }
+    if is(".zip") {
         let mut zip =
             zip::ZipArchive::new(std::io::Cursor::new(archive)).context("opening the zip")?;
         for i in 0..zip.len() {
@@ -202,20 +203,25 @@ mod tests {
     #[test]
     fn picks_the_release_for_this_target_only_when_newer_and_complete() {
         let target = "x86_64-unknown-linux-musl";
-        let full = [
-            "alexsay-x86_64-unknown-linux-musl.tar.gz",
-            "SHA256SUMS",
-            "SHA256SUMS.sig",
-        ];
+        let full = ["alexsay-x86_64-linux-musl", "SHA256SUMS", "SHA256SUMS.sig"];
         let release = release_for(&github("v9.9.9", &full), "0.1.0", target).unwrap();
         assert_eq!(release.version, "9.9.9");
-        assert_eq!(
-            release.asset_url,
-            "https://dl/alexsay-x86_64-unknown-linux-musl.tar.gz"
-        );
+        assert_eq!(release.asset_url, "https://dl/alexsay-x86_64-linux-musl");
         assert!(release_for(&github("v0.0.1", &full), "0.1.0", target).is_none());
         assert!(release_for(&github("v9.9.9", &full[..2]), "0.1.0", target).is_none());
         assert!(release_for(&github("v9.9.9", &full), "0.1.0", "aarch64-apple-darwin").is_none());
+    }
+
+    #[test]
+    fn a_bare_binary_asset_is_the_binary() {
+        assert_eq!(
+            extract(b"\x7fELF...", "alexsay-x86_64-linux-musl").unwrap(),
+            b"\x7fELF..."
+        );
+        assert_eq!(
+            extract(b"macho", "alexsay-aarch64-macos").unwrap(),
+            b"macho"
+        );
     }
 
     #[test]

@@ -1,27 +1,79 @@
 #!/usr/bin/env bash
-# Bumps device/Cargo.toml's workspace version, commits and tags vX.Y.Z. With --no-release it stops
-# there (CI creates the release); otherwise it pushes and creates the GitHub release, which triggers
-# the release workflow.
+# Cut a release: bump the SemVer version, regenerate CHANGELOG.md (git-cliff), commit, tag, push,
+# and create the GitHub release with its notes and a Downloads table. Every binary is built, run on
+# its own architecture and attached by the tag-triggered workflow (.github/workflows/release.yml):
+# artifacts always come from clean CI builds, never from a developer machine.
+#
+#   scripts/release-tag.sh patch|minor|major|X.Y.Z [--dry-run]     (just release patch)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-bump="${1:?patch | minor | major | X.Y.Z}"
-no_release="${2:-}"
-current=$(grep -m1 '^version = ' device/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-IFS=. read -r major minor patch <<< "$current"
-case "$bump" in
-  patch) next="$major.$minor.$((patch + 1))" ;;
-  minor) next="$major.$((minor + 1)).0" ;;
-  major) next="$((major + 1)).0.0" ;;
-  *) [[ "$bump" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad version $bump"; exit 1; }; next="$bump" ;;
+
+LEVEL="${1:?usage: release-tag.sh patch|minor|major|X.Y.Z [--dry-run]}"
+DRY=0
+[ "${2:-}" = "--dry-run" ] && DRY=1
+
+CURRENT="$(sed -n 's/^version = "\(.*\)"/\1/p' device/Cargo.toml | head -1)"
+IFS=. read -r MAJ MIN PAT <<< "$CURRENT"
+case "$LEVEL" in
+  major) NEXT="$((MAJ + 1)).0.0" ;;
+  minor) NEXT="$MAJ.$((MIN + 1)).0" ;;
+  patch) NEXT="$MAJ.$MIN.$((PAT + 1))" ;;
+  [0-9]*.[0-9]*.[0-9]*) NEXT="$LEVEL" ;;
+  *) echo "unknown level: $LEVEL" >&2; exit 1 ;;
 esac
-[ -z "$(git status --porcelain)" ] || { echo "working tree is not clean"; exit 1; }
-sed -i "0,/^version = \"$current\"/s//version = \"$next\"/" device/Cargo.toml
-(cd device && cargo update --workspace --quiet)
-git add device/Cargo.toml device/Cargo.lock
-git commit -q -m "Release $next"
-git tag -a "v$next" -m "alexsay v$next"
-echo "v$next"
-if [ "$no_release" != "--no-release" ]; then
-  git push origin HEAD --follow-tags
-  gh release create "v$next" --title "alexsay v$next" --generate-notes
+TAG="v$NEXT"
+echo "release: $CURRENT -> $NEXT ($TAG)"
+git rev-parse "$TAG" >/dev/null 2>&1 && { echo "tag $TAG already exists" >&2; exit 1; }
+
+if [ "$DRY" = 1 ]; then
+  echo "-- dry run: release notes preview --"
+  git-cliff --unreleased --tag "$TAG" --strip all
+  exit 0
 fi
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+[ "$BRANCH" = "main" ] || { echo "releases are cut from main (on $BRANCH)" >&2; exit 1; }
+git diff --quiet && git diff --cached --quiet || { echo "working tree not clean; commit or stash first" >&2; exit 1; }
+git fetch origin main --quiet
+[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "main is not in sync with origin/main" >&2; exit 1; }
+gh auth status >/dev/null
+
+if [ "$NEXT" != "$CURRENT" ]; then
+  sed -i -e "0,/^version = \"$CURRENT\"/s//version = \"$NEXT\"/" device/Cargo.toml
+  (cd device && cargo update --workspace --quiet)
+fi
+git-cliff --tag "$TAG" -o CHANGELOG.md
+git add device/Cargo.toml device/Cargo.lock CHANGELOG.md
+git commit -m "chore(release): $TAG"
+git tag -a "$TAG" -m "alexsay $TAG"
+git push origin main "$TAG"
+
+NOTES="$(mktemp)"
+git-cliff --latest --strip all > "$NOTES"
+DL="https://github.com/$(gh repo view --json nameWithOwner --jq .nameWithOwner)/releases/download/$TAG"
+cat >> "$NOTES" <<NOTES_EOF
+
+## Install
+
+\`\`\`sh
+curl -fsSL https://alexsay.com/install.sh | sh     # Linux, Raspberry Pi, macOS
+irm https://alexsay.com/install.ps1 | iex          # Windows
+\`\`\`
+
+## Downloads
+
+| Platform | File |
+|---|---|
+| Linux, x86_64 (static, any distro) | [alexsay-x86_64-linux-musl]($DL/alexsay-x86_64-linux-musl) |
+| Linux, aarch64 (static, any distro; Raspberry Pi 5 with the ReSpeaker Flex) | [alexsay-aarch64-linux-musl]($DL/alexsay-aarch64-linux-musl) |
+| macOS, Apple Silicon | [alexsay-aarch64-macos]($DL/alexsay-aarch64-macos) |
+| macOS, Intel | [alexsay-x86_64-macos]($DL/alexsay-x86_64-macos) |
+| Windows, x86_64 | [alexsay-x86_64-windows.zip]($DL/alexsay-x86_64-windows.zip) |
+| Windows, arm64 | [alexsay-aarch64-windows.zip]($DL/alexsay-aarch64-windows.zip) |
+| Checksums, signed with the release key | [SHA256SUMS]($DL/SHA256SUMS), [SHA256SUMS.sig]($DL/SHA256SUMS.sig) |
+
+Linux and macOS: \`chmod +x\` and run. Windows: unzip and run alexsay.exe. Every binary was run on its own
+architecture before it was attached here.
+NOTES_EOF
+gh release create "$TAG" --title "alexsay $NEXT" --notes-file "$NOTES"
+echo "released $TAG; CI is building and attaching the binaries (gh run watch)"

@@ -16,11 +16,16 @@ pub const BINARY: &str = "alexsay";
 pub const TARGET: &str = env!("ALEXSAY_TARGET");
 
 /// Release assets are named after the target triple, without a version, so "latest" links never change.
+/// Release assets follow the streamx naming: architecture then OS (and libc on Linux), a bare static
+/// binary on Linux and macOS, a zip on Windows. Linux builds of any libc update to the static musl one.
 pub fn asset_name(target: &str) -> String {
+    let arch = target.split('-').next().unwrap_or("x86_64");
     if target.contains("windows") {
-        format!("{BINARY}-{target}.zip")
+        format!("{BINARY}-{arch}-windows.zip")
+    } else if target.contains("apple") {
+        format!("{BINARY}-{arch}-macos")
     } else {
-        format!("{BINARY}-{target}.tar.gz")
+        format!("{BINARY}-{arch}-linux-musl")
     }
 }
 
@@ -131,11 +136,21 @@ mod tests {
     fn asset_names_and_versions() {
         assert_eq!(
             asset_name("aarch64-unknown-linux-musl"),
-            "alexsay-aarch64-unknown-linux-musl.tar.gz"
+            "alexsay-aarch64-linux-musl"
         );
         assert_eq!(
+            asset_name("x86_64-unknown-linux-gnu"),
+            "alexsay-x86_64-linux-musl"
+        );
+        assert_eq!(asset_name("aarch64-apple-darwin"), "alexsay-aarch64-macos");
+        assert_eq!(asset_name("x86_64-apple-darwin"), "alexsay-x86_64-macos");
+        assert_eq!(
             asset_name("x86_64-pc-windows-msvc"),
-            "alexsay-x86_64-pc-windows-msvc.zip"
+            "alexsay-x86_64-windows.zip"
+        );
+        assert_eq!(
+            asset_name("aarch64-pc-windows-msvc"),
+            "alexsay-aarch64-windows.zip"
         );
         assert!(is_newer("v0.2.0", "0.1.9"));
         assert!(!is_newer("v0.1.9", "0.1.9"));

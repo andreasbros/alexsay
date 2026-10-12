@@ -5,13 +5,12 @@ set -eu
 REPO="${ALEXSAY_REPO:-andreasbros/alexsay}"
 os=$(uname -s); arch=$(uname -m)
 case "$os-$arch" in
-  Linux-x86_64) target=x86_64-unknown-linux-musl ;;
-  Linux-aarch64|Linux-arm64) target=aarch64-unknown-linux-musl ;;
-  Darwin-arm64) target=aarch64-apple-darwin ;;
-  Darwin-x86_64) target=x86_64-apple-darwin ;;
+  Linux-x86_64) asset=alexsay-x86_64-linux-musl ;;
+  Linux-aarch64|Linux-arm64) asset=alexsay-aarch64-linux-musl ;;
+  Darwin-arm64) asset=alexsay-aarch64-macos ;;
+  Darwin-x86_64) asset=alexsay-x86_64-macos ;;
   *) echo "alexsay: no build for $os $arch yet (Windows: irm https://alexsay.com/install.ps1 | iex)"; exit 1 ;;
 esac
-asset="alexsay-$target.tar.gz"
 base="https://github.com/$REPO/releases/latest/download"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -24,13 +23,12 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
   grep " $asset\$" SHA256SUMS | shasum -a 256 -c - >/dev/null
 fi
-tar -xzf "$asset"
 if [ "$(id -u)" = "0" ]; then dir=/usr/local/bin; else dir="$HOME/.local/bin"; fi
 mkdir -p "$dir"
-install -m 755 alexsay "$dir/alexsay"
+install -m 755 "$asset" "$dir/alexsay"
 echo "Installed $dir/alexsay ($("$dir/alexsay" --version))"
 case ":$PATH:" in *":$dir:"*) ;; *) echo "Add $dir to your PATH, for example: export PATH=\"$dir:\$PATH\"" ;; esac
 echo
-echo "Next:  alexsay setup          (shows the id to add in the app, checks the audio)"
-echo "       alexsay run            (start listening; Ctrl-C stops)"
-echo "       alexsay service install (run at boot)"
+echo "Next:  alexsay setup            (shows the id to add in the app, checks the audio)"
+echo "       alexsay run              (start listening; Ctrl-C stops)"
+echo "       alexsay service install  (run at boot)"

@@ -89,6 +89,7 @@
             alsa-lib
             file
             gh
+            git-cliff
           ];
 
           CARGO_TARGET_DIR = "target/nix";

@@ -1,10 +1,12 @@
 # Installs the alexsay speaker on Windows: irm https://alexsay.com/install.ps1 | iex
 $ErrorActionPreference = "Stop"
 $repo = if ($env:ALEXSAY_REPO) { $env:ALEXSAY_REPO } else { "andreasbros/alexsay" }
-if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne "X64") {
-  throw "alexsay: only x64 Windows has a build yet"
+$arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+  "X64" { "x86_64" }
+  "Arm64" { "aarch64" }
+  default { throw "alexsay: no build for this Windows architecture yet" }
 }
-$asset = "alexsay-x86_64-pc-windows-msvc.zip"
+$asset = "alexsay-$arch-windows.zip"
 $base = "https://github.com/$repo/releases/latest/download"
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("alexsay-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null

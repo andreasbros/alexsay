@@ -1,6 +1,6 @@
-# Builds the speaker for every platform, signs the checksum list with the release key, and attaches
-# everything to the GitHub release for the tag. Assets are named by target triple (no version), so
-# "latest" download links and the binary's self-update never change shape.
+# Builds the speaker for every platform on a native runner, runs each binary there (scripts/release-check.sh),
+# and attaches it to the GitHub release for the tag, named like streamx: alexsay-<arch>-<os>[-musl].
+# The release itself is created by scripts/release-tag.sh; the last job signs the checksum list.
 name: release
 on:
   push:
@@ -16,14 +16,15 @@ env:
   TAG: ${{ inputs.tag || github.ref_name }}
 jobs:
   linux:
-    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - package: alexsay-x86_64-linux
-            target: x86_64-unknown-linux-musl
-          - package: alexsay-aarch64-linux
-            target: aarch64-unknown-linux-musl
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,32 +32,34 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v16
       - uses: DeterminateSystems/magic-nix-cache-action@v9
       - name: Build (static musl, ALSA compiled in)
-        run: nix build .#${{ matrix.package }} --print-build-logs
+        run: nix build .#alexsay-${{ matrix.arch }}-linux --print-build-logs
       - name: Package
         run: |
-          mkdir -p dist/stage
-          cp result/bin/alexsay dist/stage/alexsay
-          tar -C dist/stage -czf dist/alexsay-${{ matrix.target }}.tar.gz alexsay
-          rm -r dist/stage
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.target }}
-          path: dist/*.tar.gz
+          mkdir -p dist
+          install -m 755 result/bin/alexsay dist/alexsay-${{ matrix.arch }}-linux-musl
+      - name: Run it
+        run: scripts/release-check.sh dist/alexsay-${{ matrix.arch }}-linux-musl ${{ matrix.arch }}-unknown-linux-musl "${TAG#v}"
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber
   macos:
     runs-on: macos-14
     strategy:
+      fail-fast: false
       matrix:
-        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+        arch: [aarch64, x86_64]
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-      - run: rustup show && rustup target add ${{ matrix.target }}
+      - run: rustup show && rustup target add ${{ matrix.arch }}-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: device
+          key: ${{ matrix.arch }}
       - name: Build
-        run: cd device && cargo build --release -p alexsay-daemon --target ${{ matrix.target }}
+        run: cd device && cargo build --release -p alexsay-daemon --target ${{ matrix.arch }}-apple-darwin
       - name: Import the Developer ID certificate
         if: env.MACOS_CERT_P12 != ''
         env:
@@ -82,59 +85,80 @@ jobs:
           echo "NOTARY_KEY_FILE=$RUNNER_TEMP/asc.p8" >> "$GITHUB_ENV"
           echo "NOTARY_KEY_ID=${{ secrets.APP_STORE_CONNECT_KEY_ID }}" >> "$GITHUB_ENV"
           echo "NOTARY_ISSUER_ID=${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" >> "$GITHUB_ENV"
-      - name: Sign, notarise and package
-        run: scripts/macos-sign.sh device/target/${{ matrix.target }}/release/alexsay dist/alexsay-${{ matrix.target }}.tar.gz
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.target }}
-          path: dist/*.tar.gz
+      - name: Sign and notarise
+        run: scripts/macos-sign.sh device/target/${{ matrix.arch }}-apple-darwin/release/alexsay dist/alexsay-${{ matrix.arch }}-macos
+      - name: Rosetta for the Intel build
+        if: matrix.arch == 'x86_64'
+        run: softwareupdate --install-rosetta --agree-to-license || true
+      - name: Run it
+        run: |
+          if [ "${{ matrix.arch }}" = x86_64 ]; then
+            printf '#!/bin/sh\nexec arch -x86_64 "%s" "$@"\n' "$PWD/dist/alexsay-x86_64-macos" > "$RUNNER_TEMP/alexsay-intel"
+            chmod +x "$RUNNER_TEMP/alexsay-intel"
+            arch -x86_64 dist/alexsay-x86_64-macos --version
+            file dist/alexsay-x86_64-macos | grep -q x86_64
+            scripts/release-check.sh "$RUNNER_TEMP/alexsay-intel" x86_64-apple-darwin "${TAG#v}"
+          else
+            file dist/alexsay-aarch64-macos | grep -q arm64
+            scripts/release-check.sh dist/alexsay-aarch64-macos aarch64-apple-darwin "${TAG#v}"
+          fi
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber
   windows:
-    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-2025
+          - arch: aarch64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-      - run: rustup show
+      - run: rustup show && rustup target add ${{ matrix.arch }}-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: device
+          key: ${{ matrix.arch }}
       - name: Build (static CRT, no redistributable needed)
         env:
           RUSTFLAGS: -C target-feature=+crt-static
-        run: cd device && cargo build --release -p alexsay-daemon --target x86_64-pc-windows-msvc
+        run: cd device && cargo build --release -p alexsay-daemon --target ${{ matrix.arch }}-pc-windows-msvc
+      - name: Run it
+        shell: bash
+        run: scripts/release-check.sh device/target/${{ matrix.arch }}-pc-windows-msvc/release/alexsay.exe ${{ matrix.arch }}-pc-windows-msvc "${TAG#v}"
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path device/target/x86_64-pc-windows-msvc/release/alexsay.exe -DestinationPath dist/alexsay-x86_64-pc-windows-msvc.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: x86_64-pc-windows-msvc
-          path: dist/*.zip
-  publish:
+          Compress-Archive -Path device/target/${{ matrix.arch }}-pc-windows-msvc/release/alexsay.exe -DestinationPath dist/alexsay-${{ matrix.arch }}-windows.zip
+      - name: Attach to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber
+  checksums:
     needs: [linux, macos, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Checksums, signed with the release key
-        env:
-          ALEXSAY_RELEASE_KEY: ${{ secrets.ALEXSAY_RELEASE_KEY }}
-        run: |
-          cd dist
-          sha256sum alexsay-* > SHA256SUMS
-          tar -xzf alexsay-x86_64-unknown-linux-musl.tar.gz alexsay
-          ./alexsay release sign-sums SHA256SUMS > SHA256SUMS.sig
-          rm alexsay
-          cat SHA256SUMS
-      - name: Attach to the release
+      - name: SHA256SUMS, signed with the release key
         env:
           GH_TOKEN: ${{ github.token }}
+          ALEXSAY_RELEASE_KEY: ${{ secrets.ALEXSAY_RELEASE_KEY }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "alexsay $TAG" --generate-notes
-          gh release upload "$TAG" dist/* --clobber
+          mkdir dist && cd dist
+          gh release download "$TAG" --pattern 'alexsay-*'
+          ls -l
+          sha256sum alexsay-* > SHA256SUMS
+          cat SHA256SUMS
+          chmod +x alexsay-x86_64-linux-musl
+          ./alexsay-x86_64-linux-musl release sign-sums SHA256SUMS > SHA256SUMS.sig
+          gh release upload "$TAG" SHA256SUMS SHA256SUMS.sig --clobber

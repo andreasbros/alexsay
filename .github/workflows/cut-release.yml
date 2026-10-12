@@ -1,4 +1,5 @@
-# Bumps the version, tags, creates the release and runs the release build, from the Actions tab.
+# Cuts a release from the Actions tab: bumps the version, writes the changelog, tags, creates the
+# release with its notes, then runs the release build (a tag pushed with this token does not trigger it).
 name: cut-release
 on:
   workflow_dispatch:
@@ -13,21 +14,21 @@ jobs:
   cut:
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.bump.outputs.tag }}
+      tag: ${{ steps.cut.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - id: bump
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - id: cut
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          scripts/release-tag.sh "${{ inputs.version }}" --no-release
+          nix develop --command scripts/release-tag.sh "${{ inputs.version }}"
           echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
-          git push origin HEAD:main --follow-tags
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ steps.bump.outputs.tag }}" --title "alexsay ${{ steps.bump.outputs.tag }}" --generate-notes
   build:
     needs: cut
     uses: ./.github/workflows/release.yml

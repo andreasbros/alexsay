@@ -709,7 +709,7 @@ pub async fn converse(
                             tracing::debug!(tool = %call.name, arguments = %call.arguments, "tool call from the assistant");
                             if call.name == END_TOOL {
                                 info!("the assistant ends the conversation");
-                                session.close_after_reply();
+                                session.close_after_reply(now_ms());
                                 live.send(ClientEvent::ResponseItemCreate { item: Item::FunctionCallOutput { call_id: call.call_id, output: r#"{"ok":true}"#.to_owned() } });
                                 live.send(ClientEvent::ResponseCreate);
                                 session.tool_finished();

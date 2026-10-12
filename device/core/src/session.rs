@@ -8,6 +8,8 @@ pub const END_TOOL: &str = "end_conversation";
 /// Output audio stops arriving for this long: the reply is over.
 const REPLY_GAP_MS: u64 = 900;
 const FAREWELL_WINDOW_MS: u64 = 25_000;
+/// Once a hang-up is armed, the session closes when the reply has been quiet this long (as the web app).
+const HANGUP_QUIET_MS: u64 = 1_500;
 const SHORT_REPLY_WORDS: usize = 16;
 /// The user's words are a finished line once transcription has paused this long.
 const USER_LINE_GAP_MS: u64 = 1_200;
@@ -49,7 +51,9 @@ pub struct Session {
     last_input_ms: u64,
     last_output_ms: u64,
     pending_tools: usize,
-    close_after_reply: bool,
+    /// Armed by the end tool, the user's goodbye or the assistant's sign-off (the web app's rule):
+    /// when it was armed, and why.
+    hang_up: Option<(u64, &'static str)>,
     user_text: String,
     assistant_text: String,
     /// The last finished reply, kept after it is printed so the goodbye rule can still read it.
@@ -74,7 +78,7 @@ impl Session {
             last_input_ms: 0,
             last_output_ms: 0,
             pending_tools: 0,
-            close_after_reply: false,
+            hang_up: None,
             user_text: String::new(),
             assistant_text: String::new(),
             last_reply: String::new(),
@@ -95,7 +99,7 @@ impl Session {
         self.last_input_ms = now_ms;
         self.last_output_ms = 0;
         self.pending_tools = 0;
-        self.close_after_reply = false;
+        self.hang_up = None;
         self.user_text.clear();
         self.assistant_text.clear();
         self.last_reply.clear();
@@ -119,8 +123,13 @@ impl Session {
     }
 
     /// The user asked to stop (the model called `end_conversation`): close once the reply has played.
-    pub fn close_after_reply(&mut self) {
-        self.close_after_reply = true;
+    /// The assistant called the end tool: close once its goodbye has been spoken.
+    pub fn close_after_reply(&mut self, now_ms: u64) {
+        self.arm_hang_up(now_ms, "asked to stop");
+    }
+
+    fn arm_hang_up(&mut self, now_ms: u64, why: &'static str) {
+        self.hang_up.get_or_insert((now_ms, why));
     }
 
     /// The microphone heard the user (the daemon's level gate), which keeps the session alive.
@@ -158,6 +167,7 @@ impl Session {
                 self.user_text.push_str(delta);
                 if self.policy.end_on_farewell && is_user_farewell(&self.user_text) {
                     self.user_farewell_at = Some(now_ms);
+                    self.arm_hang_up(now_ms, "goodbye");
                 }
                 self.flush_assistant_text()
             }
@@ -165,6 +175,10 @@ impl Session {
                 self.last_output_ms = now_ms;
                 self.last_assistant_text_ms = now_ms;
                 self.assistant_text.push_str(delta);
+                let farewell_ago = self.user_farewell_at.map(|at| now_ms.saturating_sub(at));
+                if self.policy.end_on_farewell && is_sign_off(&self.assistant_text, farewell_ago) {
+                    self.arm_hang_up(now_ms, "goodbye");
+                }
                 self.flush_user_text()
             }
             KnownServerEvent::ResponseEvent { event, .. } => match function_call(event) {
@@ -217,8 +231,6 @@ impl Session {
         {
             lines.extend(self.flush_assistant_text());
         }
-        let reply_over =
-            self.last_output_ms > 0 && now_ms.saturating_sub(self.last_output_ms) >= REPLY_GAP_MS;
         // Turn order comes from the transcripts: the microphone's level cannot tell speech from noise or echo
         let assistant_spoke_last = self.last_assistant_text_ms > self.last_user_text_ms;
         // ... but someone audibly talking right now is not to be cut off
@@ -231,20 +243,17 @@ impl Session {
             && assistant_spoke_last
             && user_quiet
             && now_ms.saturating_sub(self.last_output_ms) >= self.policy.after_reply_s * 1_000;
-        let asked = self.close_after_reply && self.pending_tools == 0 && reply_over;
-        let farewell = self.policy.end_on_farewell
-            && reply_over
-            && assistant_spoke_last
-            && is_sign_off(
-                &self.last_reply,
-                self.user_farewell_at.map(|at| now_ms.saturating_sub(at)),
-            );
+        // Give the reply a moment to start, then close once it has been quiet for a while
+        let hang_up = self
+            .hang_up
+            .filter(|&(at, _)| {
+                now_ms.saturating_sub(self.last_output_ms.max(at)) >= HANGUP_QUIET_MS
+            })
+            .map(|(_, why)| why);
         let why = if capped {
             "hard cap"
-        } else if asked {
-            "asked to stop"
-        } else if farewell {
-            "goodbye"
+        } else if let Some(why) = hang_up {
+            why
         } else if after_reply {
             "quiet after the reply"
         } else if idle {
@@ -287,28 +296,26 @@ impl Session {
     }
 }
 
+/// What the user says to end the conversation: the web app's `USER_FAREWELL`, word for word.
 const USER_FAREWELLS: &[&str] = &[
+    "end conversation",
     "end the conversation",
-    "end the session",
-    "end this session",
-    "stop the session",
-    "close the session",
-    "end the call",
     "end this conversation",
+    "stop conversation",
     "stop the conversation",
     "stop this conversation",
     "goodbye",
     "good bye",
-    "bye bye",
     "bye",
+    "bye bye",
+    "see you",
     "see you later",
     "see you soon",
-    "see you",
-    "good night",
     "goodnight",
+    "good night",
     "that's all",
-    "that's it",
     "thats all",
+    "that's it",
     "thats it",
     "talk later",
     "talk to you later",
@@ -316,21 +323,15 @@ const USER_FAREWELLS: &[&str] = &[
     "speak to you later",
     "i'm done",
     "im done",
-    "thanks, that's all",
-    "thanks that's all",
 ];
 
+/// What the assistant says when it signs off: the web app's `ASSISTANT_FAREWELL`, word for word.
 const ASSISTANT_FAREWELLS: &[&str] = &[
-    "ending it now",
-    "ending now",
-    "ending the session",
-    "ending the conversation",
-    "closing the session",
     "goodbye",
     "good bye",
+    "bye",
     "bye bye",
     "bye for now",
-    "bye",
     "take care",
     "talk later",
     "talk to you later",
@@ -340,11 +341,11 @@ const ASSISTANT_FAREWELLS: &[&str] = &[
     "speak to you later",
     "speak soon",
     "speak to you soon",
+    "see you",
     "see you later",
     "see you soon",
-    "see you",
-    "good night",
     "goodnight",
+    "good night",
     "sleep well",
     "have a good day",
     "have a great day",
@@ -355,8 +356,13 @@ const ASSISTANT_FAREWELLS: &[&str] = &[
     "have a nice evening",
     "have a lovely evening",
     "have a good night",
+    "have a great night",
+    "have a nice night",
+    "have a lovely night",
     "have a good one",
     "have a great one",
+    "have a nice one",
+    "have a lovely one",
 ];
 
 fn contains_phrase(text: &str, phrases: &[&str]) -> bool {
@@ -519,11 +525,11 @@ mod tests {
     #[test]
     fn end_conversation_closes_once_the_reply_has_played() {
         let mut session = open_session();
-        session.close_after_reply();
+        session.close_after_reply(1_800);
         output(&mut session, 2_000);
-        assert_eq!(session.on_tick(2_500), Vec::new());
+        assert_eq!(session.on_tick(3_000), Vec::new());
         assert_eq!(
-            session.on_tick(3_000),
+            session.on_tick(3_500),
             vec![
                 Action::Log("closing: asked to stop".to_owned()),
                 Action::Close
@@ -551,18 +557,59 @@ mod tests {
             }]
         );
         output(&mut session, 2_600);
-        assert_eq!(session.on_tick(3_000), Vec::new());
         assert_eq!(
             session.on_tick(3_600),
-            vec![
-                Action::Transcript {
-                    role: "assistant",
-                    text: "Bye for now!".to_owned()
-                },
-                Action::Log("closing: goodbye".to_owned()),
-                Action::Close
-            ]
+            vec![Action::Transcript {
+                role: "assistant",
+                text: "Bye for now!".to_owned()
+            }]
         );
+        assert_eq!(
+            session.on_tick(4_100),
+            vec![Action::Log("closing: goodbye".to_owned()), Action::Close]
+        );
+    }
+
+    fn say(session: &mut Session, who: &str, text: &str, at: u64) {
+        let kind = if who == "user" { "input" } else { "output" };
+        let line = serde_json::json!({ "type": format!("session.{kind}_transcript.delta"), "delta": text });
+        session.on_event(&event(&line.to_string()), at);
+        if who == "assistant" {
+            output(session, at);
+        }
+    }
+
+    fn closed_because(actions: &[Action]) -> Option<&str> {
+        actions.iter().find_map(|a| match a {
+            Action::Log(note) => note.strip_prefix("closing: "),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn asking_to_end_closes_after_whatever_the_reply_is() {
+        // Seen on 12 Oct: "End conversation" got "Okay." and no end tool; the web app's rule closes it
+        for request in ["End the conversation", "end conversation", "OK, that's all"] {
+            let mut session = open_session();
+            say(&mut session, "user", request, 2_000);
+            say(&mut session, "assistant", "Okay.", 3_000);
+            assert_eq!(closed_because(&session.on_tick(4_000)), None, "{request}");
+            assert_eq!(
+                closed_because(&session.on_tick(4_500)),
+                Some("goodbye"),
+                "{request}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_user_saying_bye_back_ends_it() {
+        // Seen on 12 Oct: assistant "Bye.", user "Bye", and the session waited for the idle timeout
+        let mut session = open_session();
+        say(&mut session, "user", "Okay. Thanks", 2_000);
+        say(&mut session, "assistant", "Bye.", 3_000);
+        say(&mut session, "user", "Bye", 4_000);
+        assert_eq!(closed_because(&session.on_tick(4_500)), Some("goodbye"));
     }
 
     #[test]
@@ -592,12 +639,12 @@ mod tests {
     #[test]
     fn asked_to_stop_closes_after_the_reply_even_while_silence_streams() {
         let mut session = open_session();
-        session.close_after_reply();
+        session.close_after_reply(1_800);
         output(&mut session, 2_000);
         audio(&mut session, &silence(), 2_500);
-        audio(&mut session, &silence(), 2_900);
+        audio(&mut session, &silence(), 3_400);
         assert_eq!(
-            session.on_tick(3_000),
+            session.on_tick(3_500),
             vec![
                 Action::Log("closing: asked to stop".to_owned()),
                 Action::Close
@@ -652,7 +699,7 @@ mod tests {
         for t in (3_100..6_000).step_by(100) {
             session.heard_user(t);
         }
-        let actions = session.on_tick(4_000);
+        let actions = session.on_tick(4_500);
         assert!(actions.contains(&Action::Close), "{actions:?}");
     }
 
@@ -673,11 +720,10 @@ mod tests {
     fn farewell_phrases() {
         assert!(is_user_farewell("OK goodbye then"));
         assert!(is_user_farewell("thanks, that's all"));
-        assert!(is_user_farewell("Okay, end the session"));
-        assert!(is_user_farewell("End this session"));
+        assert!(is_user_farewell("Okay, end conversation"));
+        assert!(is_user_farewell("Stop this conversation"));
         assert!(!is_user_farewell("buy some bread"));
         assert!(is_sign_off("Take care, Andreas.", None));
-        assert!(is_sign_off("Okay, ending it now.", None));
         assert!(!is_sign_off(
             "Sure. Have a good day at work and then let me know how the long meeting with the whole team went, bye.",
             None

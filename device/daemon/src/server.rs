@@ -22,6 +22,8 @@ pub struct Server {
 pub struct DeviceSession {
     pub api_key: String,
     pub session: Value,
+    #[serde(default)]
+    pub base_url: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

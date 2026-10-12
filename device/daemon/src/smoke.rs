@@ -147,6 +147,15 @@ pub async fn run(paths: &Paths, config: &Config, voice: bool, quiet: bool, audio
             ));
         }
     }
+    checks.push(check(
+        "updates",
+        update::check(&config.update.repository).await.map(|r| {
+            r.map_or_else(
+                || "up to date".to_owned(),
+                |r| format!("{} available", r.version),
+            )
+        }),
+    ));
     if !audio {
         let ok = checks.iter().all(|c| c.ok);
         return Report {
@@ -202,15 +211,6 @@ pub async fn run(paths: &Paths, config: &Config, voice: bool, quiet: bool, audio
         )
         .map(|w| format!("builtin, {} samples per frame", w.frame_len()))
         .map_err(anyhow::Error::msg),
-    ));
-    checks.push(check(
-        "updates",
-        update::check(&config.update.repository).await.map(|r| {
-            r.map_or_else(
-                || "up to date".to_owned(),
-                |r| format!("{} available", r.version),
-            )
-        }),
     ));
     if voice && let (Ok(capture), Ok(player)) = (capture, player) {
         checks.push(wake_check(config, &capture, &player));

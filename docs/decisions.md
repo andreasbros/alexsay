@@ -80,3 +80,11 @@ Newest last. Each entry: what was decided, why, what was rejected.
 - **Why:** Three syllables carry more acoustic evidence than two, so fewer false wakes from everyday speech and TV; it matches the project name.
 - **Watch:** "Alexa, say..." is nearly the same sound. It goes in the negative set and gets its own false-accept test.
 - **Rejected:** "Alex" (substring of "Alexa", common name on TV).
+
+## 2026-10-12: Self-hosted server runs the Worker inside workerd
+
+- **Decision:** `alexsay-server` embeds workerd and runs the unchanged Worker; D1 becomes a SQLite-backed Durable Object behind a D1-compatible shim.
+- **Why:** One codebase for Cloudflare and self-hosting, so the same e2e suite gates both. A Rust or Node rewrite of the API would drift.
+- **Linux:** workerd is glibc-only, so the bundle carries glibc's loader and libc; the launcher is static musl and the whole thing runs on Alpine.
+- **No updates:** the server never checks for or installs updates; users upgrade by hand.
+- **Rejected:** Bun or Node with a D1 emulation (a second runtime to keep in step), rewriting the API in Rust.

@@ -21,7 +21,8 @@
 
 Say **"Alexsay"** and talk. A full-duplex OpenAI voice conversation answers in about a second, remembers what matters to you, switches your lights, phones your contacts and joins the call with you, all on **your own API keys**.
 
-- 🦀 **One blazing-fast Rust binary.** Static, no runtime, no Python, about 13 MB. Linux x86_64 and aarch64, macOS, Windows.
+- 🦀 **One blazing-fast Rust binary.** Static musl on Linux: download, drop it anywhere and run, with no packages, no runtime and no Python. Linux x86_64 and aarch64, macOS, Windows.
+- 🏠 **Your own server in one file, too.** `alexsay-server` carries the API, the app, an HTTP server and an embedded SQLite database, and runs the same code as app.alexsay.com.
 - 👂 **On-device wake word.** "Alexsay" is spotted locally with a small neural network; train it on your own voice in two minutes.
 - 🔇 **Software echo cancellation.** WebRTC's AEC3 in pure Rust removes the speaker's own voice from the microphone, so you can talk over the assistant on any laptop or USB microphone.
 - 🍓 **Raspberry Pi 5 stack.** Pi 5, a ReSpeaker XVF3800 four-microphone array with hardware echo cancellation, a 4" driver and a printed cylinder.
@@ -99,15 +100,42 @@ The full parts list, wiring, acoustics and bring-up steps are in [`docs/`](docs/
 
 ## Local server or the public one
 
+Run the public app, or your own server with one command. `alexsay-server` is a single binary: static musl on Linux, so it runs on any distribution, Raspberry Pi included, with nothing to install. It is meant for your own machine or home network. Exposing it to the internet is at your own risk. See [`server/README.md`](server/README.md) for its config, data, architecture and providers.
+
+```sh
+./alexsay-server-x86_64-linux-musl                   # http://127.0.0.1:8787, data in ~/.local/alexsay-server
+./alexsay-server-x86_64-linux-musl add-user me --admin
+```
+
 | | Public: `app.alexsay.com` | Your own server |
 |---|---|---|
-| Setup | None: sign up and go | Your Cloudflare account (`just deploy`) or a laptop (`just dev`) |
+| Setup | None: sign up and go | `alexsay-server` from the [releases](https://github.com/andreasbros/alexsay/releases/latest), or your own Cloudflare account (`just deploy`) |
 | Speaker config | Default | `alexsay config set server.url http://localhost:8787` |
 | Conversations, memory, tools, lights | ✓ | ✓ |
 | Calls opened in the browser | ✓ | ✓ |
-| Incoming calls, the assistant joining calls, speaker phone lines | ✓ | Needs a public address: run a tunnel (for example `cloudflared`) and set `PUBLIC_URL` |
+| Incoming calls, the assistant joining calls, speaker phone lines | ✓ | Needs a public address: run a tunnel (for example `cloudflared`) and set `public_url` |
 
 Twilio and OpenAI call back into the server for phone calls, so those parts need an address the internet can reach. A local server knows when it has none: it leaves your Twilio number's routing alone, keeps the assistant off calls and says why.
+
+## Providers
+
+Alexsay works with these providers today. You connect each one in the app under **Connections**, with your own account's keys. The keys are sealed with AES-GCM on the server and never written to a speaker's disk.
+
+| Provider | Needed for | What to enter |
+|---|---|---|
+| [OpenAI](https://platform.openai.com) | Everything: the voice (GPT-Live), memory, spoken notices | An API key from a paid project. For phone calls, also the project id and a webhook secret. |
+| [Twilio](https://www.twilio.com) | Calls, conference calls, texts, WhatsApp, menu keys | Account SID, auth token, your Twilio number and your mobile. Saving points the number's webhooks at your server. |
+| [Lightwave](https://lightwaverf.com) | Lights and dimmers by room | A refresh token from Lightwave's developer settings |
+
+Each connection has a **Help** button in the app with the exact steps to get its keys.
+
+### Bring your own model, phone or lights
+
+- **Model.** Everything that talks to OpenAI goes through one base URL, which the server also hands to its speakers. Point `openai_base_url` at any server with the same API (GPT-Live, Responses, speech) and the browser and speakers follow.
+- **Lights.** The light tools call one provider module. Add a module for Home Assistant, Hue or MQTT with the same list, switch and dim functions, and a connection for it.
+- **Phone.** The phone tools sit on a provider client, call staging and webhook routes. A new carrier replaces those three behind the same tools. A Twilio-compatible API needs only `twilio_base_url`.
+
+The [server README](server/README.md#providers) has the endpoints, files and settings for each.
 
 ## Development
 
@@ -125,6 +153,8 @@ just --list                 # every recipe
 | `just test` | Every gate: rustfmt, clippy (pedantic), cargo test, Biome, tsc, Vitest (the API in workerd with a local D1), app and website builds |
 | `just dev` | Local server on :8787 with a local database, and the app on :5173 |
 | `just build-speaker x86_64-linux` | Static musl build of the speaker; `aarch64-linux` for the Raspberry Pi |
+| `just build-server`, `just server` | Static build of `alexsay-server` with its bundle, and running it |
+| `just e2e-server` | The compatibility gate: the Playwright suite and the speaker e2e against the built server |
 | `just install-speaker` | Debug build into `~/.local/bin` for trying changes |
 | `just e2e` and `just e2e-device` | Playwright against the deployed site, and the binary against the deployed server |
 | `just deploy` | Tests, D1 migrations, deploy, then the e2e suite |
@@ -147,6 +177,7 @@ Self-hosting the server on your own Cloudflare account: create an API token (Wor
 |---|---|
 | `device/` | Rust workspace: `core` (host-tested logic: config, session rules, wake word, echo rules, signed updates) and `daemon` (the `alexsay` binary) |
 | `api/` | Cloudflare Worker (Hono and D1): accounts, speakers, connections, memory, tools, telephony |
+| `server/` | `alexsay-server`: the Worker, the app and workerd in one binary, with SQLite |
 | `app/` | The web app (Vite, React, Radix Themes) at app.alexsay.com |
 | `website/` | The website at alexsay.com, with the install scripts |
 | `e2e/` | Playwright suite against the deployed site |
@@ -180,7 +211,18 @@ Alexsay stands on these projects. Thank you to their authors.
 | [tracing](https://crates.io/crates/tracing), [tracing-subscriber](https://crates.io/crates/tracing-subscriber), [tracing-appender](https://crates.io/crates/tracing-appender) | Logs to the terminal and daily files |
 | [anyhow](https://crates.io/crates/anyhow), [thiserror](https://crates.io/crates/thiserror) | Errors |
 
-**The rest of the stack:** [OpenAI GPT-Live](https://platform.openai.com), [Cloudflare Workers and D1](https://developers.cloudflare.com/workers/), [Hono](https://hono.dev), [Zod](https://zod.dev), [React](https://react.dev), [Radix Themes](https://www.radix-ui.com/themes), [Vite](https://vite.dev), [Twilio](https://www.twilio.com), [Lightwave](https://lightwaverf.com), [Playwright](https://playwright.dev), [Nix](https://nixos.org), [just](https://just.systems), and [Seeed Studio](https://www.seeedstudio.com) for the ReSpeaker XVF3800.
+**Rust crates in the server**
+
+| Crate | Used for |
+|---|---|
+| [ruzstd](https://crates.io/crates/ruzstd), [tar](https://crates.io/crates/tar), [sha2](https://crates.io/crates/sha2) | Unpacking the embedded runtime |
+| [ureq](https://crates.io/crates/ureq) | The loopback housekeeping calls |
+| [clap](https://crates.io/crates/clap), [serde](https://crates.io/crates/serde), [serde_json](https://crates.io/crates/serde_json), [toml](https://crates.io/crates/toml) | The command line and config |
+| [ctrlc](https://crates.io/crates/ctrlc), [libc](https://crates.io/crates/libc) | Clean shutdown, and workerd stopping with its launcher |
+| [rpassword](https://crates.io/crates/rpassword), [getrandom](https://crates.io/crates/getrandom) | Password prompts and generated secrets |
+| [anyhow](https://crates.io/crates/anyhow) | Errors |
+
+**The rest of the stack:** [workerd](https://github.com/cloudflare/workerd) inside `alexsay-server`, [OpenAI GPT-Live](https://platform.openai.com), [Cloudflare Workers and D1](https://developers.cloudflare.com/workers/), [Hono](https://hono.dev), [Zod](https://zod.dev), [React](https://react.dev), [Radix Themes](https://www.radix-ui.com/themes), [Vite](https://vite.dev), [Twilio](https://www.twilio.com), [Lightwave](https://lightwaverf.com), [Playwright](https://playwright.dev), [Nix](https://nixos.org), [just](https://just.systems), and [Seeed Studio](https://www.seeedstudio.com) for the ReSpeaker XVF3800.
 
 ## License
 

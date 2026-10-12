@@ -5,6 +5,30 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const LIVE_URL: &str = "wss://api.openai.com/v1/live/sessions";
+pub const OPENAI_BASE: &str = "https://api.openai.com/v1";
+
+/// The provider's REST base the server uses (its `OPENAI_BASE_URL`), or `OpenAI` when it sends none.
+pub fn rest_base(base_url: &str) -> String {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        OPENAI_BASE.to_owned()
+    } else {
+        base.to_owned()
+    }
+}
+
+/// The GPT-Live socket on that same provider: an OpenAI-compatible endpoint of your own works too.
+pub fn live_url(base_url: &str) -> String {
+    let base = rest_base(base_url);
+    let socket = if let Some(rest) = base.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = base.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        base
+    };
+    format!("{socket}/live/sessions")
+}
 
 /// The session body the server built for this user (`GET /v1/device/session`), with the daemon's audio format added.
 pub fn session_with_audio_format(mut session: Value, rate: u32) -> Value {
@@ -229,6 +253,21 @@ pub fn function_call(nested: &Value) -> Option<FunctionCall> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_socket_follows_the_servers_provider() {
+        assert_eq!(live_url(""), LIVE_URL);
+        assert_eq!(live_url("https://api.openai.com/v1/"), LIVE_URL);
+        assert_eq!(
+            live_url("http://192.168.1.5:9000/v1"),
+            "ws://192.168.1.5:9000/v1/live/sessions"
+        );
+        assert_eq!(rest_base(" "), OPENAI_BASE);
+        assert_eq!(
+            rest_base("https://llm.example/v1/"),
+            "https://llm.example/v1"
+        );
+    }
     use serde_json::json;
 
     fn config() -> Value {

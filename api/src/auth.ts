@@ -61,13 +61,18 @@ export async function registrationAllowed(c: Context<AppEnv>): Promise<boolean> 
   return true;
 }
 
+/** Always on Cloudflare; a self-hosted server on plain HTTP in a home network needs the cookie without it. */
+export function overHttps(c: Context<AppEnv>): boolean {
+  return new URL(c.req.url).protocol === "https:" || c.req.header("x-forwarded-proto") === "https";
+}
+
 export async function startSession(c: Context<AppEnv>, user: User): Promise<void> {
   const token = randomToken();
   const expiresAt = Date.now() + SESSION_TTL_MS;
   await sessions.create(c.env.DB, await sha256Hex(token), user.username, expiresAt);
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: true,
+    secure: overHttps(c),
     sameSite: "Strict",
     path: "/",
     expires: new Date(expiresAt),
@@ -79,7 +84,7 @@ export async function logout(c: Context<AppEnv>): Promise<void> {
   if (token) {
     await sessions.remove(c.env.DB, await sha256Hex(token));
   }
-  deleteCookie(c, SESSION_COOKIE, { path: "/", secure: true });
+  deleteCookie(c, SESSION_COOKIE, { path: "/", secure: overHttps(c) });
 }
 
 export const requireUser = createMiddleware<AppEnv>(async (c, next) => {

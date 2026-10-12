@@ -1,6 +1,6 @@
 //! The GPT-Live WebSocket: events in, events out, as the core's typed values.
 
-use alexsay_core::live::{ClientEvent, LIVE_URL, ServerEvent};
+use alexsay_core::live::{ClientEvent, ServerEvent};
 use anyhow::Context;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
@@ -14,8 +14,12 @@ pub struct Live {
 
 impl Live {
     /// Opens the socket with the owner's key and sends `session.start`; the first event back is `session.started`.
-    pub async fn connect(api_key: &str, session: serde_json::Value) -> anyhow::Result<Self> {
-        let mut request = LIVE_URL
+    pub async fn connect(
+        base_url: &str,
+        api_key: &str,
+        session: serde_json::Value,
+    ) -> anyhow::Result<Self> {
+        let mut request = alexsay_core::live::live_url(base_url)
             .into_client_request()
             .context("building the GPT-Live request")?;
         request.headers_mut().insert(

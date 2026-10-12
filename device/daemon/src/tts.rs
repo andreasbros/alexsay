@@ -3,16 +3,23 @@
 
 use anyhow::Context;
 
-pub const OPENAI_BASE: &str = "https://api.openai.com/v1";
 pub const TTS_RATE: u32 = 24_000;
 
-pub async fn speak(api_key: &str, voice: &str, text: &str) -> anyhow::Result<Vec<i16>> {
+pub async fn speak(
+    base_url: &str,
+    api_key: &str,
+    voice: &str,
+    text: &str,
+) -> anyhow::Result<Vec<i16>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .context("building the HTTP client")?;
     let res = client
-        .post(format!("{OPENAI_BASE}/audio/speech"))
+        .post(format!(
+            "{}/audio/speech",
+            alexsay_core::live::rest_base(base_url)
+        ))
         .bearer_auth(api_key)
         .json(&serde_json::json!({
             "model": "gpt-4o-mini-tts",

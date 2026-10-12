@@ -34,3 +34,11 @@ jobs:
         with:
           workspaces: device
       - run: cd device && cargo test --workspace
+  server-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - name: The self-hosted server passes the same e2e suite as app.alexsay.com
+        run: nix develop --command just e2e-server

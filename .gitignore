@@ -30,3 +30,6 @@ __pycache__/
 # Generated per build
 app/public/version.json
 app/src/build.ts
+
+# alexsay-server bundle (workerd, the Worker, the app)
+server/build/

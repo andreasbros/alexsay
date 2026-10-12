@@ -92,7 +92,14 @@ impl Runtime {
             info!("(would say) {text}");
             return;
         };
-        match tts::speak(&assistant.api_key, &assistant.voice, text).await {
+        match tts::speak(
+            &assistant.base_url,
+            &assistant.api_key,
+            &assistant.voice,
+            text,
+        )
+        .await
+        {
             Ok(samples) => self.player.play_at(&samples, tts::TTS_RATE),
             Err(err) => warn!("could not speak: {err:#}"),
         }
@@ -425,7 +432,12 @@ pub async fn converse(
     };
     let session_body =
         alexsay_core::live::session_with_audio_format(device_session.session, LIVE_RATE);
-    let mut live = Live::connect(&device_session.api_key, session_body).await?;
+    let mut live = Live::connect(
+        &device_session.base_url,
+        &device_session.api_key,
+        session_body,
+    )
+    .await?;
     let conversation = runtime.server.start_conversation().await.ok();
     let mut session = Session::new(runtime.config.session.clone());
     let started = Instant::now();

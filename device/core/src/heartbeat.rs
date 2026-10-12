@@ -43,6 +43,8 @@ pub struct Assistant {
     pub backend_model: String,
     pub voice: String,
     pub instructions: String,
+    /// The provider's REST base (the server's `OPENAI_BASE_URL`); empty from servers before 0.1.2.
+    pub base_url: String,
 }
 
 impl Default for Assistant {
@@ -54,6 +56,7 @@ impl Default for Assistant {
             backend_model: "gpt-6-luna".to_owned(),
             voice: "marin".to_owned(),
             instructions: String::new(),
+            base_url: String::new(),
         }
     }
 }

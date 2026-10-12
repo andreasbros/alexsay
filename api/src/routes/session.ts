@@ -9,6 +9,9 @@ import { jsonBody } from "../validate";
 export const sessionRoutes = new Hono<AppEnv>()
   .post("/register", async (c) => {
     const { username, password } = await jsonBody(c, schemas.register);
+    if (c.env.REGISTRATION === "closed") {
+      return c.json({ error: "registration_closed" }, 403);
+    }
     if (!(await registrationAllowed(c))) {
       return c.json({ error: "too_many" }, 429);
     }

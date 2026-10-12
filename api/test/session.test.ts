@@ -1,4 +1,6 @@
+import { createExecutionContext, env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import api from "../src/index";
 import { APP, addUser, call, json, resetDb, signIn } from "./helpers";
 
 const login = (username: string, password: string) => json(`${APP}/api/session/login`, "POST", { username, password });
@@ -20,6 +22,18 @@ describe("session", () => {
     expect(await me.json()).toMatchObject({ username: "maria", role: "user" });
   });
 
+  it("refuses sign-ups when the server's registration is closed", async () => {
+    const request = new Request(`${APP}/api/session/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "stranger", password: "battery staple" }),
+    });
+    const res = await api.fetch(request, { ...env, REGISTRATION: "closed" }, createExecutionContext());
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "registration_closed" });
+    expect((await login("andreas", "correct horse")).status).toBe(200);
+  });
+
   it("refuses a taken username, short passwords and odd names", async () => {
     expect((await register("andreas", "battery staple")).status).toBe(409);
     expect((await register("maria", "short")).status).toBe(400);
@@ -38,6 +52,18 @@ describe("session", () => {
     expect(cookie).toMatch(/HttpOnly/);
     expect(cookie).toMatch(/Secure/);
     expect(cookie).toMatch(/SameSite=Strict/);
+  });
+
+  it("drops Secure only for plain HTTP, as on a self-hosted server in a home network", async () => {
+    const body = JSON.stringify({ username: "andreas", password: "correct horse" });
+    const plain = await call("http://192.168.1.20:8787/api/session/login", { method: "POST", body });
+    expect(plain.headers.get("set-cookie")).not.toMatch(/Secure/);
+    const proxied = await call("http://192.168.1.20:8787/api/session/login", {
+      method: "POST",
+      headers: { "x-forwarded-proto": "https" },
+      body,
+    });
+    expect(proxied.headers.get("set-cookie")).toMatch(/Secure/);
   });
 
   it("rejects wrong passwords and unknown users alike", async () => {

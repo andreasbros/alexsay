@@ -1,0 +1,6 @@
+// Bundles the self-hosted server's Worker (wrangler deploy --dry-run); never deployed.
+{
+  "name": "alexsay-selfhost",
+  "main": "../api/src/selfhost/entry.ts",
+  "compatibility_date": "2026-08-15"
+}

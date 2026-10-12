@@ -17,12 +17,17 @@ check:
     scripts/check-setup.sh
 
 # Every code gate: format, lint, typecheck, tests (device, api, app, website)
-test: test-device test-js
+test: test-device test-server test-js
 
 test-device:
     cd device && cargo fmt --all --check
     cd device && cargo clippy --workspace --all-targets -- -D warnings
     cd device && cargo test --workspace
+
+test-server:
+    cd server && cargo fmt --check
+    cd server && cargo clippy --all-targets -- -D warnings
+    cd server && cargo test
 
 test-js: deps
     # Local secrets for workerd (the example holds a dummy key); the generated Worker types include them
@@ -52,6 +57,30 @@ e2e-device:
 deploy-device host="pi@alexsay.local": (build-speaker "aarch64-linux")
     scp result-aarch64-linux/bin/alexsay {{host}}:/tmp/alexsay
     ssh {{host}} 'mkdir -p ~/.local/bin && install -m 755 /tmp/alexsay ~/.local/bin/alexsay && ~/.local/bin/alexsay setup && ~/.local/bin/alexsay service install'
+
+# What alexsay-server embeds (workerd, the Worker, the app) for a target: x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows
+server-bundle target="": deps
+    scripts/server-bundle.sh {{target}}
+
+# The self-hosted server for this machine: static musl on Linux, in server/target/nix/<triple>/release
+build-server: server-bundle
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd server
+    case "$(uname -s)-$(uname -m)" in
+      Linux-x86_64) cargo build --release --target x86_64-unknown-linux-musl ;;
+      Linux-aarch64) cargo build --release --target aarch64-unknown-linux-musl ;;
+      *) cargo build --release ;;
+    esac
+    ls -l target/nix/*/release/alexsay-server target/nix/release/alexsay-server 2>/dev/null || true
+
+# Run the self-hosted server from source on this machine (data in ~/.local/alexsay-server)
+server *args: build-server
+    server/target/nix/$(uname -m)-unknown-linux-musl/release/alexsay-server {{args}}
+
+# Compatibility gate: the built server must pass the Playwright suite and the speaker e2e, like app.alexsay.com
+e2e-server: build-server
+    scripts/e2e-server.sh server/target/nix/$(uname -m)-unknown-linux-musl/release/alexsay-server
 
 # Cut a release: bumps the version, tags, pushes and creates the GitHub release (CI builds and attaches the binaries)
 release bump="patch":

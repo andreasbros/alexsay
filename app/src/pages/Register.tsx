@@ -8,6 +8,7 @@ import { useRegister } from "../session";
 
 const MESSAGES: Record<string, string> = {
   exists: "That username is taken.",
+  registration_closed: "This server does not take new accounts. Ask its owner to add you.",
   bad_request:
     "Use 2 to 32 lowercase letters, digits, dots, dashes or underscores, and at least 8 characters of password.",
 };

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cut a release: bump the SemVer version, regenerate CHANGELOG.md (git-cliff), commit, tag, push,
-# and create the GitHub release with its notes and a Downloads table. Every binary is built, run on
-# its own architecture and attached by the tag-triggered workflow (.github/workflows/release.yml):
+# and create the GitHub release with its notes and the Speaker and Server download tables. Every binary
+# is built, run on its own architecture and attached by the tag-triggered workflow (.github/workflows/release.yml):
 # artifacts always come from clean CI builds, never from a developer machine.
 #
 #   scripts/release-tag.sh patch|minor|major|X.Y.Z [--dry-run]     (just release patch)
@@ -41,9 +41,11 @@ gh auth status >/dev/null
 if [ "$NEXT" != "$CURRENT" ]; then
   sed -i -e "0,/^version = \"$CURRENT\"/s//version = \"$NEXT\"/" device/Cargo.toml
   (cd device && cargo update --workspace --quiet)
+  sed -i -e "0,/^version = \"$CURRENT\"/s//version = \"$NEXT\"/" server/Cargo.toml
+  (cd server && cargo update --workspace --quiet)
 fi
 git-cliff --tag "$TAG" -o CHANGELOG.md
-git add device/Cargo.toml device/Cargo.lock CHANGELOG.md
+git add device/Cargo.toml device/Cargo.lock server/Cargo.toml server/Cargo.lock CHANGELOG.md
 git commit -m "chore(release): $TAG"
 git tag -a "$TAG" -m "alexsay $TAG"
 git push origin main "$TAG"
@@ -62,6 +64,8 @@ irm https://alexsay.com/install.ps1 | iex          # Windows
 
 ## Downloads
 
+### Speaker
+
 | Platform | File |
 |---|---|
 | Linux, x86_64 (static, any distro) | [alexsay-x86_64-linux-musl]($DL/alexsay-x86_64-linux-musl) |
@@ -70,10 +74,24 @@ irm https://alexsay.com/install.ps1 | iex          # Windows
 | macOS, Intel | [alexsay-x86_64-macos]($DL/alexsay-x86_64-macos) |
 | Windows, x86_64 | [alexsay-x86_64-windows.zip]($DL/alexsay-x86_64-windows.zip) |
 | Windows, arm64 | [alexsay-aarch64-windows.zip]($DL/alexsay-aarch64-windows.zip) |
-| Checksums, signed with the release key | [SHA256SUMS]($DL/SHA256SUMS), [SHA256SUMS.sig]($DL/SHA256SUMS.sig) |
 
-Linux and macOS: \`chmod +x\` and run. Windows: unzip and run alexsay.exe. Every binary was run on its own
-architecture before it was attached here.
+### Server
+
+Your own alexsay server in one binary: the API, the app, an HTTP server and an embedded SQLite database. Meant for your own machine or home network; exposing it to the internet is at your own risk. It never updates itself: download a new release to upgrade.
+
+| Platform | File |
+|---|---|
+| Linux, x86_64 (static, any distro) | [alexsay-server-x86_64-linux-musl]($DL/alexsay-server-x86_64-linux-musl) |
+| Linux, aarch64 (static, any distro; Raspberry Pi 5) | [alexsay-server-aarch64-linux-musl]($DL/alexsay-server-aarch64-linux-musl) |
+| macOS, Apple Silicon | [alexsay-server-aarch64-macos]($DL/alexsay-server-aarch64-macos) |
+| macOS, Intel | [alexsay-server-x86_64-macos]($DL/alexsay-server-x86_64-macos) |
+| Windows, x86_64 (also runs on Windows on Arm through emulation) | [alexsay-server-x86_64-windows.zip]($DL/alexsay-server-x86_64-windows.zip) |
+
+### Checksums
+
+[SHA256SUMS]($DL/SHA256SUMS) and [SHA256SUMS.sig]($DL/SHA256SUMS.sig), signed with the release key.
+
+Linux and macOS: \`chmod +x\` and run. Windows: unzip and run the .exe.
 NOTES_EOF
 gh release create "$TAG" --title "alexsay $NEXT" --notes-file "$NOTES"
 echo "released $TAG; CI is building and attaching the binaries (gh run watch)"

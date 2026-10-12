@@ -38,7 +38,13 @@ describe("device heartbeat", () => {
     const after = await (await heartbeat(DEVICE_ID)).json();
     expect(after).toMatchObject({
       claimed: true,
-      assistant: { provider: "openai", api_key: OPENAI_KEY, model: "gpt-live-1", voice: "cedar" },
+      assistant: {
+        provider: "openai",
+        api_key: OPENAI_KEY,
+        base_url: "https://api.openai.com/v1",
+        model: "gpt-live-1",
+        voice: "cedar",
+      },
       account: { locale: "en-GB", timezone: "Europe/London" },
     });
   });
@@ -67,10 +73,12 @@ describe("device assistant", () => {
     await connectOpenai(maria);
     const session = (await (await call(`${APP}/v1/device/session`, { headers: device })).json()) as {
       api_key: string;
+      base_url: string;
       session: { model: string; instructions: string; delegation: { responses: { tools: { name: string }[] } } };
       device: { name: string };
     };
     expect(session.api_key).toBe(OPENAI_KEY);
+    expect(session.base_url).toBe("https://api.openai.com/v1");
     expect(session.device).toEqual({ id: DEVICE_ID, name: "Kitchen" });
     expect(session.session.model).toBe("gpt-live-1");
     expect(session.session.instructions).toContain("Today is");

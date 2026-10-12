@@ -1,5 +1,6 @@
-# Builds the speaker for every platform on a native runner, runs each binary there (scripts/release-check.sh),
-# and attaches it to the GitHub release for the tag, named like streamx: alexsay-<arch>-<os>[-musl].
+# Builds the speaker and the server for every platform on a native runner, runs each binary there
+# (scripts/release-check.sh, scripts/server-release-check.sh), and attaches it to the GitHub release for
+# the tag, named like streamx: alexsay-<arch>-<os>[-musl] and alexsay-server-<arch>-<os>[-musl].
 # The release itself is created by scripts/release-tag.sh; the last job signs the checksum list.
 name: release
 on:
@@ -142,8 +143,146 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" dist/* --clobber
+  server-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - name: Build (static musl launcher; workerd with its own glibc loader)
+        run: |
+          nix develop --command bash -c '
+            pnpm install --frozen-lockfile
+            scripts/server-bundle.sh ${{ matrix.arch }}-linux
+            cd server && cargo build --release --target ${{ matrix.arch }}-unknown-linux-musl'
+          mkdir -p dist
+          install -m 755 server/target/nix/${{ matrix.arch }}-unknown-linux-musl/release/alexsay-server dist/alexsay-server-${{ matrix.arch }}-linux-musl
+          file dist/alexsay-server-${{ matrix.arch }}-linux-musl | grep -Eq "statically linked|static-pie linked"
+      - name: Run it
+        run: nix develop --command scripts/server-release-check.sh dist/alexsay-server-${{ matrix.arch }}-linux-musl "${TAG#v}"
+      - name: Run it on Alpine (no glibc on the system)
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w alpine:3 sh -c 'apk add -q bash curl && scripts/server-release-check.sh dist/alexsay-server-${{ matrix.arch }}-linux-musl "'"${TAG#v}"'"'
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber
+  server-macos:
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.0
+      - run: rustup show && rustup target add ${{ matrix.arch }}-apple-darwin
+        working-directory: server
+      - name: Build
+        run: |
+          command -v zstd >/dev/null || brew install zstd
+          pnpm install --frozen-lockfile
+          scripts/server-bundle.sh ${{ matrix.arch }}-macos
+          cd server && cargo build --release --target ${{ matrix.arch }}-apple-darwin
+      - name: Import the Developer ID certificate
+        if: env.MACOS_CERT_P12 != ''
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN=$RUNNER_TEMP/signing.keychain-db; KEYCHAIN_PW=$(uuidgen)
+          echo "$MACOS_CERT_P12" | base64 -d > $RUNNER_TEMP/cert.p12
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import $RUNNER_TEMP/cert.p12 -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/ {print $2; exit}')
+          echo "CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+      - name: Prepare notarisation credentials
+        if: env.APP_STORE_CONNECT_KEY != ''
+        env:
+          APP_STORE_CONNECT_KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+        run: |
+          echo "$APP_STORE_CONNECT_KEY" | base64 -d > $RUNNER_TEMP/asc.p8
+          echo "NOTARY_KEY_FILE=$RUNNER_TEMP/asc.p8" >> "$GITHUB_ENV"
+          echo "NOTARY_KEY_ID=${{ secrets.APP_STORE_CONNECT_KEY_ID }}" >> "$GITHUB_ENV"
+          echo "NOTARY_ISSUER_ID=${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" >> "$GITHUB_ENV"
+      - name: Sign and notarise
+        run: scripts/macos-sign.sh server/target/${{ matrix.arch }}-apple-darwin/release/alexsay-server dist/alexsay-server-${{ matrix.arch }}-macos
+      - name: Rosetta for the Intel build
+        if: matrix.arch == 'x86_64'
+        run: softwareupdate --install-rosetta --agree-to-license || true
+      - name: Run it
+        run: |
+          if [ "${{ matrix.arch }}" = x86_64 ]; then
+            file dist/alexsay-server-x86_64-macos | grep -q x86_64
+            printf '#!/bin/sh\nexec arch -x86_64 "%s" "$@"\n' "$PWD/dist/alexsay-server-x86_64-macos" > "$RUNNER_TEMP/alexsay-server-intel"
+            chmod +x "$RUNNER_TEMP/alexsay-server-intel"
+            scripts/server-release-check.sh "$RUNNER_TEMP/alexsay-server-intel" "${TAG#v}"
+          else
+            file dist/alexsay-server-aarch64-macos | grep -q arm64
+            scripts/server-release-check.sh dist/alexsay-server-aarch64-macos "${TAG#v}"
+          fi
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber
+  server-windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.0
+      - run: rustup show
+        working-directory: server
+      - name: Build (static CRT, no redistributable needed)
+        shell: bash
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          pnpm install --frozen-lockfile
+          scripts/server-bundle.sh x86_64-windows
+          cd server && cargo build --release --target x86_64-pc-windows-msvc
+      - name: Run it
+        shell: bash
+        run: scripts/server-release-check.sh server/target/x86_64-pc-windows-msvc/release/alexsay-server.exe "${TAG#v}"
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path server/target/x86_64-pc-windows-msvc/release/alexsay-server.exe -DestinationPath dist/alexsay-server-x86_64-windows.zip
+      - name: Attach to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber
   checksums:
-    needs: [linux, macos, windows]
+    needs: [linux, macos, windows, server-linux, server-macos, server-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

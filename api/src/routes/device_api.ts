@@ -63,7 +63,9 @@ export const deviceApiRoutes = new Hono<AppEnv>()
       name: row.name,
       time: now,
       poll_s: 60,
-      assistant: connection ? { provider: "openai", api_key: connection.apiKey, ...connection.settings } : null,
+      assistant: connection
+        ? { provider: "openai", api_key: connection.apiKey, base_url: c.env.OPENAI_BASE_URL, ...connection.settings }
+        : null,
       telephony,
       account,
     });
@@ -102,7 +104,12 @@ export const deviceApiRoutes = new Hono<AppEnv>()
     if (!built) {
       return c.json({ error: "no_openai_connection" }, 412);
     }
-    return c.json({ api_key: built.apiKey, session: built.session, device: c.get("device") });
+    return c.json({
+      api_key: built.apiKey,
+      base_url: c.env.OPENAI_BASE_URL,
+      session: built.session,
+      device: c.get("device"),
+    });
   })
   .post("/tools/call", async (c) => {
     const { name, arguments: args, conversation_id } = await jsonBody(c, schemas.toolCall);

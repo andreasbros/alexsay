@@ -82,6 +82,10 @@ server *args: build-server
 e2e-server: build-server
     scripts/e2e-server.sh server/target/nix/$(uname -m)-unknown-linux-musl/release/alexsay-server
 
+# The README's hero image: the live website's landscape hero in the day and night themes (docs/media)
+readme-screenshot site="https://www.alexsay.com": deps
+    node scripts/readme-screenshot.mjs {{site}}
+
 # Cut a release: bumps the version, tags, pushes and creates the GitHub release (CI builds and attaches the binaries)
 release bump="patch":
     scripts/release-tag.sh {{bump}}

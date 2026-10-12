@@ -12,10 +12,12 @@
 [![App](https://img.shields.io/badge/app-app.alexsay.com-6e56cf)](https://app.alexsay.com)
 [![Website](https://img.shields.io/badge/web-alexsay.com-6e56cf)](https://www.alexsay.com)
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="website/src/media/home-night-wide-1600.webp">
-  <img alt="The Alexsay speaker, a charcoal fabric cylinder, on a wooden side table at home" src="website/src/media/home-day-wide-1600.webp" width="100%">
-</picture>
+<a href="https://www.alexsay.com">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/hero-night.jpg">
+    <img alt="The alexsay.com home page: the headline, A speaker that listens to you. On your terms., beside a photo of the speaker on a side table" src="docs/media/hero-day.jpg" width="100%">
+  </picture>
+</a>
 
 </div>
 
@@ -222,7 +224,7 @@ Alexsay stands on these projects. Thank you to their authors.
 | [rpassword](https://crates.io/crates/rpassword), [getrandom](https://crates.io/crates/getrandom) | Password prompts and generated secrets |
 | [anyhow](https://crates.io/crates/anyhow) | Errors |
 
-**The rest of the stack:** [workerd](https://github.com/cloudflare/workerd) inside `alexsay-server`, [OpenAI GPT-Live](https://platform.openai.com), [Cloudflare Workers and D1](https://developers.cloudflare.com/workers/), [Hono](https://hono.dev), [Zod](https://zod.dev), [React](https://react.dev), [Radix Themes](https://www.radix-ui.com/themes), [Vite](https://vite.dev), [Twilio](https://www.twilio.com), [Lightwave](https://lightwaverf.com), [Playwright](https://playwright.dev), [Nix](https://nixos.org), [just](https://just.systems), and [Seeed Studio](https://www.seeedstudio.com) for the ReSpeaker XVF3800.
+**The rest of the stack:** [workerd](https://github.com/cloudflare/workerd) inside `alexsay-server`, [OpenAI GPT-Live](https://platform.openai.com), [Cloudflare Workers and D1](https://developers.cloudflare.com/workers/), [Hono](https://hono.dev), [Zod](https://zod.dev), [React](https://react.dev), [Radix Themes](https://www.radix-ui.com/themes), [Vite](https://vite.dev), [Twilio](https://www.twilio.com), [Lightwave](https://lightwaverf.com), [Playwright](https://playwright.dev), [xterm.js](https://xtermjs.org) for the website's terminal, [Nix](https://nixos.org), [just](https://just.systems), and [Seeed Studio](https://www.seeedstudio.com) for the ReSpeaker XVF3800.
 
 ## License
 

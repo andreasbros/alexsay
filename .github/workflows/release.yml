@@ -301,3 +301,4 @@ jobs:
           chmod +x alexsay-x86_64-linux-musl
           ./alexsay-x86_64-linux-musl release sign-sums SHA256SUMS > SHA256SUMS.sig
           gh release upload "$TAG" SHA256SUMS SHA256SUMS.sig --clobber
+          gh release edit "$TAG" --draft=false --latest

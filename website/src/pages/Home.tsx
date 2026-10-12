@@ -1,6 +1,7 @@
+import { DevTerminal } from "../components/DevTerminal";
 import { FeatureIcon, IconArrow, IconGitHub } from "../components/Icons";
 import { ThemedPicture } from "../components/ThemedPicture";
-import { APP_URL, FEATURES, GITHUB_URL, INTEGRATIONS } from "../content/site";
+import { APP_URL, DEV_POINTS, FEATURES, GITHUB_URL, INTEGRATIONS } from "../content/site";
 import dayTall600 from "../media/home-day-tall-600.webp";
 import dayTall1200 from "../media/home-day-tall-1200.webp";
 import dayWide800 from "../media/home-day-wide-800.webp";
@@ -139,6 +140,40 @@ export function Home() {
             </a>
             <a className="btn btn-secondary btn-lg" href={APP_URL}>
               Open the app
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className="section dev" id="development">
+        <div className="container">
+          <div className="section-head">
+            <p className="eyebrow">Development</p>
+            <h2>
+              Install it in one line. <span className="serif">Talk to it in the next.</span>
+            </h2>
+            <p className="lead">
+              The speaker is one Rust binary. Download it, train the wake word on your own voice and say its name.
+            </p>
+          </div>
+          <DevTerminal />
+          <pre className="dev-install">
+            <code>curl -fsSL https://alexsay.com/install.sh | sh</code>
+          </pre>
+          <div className="dev-points">
+            {DEV_POINTS.map((point) => (
+              <article key={point.title} className="dev-point">
+                <h3>{point.title}</h3>
+                <p>{point.text}</p>
+              </article>
+            ))}
+          </div>
+          <div className="hero-actions dev-actions">
+            <a className="btn btn-primary btn-lg" href={GITHUB_URL}>
+              <IconGitHub /> Read the code
+            </a>
+            <a className="btn btn-secondary btn-lg" href={`${GITHUB_URL}/releases/latest`}>
+              Download a release
             </a>
           </div>
         </div>

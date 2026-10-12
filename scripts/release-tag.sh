@@ -91,5 +91,7 @@ irm https://alexsay.com/install.ps1 | iex          # Windows
 
 Linux and macOS: \`chmod +x\` and run. Windows: unzip and run the .exe.
 NOTES_EOF
-gh release create "$TAG" --title "alexsay $NEXT" --notes-file "$NOTES"
+# A draft until CI has attached and signed every binary, so installers and speakers never see a
+# release without its files
+gh release create "$TAG" --draft --title "alexsay $NEXT" --notes-file "$NOTES"
 echo "released $TAG; CI is building and attaching the binaries (gh run watch)"

@@ -13,7 +13,7 @@ const magenta = (s: string) => `${ESC}35m${s}${reset}`;
 const yellow = (s: string) => `${ESC}33m${s}${reset}`;
 const italic = (s: string) => `${ESC}3m${s}${reset}`;
 
-export const PROMPT = `${green("andreas@kitchen")}${dim(":")}${blue("~")}${dim("$")} `;
+export const PROMPT = `${green("robin@kitchen")}${dim(":")}${blue("~")}${dim("$")} `;
 
 /** One line of output and how long the terminal waits before printing it, in milliseconds. */
 export interface Line {
@@ -101,7 +101,7 @@ export const ACTS: Act[] = [
       at(1600, log("18:09:40.192902", "INFO", bold(cyan("wake word")), field("score", "0.977"))),
       at(450, log("18:09:41.530863", "DEBUG", "session live_u0_EYEk... open")),
       at(700, log("18:09:42.356234", "INFO", say("user", "Alexsay"))),
-      at(900, log("18:09:43.562107", "INFO", say("assistant", "Hi, Andreas."))),
+      at(900, log("18:09:43.562107", "INFO", say("assistant", "Hi, Robin."))),
       at(
         300,
         log(

@@ -142,7 +142,7 @@ export function DevTerminal() {
           <span />
           <span />
           <span />
-          <p>andreas@kitchen: ~</p>
+          <p>robin@kitchen: ~</p>
         </div>
         <div
           className="term-screen"

@@ -25,6 +25,8 @@ test-device:
     cd device && cargo test --workspace
 
 test-js: deps
+    # Local secrets for workerd (the example holds a dummy key); the generated Worker types include them
+    [ -f api/.dev.vars ] || cp api/.dev.vars.example api/.dev.vars
     pnpm exec biome check .
     # The app build writes src/build.ts, which the typecheck needs on a fresh checkout
     pnpm --filter app --filter website build

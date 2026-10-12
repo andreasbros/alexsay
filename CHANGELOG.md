@@ -4,12 +4,25 @@ All notable changes to alexsay. The format follows
 [Keep a Changelog](https://keepachangelog.com), versions follow
 [SemVer](https://semver.org).
 
+## [0.1.3] - 2026-10-12
+
+
+### Changes
+
+- One e2e suite for prod and the local server, run in CI on every change (8cf29d55)
+- The speaker removal test checks the DELETE response (9058cf45)
+- Drop the removal test's debug line (2303f1f6)
+
 ## [0.1.2] - 2026-10-12
 
 
 ### Documentation
 
 - Release conventions in the handover notes (3488b518)
+
+### Internal
+
+- V0.1.2 (291aebcf)
 
 ### Changes
 

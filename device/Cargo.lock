@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "alexsay-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
@@ -36,7 +36,7 @@ dependencies = [
 
 [[package]]
 name = "alexsay-daemon"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "alexsay-core",
  "anyhow",

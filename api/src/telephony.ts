@@ -5,6 +5,7 @@ import { logFor } from "./log";
 import { contextInstructions, currentConversation, loadContext } from "./memory";
 import { isPublicOrigin } from "./origin";
 import { toWhatsapp } from "./phone";
+import { ProviderError } from "./providers/openai";
 import {
   addParticipant,
   CLIENT_IDENTITY,
@@ -12,6 +13,7 @@ import {
   createCall,
   getCall,
   redirectCall,
+  type Sent,
   sendMessage,
   type Webhooks,
 } from "./providers/twilio";
@@ -302,7 +304,7 @@ async function openConference(
   });
   const absence = await assistantAbsence(c, username);
   const pending = brief.guests.map((g) => g.name ?? g.phone);
-  void logFor(
+  await logFor(
     c,
     username,
     "info",
@@ -361,22 +363,45 @@ export async function speakerOnline(scope: Scope, device: string): Promise<boole
  */
 export async function hostAnswered(place: Place, hostLeg: CallRow): Promise<void> {
   const brief = parseBrief(hostLeg.brief);
-  if (!hostLeg.conference || !brief || brief.dialled || brief.guests.length === 0) {
+  if (!hostLeg.conference || !brief || brief.guests.length === 0) {
     return;
   }
-  await calls.setBrief(place.env.DB, hostLeg.id, JSON.stringify({ ...brief, dialled: true }));
-  void logFor(
+  if (!(await calls.claimDialling(place.env.DB, hostLeg.id))) {
+    return;
+  }
+  await logFor(
     place,
     hostLeg.username,
     "info",
     `call ${hostLeg.conference}: host is on, dialling ${brief.guests.length}`,
   );
   const connection = await ready(place, hostLeg.username);
-  for (const guest of brief.guests) {
-    await dialGuest(place, hostLeg.username, connection, hostLeg.conference, guest);
-  }
-  await seatAssistant(place, hostLeg.username, hostLeg.conference, brief);
+  const conference = hostLeg.conference;
+  // One guest failing must not leave the others undialled or the assistant off the call
+  await Promise.all([
+    ...brief.guests.map((guest) =>
+      dialGuest(place, hostLeg.username, connection, conference, guest).catch(async (err: unknown) => {
+        await logFor(
+          place,
+          hostLeg.username,
+          "error",
+          `call ${conference}: dialling ${guest.phone} failed: ${errorText(err)}`,
+        );
+      }),
+    ),
+    seatAssistant(place, hostLeg.username, conference, brief).catch(async (err: unknown) => {
+      await logFor(
+        place,
+        hostLeg.username,
+        "error",
+        `call ${conference}: seating the assistant failed: ${errorText(err)}`,
+      );
+    }),
+  ]);
 }
+
+const errorText = (err: unknown) =>
+  err instanceof ProviderError ? err.detail : err instanceof Error ? err.message : "failed";
 
 async function dialGuest(place: Place, username: string, connection: Ready, conference: string, guest: Guest) {
   const now = Date.now();
@@ -407,14 +432,35 @@ async function dialGuest(place: Place, username: string, connection: Ready, conf
   if (!guest.agent) {
     await contacts.stamp(place.env.DB, username, guest.phone, "last_called_at", now);
   }
-  void logFor(place, username, "info", `call ${conference}: dialled ${guest.name ?? guest.phone} (${leg.status})`);
+  await logFor(place, username, "info", `call ${conference}: dialled ${guest.name ?? guest.phone} (${leg.status})`);
   return placed(leg, { phone: guest.phone, contact: null });
 }
 
-/** A guest picked up: noted for the log; the assistant is already on the line. */
+/** A guest picked up: logged, and the assistant on the line is told so it never has to guess. */
 export async function guestAnswered(place: Place, guestLeg: CallRow): Promise<void> {
-  void logFor(place, guestLeg.username, "info", `call ${guestLeg.conference}: ${guestLeg.phone} answered`);
+  await logFor(place, guestLeg.username, "info", `call ${guestLeg.conference}: ${guestLeg.phone} answered`);
+  await tellAssistant(place, guestLeg, `${await legName(place, guestLeg)} answered.`, false);
 }
+
+/** A guest's line ended without an answer (busy, no answer, failed): the assistant tells the user. */
+export async function guestUnanswered(place: Place, guestLeg: CallRow, status: string): Promise<void> {
+  await logFor(place, guestLeg.username, "info", `call ${guestLeg.conference}: ${guestLeg.phone} ${status}`);
+  const why = status === "busy" ? "the line was busy" : status === "no-answer" ? "nobody answered" : "the call failed";
+  await tellAssistant(place, guestLeg, `${await legName(place, guestLeg)} did not answer: ${why}.`, true);
+}
+
+async function tellAssistant(place: Scope, leg: CallRow, text: string, reply: boolean): Promise<void> {
+  if (!leg.conference) {
+    return;
+  }
+  const agent = place.env.CALL_AGENT.get(place.env.CALL_AGENT.idFromName(assistantAgentName(leg.conference)));
+  await agent
+    .fetch("https://call-agent/notify", { method: "POST", body: JSON.stringify({ text, reply }) })
+    .catch(() => undefined);
+}
+
+/** The assistant's realtime socket lives in one object per conference, so call events can reach it. */
+export const assistantAgentName = (conference: string) => `assistant:${conference}`;
 
 /** Dials the assistant's SIP leg into the conference; the unique seat means it happens once per call. */
 async function seatAssistant(place: Place, username: string, conference: string, hostBrief: HostBrief): Promise<void> {
@@ -422,23 +468,29 @@ async function seatAssistant(place: Place, username: string, conference: string,
   if (!canJoinCalls(openai) || !isPublicOrigin(place.origin)) {
     return;
   }
-  const seat = { id: crypto.randomUUID(), username, conference, at: Date.now() };
+  const brief = await callBrief(place, username, hostBrief);
+  const seat = { id: crypto.randomUUID(), username, conference, brief, at: Date.now() };
   if (!(await calls.claimAssistant(place.env.DB, seat))) {
     return;
   }
   const connection = await ready(place, username);
-  const brief = await callBrief(place, username, hostBrief);
-  const leg = await addParticipant(connection.client, conference, {
-    to: sipUri(openai.settings.project_id, { [CONFERENCE_HEADER]: conference }),
-    from: "alexsay",
-    label: "assistant",
-    host: false,
-    statusCallback: statusCallbackUrl(place),
-    conferenceStatusCallback: conferenceStatusCallbackUrl(place),
-  });
-  await calls.setBrief(place.env.DB, seat.id, brief);
+  let leg: Sent;
+  try {
+    leg = await addParticipant(connection.client, conference, {
+      to: sipUri(openai.settings.project_id, { [CONFERENCE_HEADER]: conference }),
+      from: "alexsay",
+      label: "assistant",
+      host: false,
+      statusCallback: statusCallbackUrl(place),
+      conferenceStatusCallback: conferenceStatusCallbackUrl(place),
+    });
+  } catch (err) {
+    // A seat that was never dialled would block the next try and look like a live call
+    await calls.removeLeg(place.env.DB, seat.id);
+    throw err;
+  }
   await calls.setLeg(place.env.DB, seat.id, leg.sid, leg.status);
-  void logFor(place, username, "info", `call ${conference}: assistant dialled in over SIP`);
+  await logFor(place, username, "info", `call ${conference}: assistant dialled in over SIP`);
 }
 
 /** The SIP header naming the test agent's leg, so the webhook answers it with the script instead of the briefing. */
@@ -553,7 +605,8 @@ async function callBrief(place: Scope, username: string, hostBrief: HostBrief | 
     .map((g) => `About ${g.name ?? g.phone}: ${g.note}`)
     .join("\n");
   const picked =
-    "The other side is being dialled as you join: you may hear ringing first. Listen: what answers may be a " +
+    "The other side is being dialled as you join. You will be told when they answer, or that they did not; until " +
+    "then never say it is ringing or that anyone answered. Listen: what answers may be a " +
     "person, a recorded service, voicemail, or an automated menu or switchboard. For a menu, do not talk to it; " +
     "choose the option that fits with press_digits, one step at a time (for example 2 for billing), and tell " +
     `${username} briefly what you pressed. If no option fits, ask ${username}. For a recording or a service that ` +
@@ -703,7 +756,7 @@ export type EndedBy = "user" | "assistant" | "other side" | "line";
 export async function callEnded(c: Scope, username: string, conference: string, by: EndedBy): Promise<void> {
   const first = await calls.recordEnd(c.env.DB, { conference, username, ended_at: Date.now(), ended_by: by });
   if (first) {
-    void logFor(c, username, "info", `call ${conference}: ended by ${by}`);
+    await logFor(c, username, "info", `call ${conference}: ended by ${by}`);
   }
 }
 
@@ -767,7 +820,7 @@ export async function endCall(c: Scope, username: string, by: EndedBy = "user"):
   await completeCall(connection.client, host.sid);
   await calls.endConference(c.env.DB, conference);
   await callEnded(c, username, conference, by);
-  void logFor(c, username, "info", `call ${conference}: hung up`);
+  await logFor(c, username, "info", `call ${conference}: hung up`);
   return { conference };
 }
 

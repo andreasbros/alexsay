@@ -80,9 +80,21 @@ export function parseArguments(text: string): Record<string, unknown> {
  * calls it makes (hang up, add someone, contacts, memory, lights) and handing the results back, the
  * same way the browser does for the GPT-Live session. One object per call, named after the call id.
  */
+export interface CallNotice {
+  text: string;
+  /** Speak up about it now (nobody answered), rather than just knowing it (they answered and will talk). */
+  reply: boolean;
+}
+
 export class CallAgent extends DurableObject<Env> {
+  private socket: WebSocket | null = null;
+
   async fetch(request: Request): Promise<Response> {
-    if (new URL(request.url).pathname !== "/start") {
+    const path = new URL(request.url).pathname;
+    if (path === "/notify") {
+      return this.notify((await request.json()) as CallNotice);
+    }
+    if (path !== "/start") {
       return new Response("not found", { status: 404 });
     }
     const start = (await request.json()) as CallAgentStart;
@@ -91,7 +103,7 @@ export class CallAgent extends DurableObject<Env> {
       return Response.json({ ok: true });
     } catch (err) {
       const detail = err instanceof Error ? err.message : "failed";
-      void logFor(
+      await logFor(
         { env: this.env },
         start.username,
         "error",
@@ -110,7 +122,8 @@ export class CallAgent extends DurableObject<Env> {
       throw new Error(`realtime socket refused (${res.status})`);
     }
     socket.accept();
-    void logFor({ env: this.env }, start.username, "info", `call agent: on the realtime socket for ${start.callId}`);
+    this.socket = socket;
+    await logFor({ env: this.env }, start.username, "info", `call agent: on the realtime socket for ${start.callId}`);
     const context: ToolContext = {
       env: this.env,
       user: { username: start.username, role: "user" },
@@ -123,6 +136,7 @@ export class CallAgent extends DurableObject<Env> {
       void this.onMessage(socket, context, start, message.data);
     });
     socket.addEventListener("close", async () => {
+      this.socket = null;
       if (start.transcript) {
         await calls.endAssistant(this.env.DB, start.conference);
       } else if (start.legId) {
@@ -131,8 +145,25 @@ export class CallAgent extends DurableObject<Env> {
           await calls.setLeft(this.env.DB, leg.sid, Date.now());
         }
       }
-      void logFor({ env: this.env }, start.username, "info", `call agent: socket closed for ${start.callId}`);
+      await logFor({ env: this.env }, start.username, "info", `call agent: socket closed for ${start.callId}`);
     });
+  }
+
+  /** What happened on the call that the assistant cannot hear for itself: someone answered, or did not. */
+  private notify(notice: CallNotice): Response {
+    if (!this.socket) {
+      return new Response(null, { status: 409 });
+    }
+    this.socket.send(
+      JSON.stringify({
+        type: "conversation.item.create",
+        item: { type: "message", role: "system", content: [{ type: "input_text", text: notice.text }] },
+      }),
+    );
+    if (notice.reply) {
+      this.socket.send(JSON.stringify({ type: "response.create" }));
+    }
+    return new Response(null, { status: 204 });
   }
 
   private async onMessage(
@@ -159,7 +190,7 @@ export class CallAgent extends DurableObject<Env> {
       return;
     }
     const output = await runCallTool(context, call);
-    void logFor(
+    await logFor(
       { env: this.env },
       context.user.username,
       output.includes('"error"') ? "warn" : "info",

@@ -30,7 +30,7 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
       }
       throw err;
     });
-    void logFor(c, me.username, "info", `assistant session ${session.sessionId}${resume_from ? " (resumed)" : ""}`);
+    await logFor(c, me.username, "info", `assistant session ${session.sessionId}${resume_from ? " (resumed)" : ""}`);
     return c.json({
       session_id: session.sessionId,
       sdp: session.sdp,

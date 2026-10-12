@@ -5,7 +5,15 @@ import { calls, connections, users } from "../db";
 import { logFor } from "../log";
 import { serverOrigin } from "../origin";
 import { acceptCall, ProviderError, rejectCall, verifyWebhook } from "../providers/openai";
-import { AGENT_HEADER, agentBrief, CONFERENCE_HEADER, isLiveLeg, notOnCalls, parseAgent } from "../telephony";
+import {
+  AGENT_HEADER,
+  agentBrief,
+  assistantAgentName,
+  CONFERENCE_HEADER,
+  isLiveLeg,
+  notOnCalls,
+  parseAgent,
+} from "../telephony";
 import { agentToolDefinitions, toolDefinitions } from "../tools";
 import type { AppEnv } from "../types";
 
@@ -78,20 +86,21 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
       username: leg.username,
       origin: serverOrigin(c),
     };
-    void logFor(
+    await logFor(
       c,
       leg.username,
       "info",
       `openai: SIP call ${callId} accepted for ${conference}${agent ? ` (test agent: ${agent.role})` : ""}`,
     );
-    const worker = c.env.CALL_AGENT.get(c.env.CALL_AGENT.idFromName(callId));
+    // The assistant's object is named after the conference, so call events (who answered) can reach it
+    const worker = c.env.CALL_AGENT.get(c.env.CALL_AGENT.idFromName(agent ? callId : assistantAgentName(conference)));
     c.executionCtx.waitUntil(
       worker.fetch("https://call-agent/start", { method: "POST", body: JSON.stringify(start) }).catch(() => undefined),
     );
   } catch (err) {
     const detail = err instanceof ProviderError ? err.detail : err instanceof Error ? err.message : "accept failed";
     console.warn(JSON.stringify({ provider: "openai", webhook: "call.incoming", user: leg.username, error: detail }));
-    void logFor(c, leg.username, "error", `openai: SIP call for ${conference} refused: ${detail}`);
+    await logFor(c, leg.username, "error", `openai: SIP call for ${conference} refused: ${detail}`);
     await rejectCall(c.env.OPENAI_BASE_URL, openai.apiKey, callId).catch(() => undefined);
     return c.json({ ok: false });
   }

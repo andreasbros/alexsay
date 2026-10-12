@@ -58,7 +58,7 @@ export async function runToolFor(
     if (name !== "read_log") {
       const summary = JSON.stringify(output);
       const failed = summary.includes('"error"');
-      void logFor(
+      await logFor(
         scope,
         context.user.username,
         failed ? "warn" : "info",
@@ -69,7 +69,7 @@ export async function runToolFor(
   } catch (err) {
     const detail = err instanceof ProviderError ? err.detail : err instanceof Error ? err.message : "tool failed";
     console.warn(JSON.stringify({ tool: name, user: context.user.username, error: detail }));
-    void logFor(scope, context.user.username, "error", `tool ${name} ${summarise(args)} failed: ${detail}`);
+    await logFor(scope, context.user.username, "error", `tool ${name} ${summarise(args)} failed: ${detail}`);
     return { error: detail };
   }
 }

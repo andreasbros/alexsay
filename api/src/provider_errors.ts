@@ -24,7 +24,9 @@ export function providerFailure(c: Context<AppEnv>, provider: Provider, err: unk
     );
     const username = c.get("user")?.username;
     if (username) {
-      void logFor(c, username, "error", `${provider} ${c.req.method} ${c.req.path}: ${err.status} ${detail}`);
+      c.executionCtx.waitUntil(
+        logFor(c, username, "error", `${provider} ${c.req.method} ${c.req.path}: ${err.status} ${detail}`),
+      );
     }
     return c.json({ ok: false, error: "provider", status: err.status, detail }, 502);
   }

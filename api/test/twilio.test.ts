@@ -656,7 +656,7 @@ describe("twilio", () => {
     );
     const brief = await env.DB.prepare("SELECT brief FROM calls WHERE role = 'assistant'").first<{ brief: string }>();
     expect(brief?.brief).toContain("Mum (+447700900123)");
-    expect(brief?.brief).toContain("you may hear ringing first");
+    expect(brief?.brief).toContain("never say it is ringing");
     expect(brief?.brief).toContain("press_digits");
     expect(brief?.brief).toContain("we are in a queue");
     expect(brief?.brief).toContain("without your name");
@@ -675,6 +675,13 @@ describe("twilio", () => {
     expect(await tool(maria, "press_digits", { digits: "2" })).toEqual({ ok: true, digits: "2" });
     pressed.done();
     upstream.done();
+
+    // A late callback cannot bring a finished leg back, and a guest whose line ends unanswered is reported
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA2", CallStatus: "busy" });
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA2", CallStatus: "in-progress" });
+    expect(await env.DB.prepare("SELECT status FROM calls WHERE sid = 'CA2'").first()).toEqual({ status: "busy" });
+    const logged = await env.DB.prepare("SELECT message FROM server_log ORDER BY id").all<{ message: string }>();
+    expect(logged.results.map((r) => r.message)).toContain(`call ${name}: ${MUM} busy`);
 
     // Without the OpenAI SIP setup, the same call still opens in the browser, just without the assistant
     await json(`${APP}/api/connections/openai`, "PUT", { settings: { project_id: "" } }, maria);
@@ -728,7 +735,7 @@ describe("twilio", () => {
     expect(res.status).toBe(200);
     const session = accepted as { instructions: string; tools: { name: string }[]; model: string } | null;
     expect(session).toMatchObject({ model: "gpt-realtime" });
-    expect(session?.instructions).toContain("you may hear ringing first");
+    expect(session?.instructions).toContain("never say it is ringing");
     expect(session?.instructions).toContain("Do not introduce yourself and do not speak first");
     expect(session?.instructions).toContain("you give way: stop at once");
     expect(accepted).toMatchObject({

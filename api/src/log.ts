@@ -15,7 +15,8 @@ const KEEP_MS = 7 * 86_400_000;
 
 /**
  * Notes what the server did for a user: tool calls, calls placed and answered, webhooks, failures.
- * Best effort, never awaited by the caller's main path, so a log failure cannot fail the request.
+ * Best effort: a failure is swallowed, so callers await it (a Worker cancels floating promises once
+ * the response is sent, which lost lines from webhooks on 12 Oct 2026).
  */
 export function logFor(scope: Scope, username: string, level: LogLevel, message: string): Promise<void> {
   return scope.env.DB.prepare("INSERT INTO server_log (username, at, level, message) VALUES (?, ?, ?, ?)")

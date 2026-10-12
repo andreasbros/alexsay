@@ -663,14 +663,18 @@ export const calls = {
    * Reserves the one assistant seat of a conference before dialling it. Two webhooks racing for it
    * both try; the unique index lets exactly one through.
    */
-  claimAssistant: async (db: D1Database, row: { id: string; username: string; conference: string; at: number }) => {
+  /** The assistant's seat, with its briefing already in place for OpenAI's webhook, which may come first. */
+  claimAssistant: async (
+    db: D1Database,
+    row: { id: string; username: string; conference: string; brief: string; at: number },
+  ) => {
     try {
       await db
         .prepare(
-          `INSERT INTO calls (id, username, contact_id, direction, kind, phone, conference, role, sid, status, at)
-           VALUES (?, ?, NULL, 'out', 'conference', 'assistant', ?, 'assistant', NULL, 'dialling', ?)`,
+          `INSERT INTO calls (id, username, contact_id, direction, kind, phone, conference, role, brief, sid, status, at)
+           VALUES (?, ?, NULL, 'out', 'conference', 'assistant', ?, 'assistant', ?, NULL, 'dialling', ?)`,
         )
-        .bind(row.id, row.username, row.conference, row.at)
+        .bind(row.id, row.username, row.conference, row.brief, row.at)
         .run();
       return true;
     } catch {
@@ -678,8 +682,30 @@ export const calls = {
     }
   },
 
-  setStatus: (db: D1Database, sid: string, status: string) =>
-    db.prepare("UPDATE calls SET status = ? WHERE sid = ?").bind(status, sid).run(),
+  /** Moves a leg to a new status; never out of a final one (late callbacks arrive). True when it changed. */
+  setStatus: async (db: D1Database, sid: string, status: string) =>
+    (
+      await db
+        .prepare(
+          `UPDATE calls SET status = ? WHERE sid = ? AND status != ? AND status NOT IN ${TERMINAL_CALL_STATUSES}`,
+        )
+        .bind(status, sid, status)
+        .run()
+    ).meta.changes > 0,
+
+  /** Marks a host's guests as dialled, once: of the triggers racing to dial them, only the first gets true. */
+  claimDialling: async (db: D1Database, id: string) =>
+    (
+      await db
+        .prepare(
+          `UPDATE calls SET brief = json_set(brief, '$.dialled', json('true'))
+             WHERE id = ? AND coalesce(json_extract(brief, '$.dialled'), 0) = 0`,
+        )
+        .bind(id)
+        .run()
+    ).meta.changes > 0,
+
+  removeLeg: (db: D1Database, id: string) => db.prepare("DELETE FROM calls WHERE id = ?").bind(id).run(),
 
   /** The leg OpenAI's SIP endpoint is dialled on, found from the header Twilio carries into the INVITE. */
   assistantLeg: (db: D1Database, conference: string) =>

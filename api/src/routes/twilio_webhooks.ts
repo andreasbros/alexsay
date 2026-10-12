@@ -6,7 +6,15 @@ import { logFor } from "../log";
 import { serverOrigin } from "../origin";
 import { bareNumber, normalisePhone, WHATSAPP_PREFIX } from "../phone";
 import { CLIENT_IDENTITY, validSignature } from "../providers/twilio";
-import { BRIDGE_WINDOW_MS, callEnded, endedByFromLegs, guestAnswered, hostAnswered, streamUrl } from "../telephony";
+import {
+  BRIDGE_WINDOW_MS,
+  callEnded,
+  endedByFromLegs,
+  guestAnswered,
+  guestUnanswered,
+  hostAnswered,
+  streamUrl,
+} from "../telephony";
 import { dialOutTwiml, emptyTwiml, rejectTwiml, ringTwiml, streamTwiml } from "../twiml";
 import type { AppEnv } from "../types";
 
@@ -44,9 +52,11 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       const host = await calls.hostLeg(c.env.DB, owner.username, bridge.conference);
       if (host) {
         await calls.setStatus(c.env.DB, host.sid ?? "", "in-progress");
-        await hostAnswered(place, host);
+        // The speaker is answered first: dialling everyone before the reply kept the host out of the
+        // conference meanwhile (and risks Twilio's webhook timeout); the host's join retries it anyway
+        c.executionCtx.waitUntil(hostAnswered(place, host));
       }
-      void logFor(place, owner.username, "info", `call ${bridge.conference}: streaming to the speaker`);
+      await logFor(place, owner.username, "info", `call ${bridge.conference}: streaming to the speaker`);
       return xml(c, streamTwiml(streamUrl(place, bridge.token), bridge.conference, "speaker"));
     }
     const speakers = settings.sip_domain
@@ -70,7 +80,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       at: now,
     });
     await contacts.stamp(c.env.DB, owner.username, from, "last_called_at", now);
-    void logFor(c, owner.username, "info", `incoming call from ${from}, ringing ${rang.join(", ")}`);
+    await logFor(c, owner.username, "info", `incoming call from ${from}, ringing ${rang.join(", ")}`);
     return xml(c, ringTwiml(speakers, mobile, CLIENT_IDENTITY));
   })
   .post("/voice/outbound", async (c) => {
@@ -127,7 +137,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       at: now,
     });
     await contacts.stamp(c.env.DB, owner.username, from, "last_messaged_at", now);
-    void logFor(c, owner.username, "info", `incoming message from ${from}`);
+    await logFor(c, owner.username, "info", `incoming message from ${from}`);
     return xml(c, emptyTwiml());
   })
   .post("/status", async (c) => {
@@ -142,17 +152,22 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       return c.text("forbidden", 403);
     }
     const status = (params.CallStatus ?? "").slice(0, 32);
-    await calls.setStatus(c.env.DB, call.sid ?? "", status);
+    const changed = await calls.setStatus(c.env.DB, call.sid ?? "", status);
     const place = { env: c.env, origin: serverOrigin(c) };
-    void logFor(place, call.username, "info", `twilio: ${call.role || call.kind} leg ${call.phone} is ${status}`);
+    await logFor(place, call.username, "info", `twilio: ${call.role || call.kind} leg ${call.phone} is ${status}`);
     if (status === "in-progress" && call.role === "host") {
       await hostAnswered(place, call);
     }
-    if (status === "in-progress" && call.role === "guest") {
+    if (changed && status === "in-progress" && call.role === "guest") {
       await guestAnswered(place, call);
+    }
+    if (changed && UNANSWERED.has(status) && call.role === "guest") {
+      await guestUnanswered(place, call, status);
     }
     return c.body(null, 204);
   });
+
+const UNANSWERED = new Set(["busy", "no-answer", "failed", "canceled"]);
 
 /**
  * Twilio opens the media stream for a speaker's call here, naming the pending bridge by its token;
@@ -194,18 +209,18 @@ export const twilioConferenceRoute = new Hono<AppEnv>().post("/conference", asyn
   const event = (params.StatusCallbackEvent ?? "").slice(0, 32);
   const leg = params.CallSid ? (legs.find((l) => l.sid === params.CallSid) ?? null) : null;
   const place = { env: c.env, origin: serverOrigin(c) };
-  void logFor(
+  await logFor(
     place,
     first.username,
     "info",
     `twilio: conference ${conference} ${event}${leg ? ` (${leg.role} ${leg.phone})` : ""}`,
   );
   if (event === "participant-join" && leg?.sid) {
-    await calls.setStatus(c.env.DB, leg.sid, "in-progress");
+    const changed = await calls.setStatus(c.env.DB, leg.sid, "in-progress");
     if (leg.role === "host") {
       await hostAnswered(place, leg);
     }
-    if (leg.role === "guest") {
+    if (changed && leg.role === "guest") {
       await guestAnswered(place, leg);
     }
   }

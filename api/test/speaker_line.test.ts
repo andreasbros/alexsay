@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   APP,
   addUser,
@@ -121,7 +121,8 @@ describe("speaker phone line", () => {
     const twiml = await answered.text();
     expect(twiml).toContain(`<Connect><Stream url="wss://app.alexsay.com/v1/twilio/stream/${bridge?.token}">`);
     expect(twiml).toContain(`<Parameter name="conference" value="${placed.output.conference}"/>`);
-    expect(legs.map((l) => l.Label)).toEqual(["Mum", "assistant"]);
+    // The stream is answered first; Mum and the assistant are dialled right after, in the background
+    await vi.waitFor(() => expect(legs.map((l) => l.Label).sort()).toEqual(["Mum", "assistant"]));
     upstream.done();
 
     // The stream connects: the speaker hears the call start, audio passes both ways, and it can hang up

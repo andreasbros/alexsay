@@ -40,8 +40,8 @@ pub struct Runtime {
     pub latest: Arc<Mutex<Option<HeartbeatReply>>>,
     pub call: CallState,
     pub line: Option<LineSender>,
-    /// Notes for the open conversation (a call report), read by the conversation loop.
-    notes: tokio::sync::Mutex<mpsc::UnboundedReceiver<String>>,
+    /// Call reports: each opens a conversation of its own, read by the listening loop.
+    notes: Mutex<Option<mpsc::UnboundedReceiver<String>>>,
     notes_tx: mpsc::UnboundedSender<String>,
     /// What the player plays, for the microphone's echo canceller; taken once when the microphone opens.
     echo_reference: Mutex<Option<std::sync::mpsc::Receiver<Vec<f32>>>>,
@@ -71,7 +71,7 @@ impl Runtime {
             latest: Arc::new(Mutex::new(None)),
             call: CallState::default(),
             line: None,
-            notes: tokio::sync::Mutex::new(notes_rx),
+            notes: Mutex::new(Some(notes_rx)),
             notes_tx,
             echo_reference: Mutex::new(reference_rx),
             in_session: Arc::new(AtomicBool::new(false)),
@@ -212,7 +212,7 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
                     tracing::debug!(rms = pcm::rms(&samples), "first call audio from the line");
                 }
                 heard.add(&samples, runtime.player.queued_ms());
-                runtime.player.play(&samples);
+                runtime.player.play_live(&samples);
             }
             LineSignal::CallEnd => {
                 let Some(conference) = runtime.call.end() else {
@@ -356,7 +356,9 @@ async fn update_loop(runtime: Arc<Runtime>) {
     loop {
         let state = paths::load_state(&runtime.paths);
         let now = unix_now();
-        if state.update_due(now, runtime.config.update.check_hours) {
+        // Never in the middle of a conversation or a call: the restart would cut it off
+        let busy = runtime.in_session.load(Ordering::Relaxed) || runtime.call.on_call();
+        if !busy && state.update_due(now, runtime.config.update.check_hours) {
             let mut state = state;
             state.last_update_check = now;
             let _ = paths::save_state(&runtime.paths, &state);
@@ -369,7 +371,10 @@ async fn update_loop(runtime: Arc<Runtime>) {
                             release.version
                         ))
                         .await;
-                    runtime.player.wait_until_quiet(Duration::from_secs(10));
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    while runtime.player.queued_ms() > 0 && Instant::now() < deadline {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
                     match update::install(&runtime.paths, &release).await {
                         Ok(()) => {
                             let mut state = paths::load_state(&runtime.paths);
@@ -431,63 +436,100 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
         .checked_sub(Duration::from_secs(3_600))
         .unwrap_or_else(Instant::now);
     let mut listening = Listening::default();
+    let mut reports = runtime
+        .notes
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+        .context("the listening loop runs once")?;
     // Sound cards start with a burst of garbage; the wake word does not get to hear it
     let warm_up_until = Instant::now() + Duration::from_millis(1_500);
     loop {
-        let Some(chunk) = mic.recv().await else {
-            anyhow::bail!("the microphone stopped");
-        };
-        if Instant::now() < warm_up_until {
-            continue;
-        }
-        if runtime.route_to_call(&chunk) {
-            preroll.clear();
-            continue;
-        }
-        preroll.extend(chunk.iter().copied());
-        while preroll.len() > preroll_len {
-            preroll.pop_front();
-        }
-        let Some(engine) = wake.as_mut() else {
-            continue;
-        };
-        let detection = engine.feed(&chunk);
-        listening.add(&chunk, engine);
-        if listening.due() {
-            listening.report();
-        }
-        let Some(detection) = detection else {
-            continue;
-        };
-        info!(score = detection.score, "wake word");
-        tracing::debug!(
-            frames = detection.frames,
-            gain = detection.gain,
-            "wake word detail"
-        );
-        runtime.play_clip(sounds::READY);
-        let head: Vec<i16> = preroll.drain(..).collect();
-        runtime.in_session.store(true, Ordering::Relaxed);
-        let outcome = converse(&runtime, &mut mic, head).await;
-        runtime.in_session.store(false, Ordering::Relaxed);
-        match outcome {
-            Ok(Outcome::Done) => runtime.play_clip(sounds::END),
-            Ok(Outcome::NotConnected) => {
-                if last_refusal.elapsed() > Duration::from_secs(60) {
-                    last_refusal = Instant::now();
-                    runtime.play_clip(sounds::ERROR);
-                    runtime.announce("OpenAI is not connected to this speaker yet. Open the app and add your key.").await;
+        let start = tokio::select! {
+            chunk = mic.recv() => {
+                let Some(chunk) = chunk else {
+                    anyhow::bail!("the microphone stopped");
+                };
+                if Instant::now() < warm_up_until {
+                    continue;
                 }
+                if runtime.route_to_call(&chunk) {
+                    preroll.clear();
+                    continue;
+                }
+                preroll.extend(chunk.iter().copied());
+                while preroll.len() > preroll_len {
+                    preroll.pop_front();
+                }
+                let Some(engine) = wake.as_mut() else {
+                    continue;
+                };
+                let detection = engine.feed(&chunk);
+                listening.add(&chunk, engine);
+                if listening.due() {
+                    listening.report();
+                }
+                let Some(detection) = detection else {
+                    continue;
+                };
+                info!(score = detection.score, "wake word");
+                tracing::debug!(frames = detection.frames, gain = detection.gain, "wake word detail");
+                runtime.play_clip(sounds::READY);
+                Opening::Wake(preroll.drain(..).collect())
             }
-            Err(err) => {
-                warn!("conversation failed: {err:#}");
+            Some(report) = reports.recv() => {
+                if runtime.call.on_call() {
+                    continue;
+                }
+                Opening::Report(report)
+            }
+        };
+        runtime.in_session.store(true, Ordering::Relaxed);
+        let outcome = converse(&runtime, &mut mic, start).await;
+        runtime.in_session.store(false, Ordering::Relaxed);
+        if let Some(engine) = wake.as_mut() {
+            engine.reset();
+        }
+        after_conversation(&runtime, outcome, &mut last_refusal);
+    }
+}
+
+/// The sound that ends a conversation, or why it could not run; nothing while a call has the speaker.
+fn after_conversation(
+    runtime: &Arc<Runtime>,
+    outcome: anyhow::Result<Outcome>,
+    last_refusal: &mut Instant,
+) {
+    if matches!(outcome, Ok(Outcome::OnCall)) {
+        return;
+    }
+    runtime.player.clear();
+    match outcome {
+        Ok(Outcome::Done) => runtime.play_clip(sounds::END),
+        Ok(Outcome::NotConnected) => {
+            if last_refusal.elapsed() > Duration::from_secs(60) {
+                *last_refusal = Instant::now();
                 runtime.play_clip(sounds::ERROR);
+                let speaker = Arc::clone(runtime);
+                tokio::spawn(async move {
+                    speaker
+                        .announce("OpenAI is not connected to this speaker yet. Open the app and add your key.")
+                        .await;
+                });
             }
         }
-        runtime.player.clear();
-        engine.reset();
-        while mic.try_recv().is_ok() {}
+        Ok(Outcome::OnCall) => {}
+        Err(err) => {
+            warn!("conversation failed: {err:#}");
+            runtime.play_clip(sounds::ERROR);
+        }
     }
+}
+
+/// What opens a conversation: the wake word (with the audio just before it), or a call's report.
+pub enum Opening {
+    Wake(Vec<i16>),
+    Report(String),
 }
 
 /// What the wake word heard over the last second, logged at debug: the level, the gain the detector
@@ -529,6 +571,8 @@ const LATE_DELTA: Duration = Duration::from_millis(250);
 pub enum Outcome {
     Done,
     NotConnected,
+    /// A phone call started: the conversation closed so the call has the microphone and the speaker.
+    OnCall,
 }
 
 /// One conversation: from the wake word to the close, with the session rules deciding the end.
@@ -536,8 +580,12 @@ pub enum Outcome {
 pub async fn converse(
     runtime: &Runtime,
     mic: &mut mpsc::Receiver<Vec<i16>>,
-    preroll: Vec<i16>,
+    opening: Opening,
 ) -> anyhow::Result<Outcome> {
+    let (preroll, mut report) = match opening {
+        Opening::Wake(preroll) => (preroll, None),
+        Opening::Report(report) => (Vec::new(), Some(report)),
+    };
     let Some(device_session) = runtime
         .server
         .session()
@@ -574,24 +622,19 @@ pub async fn converse(
     let mut audible_until = Instant::now();
     // What the microphone heard while a reply played: proof the speaker is audible in the room
     let mut reply_heard: Option<(f32, f32)> = None;
-    let mut notes = runtime.notes.lock().await;
-    while notes.try_recv().is_ok() {}
-    let mut mute_state = runtime.call.mute_state();
+    let mut muted = runtime.call.muted();
+    let mut outcome = Outcome::Done;
     let mut last_delta = Instant::now();
     loop {
         tokio::select! {
             chunk = mic.recv() => {
                 let Some(chunk) = chunk else { anyhow::bail!("the microphone stopped") };
                 if runtime.route_to_call(&chunk) {
-                    // GPT-Live paces its reply by its input: silence keeps it going, else a reply cut off by the call resumes after it
-                    if allow_audio {
-                        backlog.extend(std::iter::repeat_n(0, chunk.len()));
-                        while backlog.len() >= AUDIO_CHUNK {
-                            let piece: Vec<i16> = backlog.drain(..AUDIO_CHUNK).collect();
-                            live.send(ClientEvent::InputAudioAppend { audio: pcm::encode(&piece) });
-                        }
-                    }
-                    continue;
+                    // A muted GPT-Live holds its unfinished reply and plays it after the call; closed, it cannot
+                    info!("a call started: closing the conversation");
+                    live.send(ClientEvent::SessionClose);
+                    outcome = Outcome::OnCall;
+                    break;
                 }
                 let playing = Instant::now() < audible_until + Duration::from_millis(alexsay_core::duplex::ECHO_TAIL_MS);
                 let level = pcm::rms(&chunk);
@@ -610,10 +653,6 @@ pub async fn converse(
                 let decision = duplex.decide(level, playing);
                 if decision.speech {
                     session.heard_user(now_ms());
-                }
-                if decision.interrupt {
-                    tracing::debug!("barge-in: dropping the rest of the reply");
-                    runtime.player.clear();
                 }
                 let chunk = if decision.send { chunk } else { vec![0; chunk.len()] };
                 if allow_audio {
@@ -642,6 +681,11 @@ pub async fn converse(
                                 live.send(ClientEvent::InputAudioAppend { audio: pcm::encode(piece) });
                             }
                             backlog.clear();
+                            if let Some(note) = report.take() {
+                                info!("handing the call report to the assistant");
+                                live.send(ClientEvent::ResponseItemCreate { item: Item::note(&note) });
+                                live.send(ClientEvent::ResponseCreate);
+                            }
                         }
                         Action::PlayAudio(delta) => {
                             // GPT-Live streams silence all session long; queued behind the call it would bury the call's audio
@@ -655,7 +699,7 @@ pub async fn converse(
                             if gap > LATE_DELTA && runtime.player.queued_ms() < 100 {
                                 tracing::debug!(gap_ms = gap.as_millis(), audible = pcm::rms(&samples) > alexsay_core::session::AUDIBLE_RMS, "reply audio arrived late");
                             }
-                            runtime.player.play(&samples);
+                            runtime.player.play_live(&samples);
                             if pcm::rms(&samples) > alexsay_core::session::AUDIBLE_RMS {
                                 audible_until = Instant::now() + Duration::from_millis(runtime.player.queued_ms());
                             }
@@ -698,23 +742,12 @@ pub async fn converse(
                 live.send(ClientEvent::ResponseCreate);
                 session.tool_finished();
             }
-            Some(note) = notes.recv() => {
-                info!("handing the call report to the assistant");
-                live.send(ClientEvent::ResponseItemCreate { item: Item::note(&note) });
-                live.send(ClientEvent::ResponseCreate);
-            }
             _ = ticker.tick() => {
-                // A phone call or the mute button changes what the session may hear
-                let now_state = runtime.call.mute_state();
-                if now_state != mute_state {
-                    tracing::debug!(on_call = now_state.on_call, muted = now_state.muted, "session hold or mute changed");
-                    if now_state.session_muted() != mute_state.session_muted() {
-                        live.send(if now_state.session_muted() { ClientEvent::InputAudioMute } else { ClientEvent::InputAudioUnmute });
-                    }
-                    if now_state.on_call != mute_state.on_call {
-                        session.hold(now_state.on_call, now_ms());
-                    }
-                    mute_state = now_state;
+                // The mute button changes what the session may hear
+                if runtime.call.muted() != muted {
+                    muted = !muted;
+                    tracing::debug!(muted, "mute changed");
+                    live.send(if muted { ClientEvent::InputAudioMute } else { ClientEvent::InputAudioUnmute });
                 }
                 if now_ms() % 1_000 < u64::try_from(TICK.as_millis()).unwrap_or(250) {
                     tracing::debug!("{}", session.describe(now_ms()));
@@ -731,23 +764,60 @@ pub async fn converse(
                     }
                 }
                 if session.state() == SessionState::Closing && started.elapsed() > Duration::from_secs(1) {
-                    // The server confirms with session.closed; do not wait forever for it
-                    tokio::time::timeout(Duration::from_secs(3), live.recv()).await.ok();
+                    // The server confirms with session.closed (and the last transcripts); not forever
+                    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+                    while let Ok(Some(event)) = tokio::time::timeout_at(deadline, live.recv()).await {
+                        for action in session.on_event(&event, now_ms()) {
+                            if let Action::Transcript { role, text } = action {
+                                info!("{role}: {text}");
+                                turns.push(Turn { at: unix_now() * 1_000, role, text });
+                            }
+                        }
+                        if session.state() == SessionState::Closed {
+                            break;
+                        }
+                    }
                     break;
                 }
             }
         }
     }
-    runtime.player.wait_until_quiet(Duration::from_secs(8));
     if let Some(id) = conversation {
-        if let Err(err) = runtime.server.add_turns(&id, &turns).await {
-            warn!("saving the conversation: {err:#}");
-        }
-        if let Err(err) = runtime.server.end_conversation(&id).await {
-            warn!("closing the conversation record: {err:#}");
+        let server = runtime.server.clone();
+        tokio::spawn(async move {
+            if let Err(err) = server.add_turns(&id, &turns).await {
+                warn!("saving the conversation: {err:#}");
+            }
+            if let Err(err) = server.end_conversation(&id).await {
+                warn!("closing the conversation record: {err:#}");
+            }
+        });
+    }
+    if matches!(outcome, Outcome::Done) {
+        finish_playing(runtime, mic).await?;
+        if runtime.call.on_call() {
+            outcome = Outcome::OnCall;
         }
     }
-    Ok(Outcome::Done)
+    Ok(outcome)
+}
+
+/// Lets the last reply finish (up to 8 s) while the microphone keeps being read, so nothing queues up
+/// for the wake word and a call that starts meanwhile still gets its audio.
+async fn finish_playing(
+    runtime: &Runtime,
+    mic: &mut mpsc::Receiver<Vec<i16>>,
+) -> anyhow::Result<()> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    while runtime.player.queued_ms() > 0 && tokio::time::Instant::now() < deadline {
+        let Some(chunk) = mic.recv().await else {
+            anyhow::bail!("the microphone stopped");
+        };
+        if runtime.route_to_call(&chunk) {
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 pub fn unix_now() -> u64 {

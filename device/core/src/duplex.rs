@@ -1,7 +1,7 @@
-//! What the microphone may do while the assistant talks. With hardware echo cancellation (the
-//! Seeed Flex board) the conversation is full duplex: talking over the assistant interrupts it. Without
-//! it (a laptop, a plain USB microphone) the speaker's own voice reaches the microphone, so the
-//! assistant hears silence while it speaks and nothing local cuts its playback.
+//! What the microphone may do while the assistant talks. With echo cancellation (the Flex board's, or
+//! AEC3 in software) the conversation is full duplex and GPT-Live handles being talked over itself.
+//! Without it the speaker's own voice reaches the microphone, so the assistant hears silence while it
+//! speaks.
 
 use std::collections::VecDeque;
 
@@ -11,10 +11,6 @@ const WINDOW: usize = 100;
 const PERCENTILE: usize = 20;
 const SPEECH_OVER_FLOOR: f32 = 3.0;
 const SPEECH_MIN: f32 = 0.02;
-const BARGE_OVER_FLOOR: f32 = 5.0;
-const BARGE_MIN: f32 = 0.08;
-/// Loud chunks in a row before talking over the assistant counts as an interruption.
-const BARGE_CHUNKS: u8 = 3;
 /// After the speaker falls silent its sound still rings in the room for a moment.
 pub const ECHO_TAIL_MS: u64 = 400;
 
@@ -53,14 +49,11 @@ pub struct Decision {
     pub send: bool,
     /// The user is talking (keeps the session open).
     pub speech: bool,
-    /// The user talked over the assistant: drop what is still queued to play.
-    pub interrupt: bool,
 }
 
 pub struct Duplex {
     echo: Echo,
     levels: VecDeque<f32>,
-    loud_run: u8,
 }
 
 impl Duplex {
@@ -68,7 +61,6 @@ impl Duplex {
         Self {
             echo,
             levels: VecDeque::with_capacity(WINDOW),
-            loud_run: 0,
         }
     }
 
@@ -93,42 +85,20 @@ impl Duplex {
             self.levels.push_back(level);
         }
         let speech_bar = (floor * SPEECH_OVER_FLOOR).max(SPEECH_MIN);
-        let barge_bar = (floor * BARGE_OVER_FLOOR).max(BARGE_MIN);
         match (self.echo, playing) {
-            (_, false) => {
-                self.loud_run = 0;
-                Decision {
-                    send: true,
-                    speech: level > speech_bar,
-                    interrupt: false,
-                }
-            }
-            (Echo::None, true) => {
-                self.loud_run = 0;
-                Decision {
-                    send: false,
-                    speech: false,
-                    interrupt: false,
-                }
-            }
-            (Echo::Hardware | Echo::Software, true) => {
-                self.loud_run = if level > barge_bar {
-                    self.loud_run.saturating_add(1)
-                } else {
-                    0
-                };
-                Decision {
-                    send: true,
-                    speech: level > speech_bar,
-                    interrupt: self.loud_run >= BARGE_CHUNKS,
-                }
-            }
+            // Without echo cancelling the assistant would hear itself; GPT-Live handles barge-in otherwise
+            (Echo::None, true) => Decision {
+                send: false,
+                speech: false,
+            },
+            _ => Decision {
+                send: true,
+                speech: level > speech_bar,
+            },
         }
     }
 }
 
-/// Who gets the echo-cancelled microphone: GPT-Live in a conversation and the far side of a call.
-/// The wake word gets the raw microphone, as its model was trained on it; the speaker is quiet then.
 pub fn echo_cancelled(in_session: bool, on_call: bool) -> bool {
     in_session || on_call
 }
@@ -153,7 +123,6 @@ mod tests {
             Decision {
                 send: true,
                 speech: false,
-                interrupt: false
             }
         );
         assert!(duplex.decide(0.7, false).speech);
@@ -173,7 +142,6 @@ mod tests {
                 Decision {
                     send: false,
                     speech: false,
-                    interrupt: false
                 }
             );
         }
@@ -182,13 +150,16 @@ mod tests {
     }
 
     #[test]
-    fn with_echo_cancelling_talking_over_it_interrupts() {
-        let mut duplex = Duplex::new(Echo::Hardware);
+    fn with_echo_cancelling_the_microphone_stays_open_while_it_speaks() {
+        let mut duplex = Duplex::new(Echo::Software);
         settle(&mut duplex, 0.01);
-        assert!(!duplex.decide(0.3, true).interrupt);
-        assert!(!duplex.decide(0.3, true).interrupt);
-        assert!(duplex.decide(0.3, true).interrupt);
-        assert!(!duplex.decide(0.02, true).interrupt);
+        assert_eq!(
+            duplex.decide(0.3, true),
+            Decision {
+                send: true,
+                speech: true,
+            }
+        );
     }
 
     #[test]

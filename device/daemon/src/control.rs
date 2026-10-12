@@ -45,12 +45,6 @@ impl CallState {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
     }
-    pub fn mute_state(&self) -> alexsay_core::mute::MuteState {
-        alexsay_core::mute::MuteState {
-            muted: self.muted(),
-            on_call: self.on_call(),
-        }
-    }
 }
 
 pub fn socket_path(paths: &Paths) -> PathBuf {
@@ -202,7 +196,6 @@ mod tests {
         assert_eq!(status["line"], false);
         reply(&state, None, "mute\n");
         assert!(state.muted());
-        assert!(state.mute_state().session_muted());
         state.begin("ay-1");
         let status: serde_json::Value =
             serde_json::from_str(&reply(&state, None, "status")).unwrap();

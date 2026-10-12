@@ -289,7 +289,7 @@ async fn conversation_check(
     let mut rx = capture.pump();
     let result = tokio::time::timeout(
         Duration::from_secs(120),
-        crate::runtime::converse(&runtime, &mut rx, Vec::new()),
+        crate::runtime::converse(&runtime, &mut rx, crate::runtime::Opening::Wake(Vec::new())),
     )
     .await;
     runtime.play_clip(sounds::END);
@@ -302,6 +302,9 @@ async fn conversation_check(
             }
             Ok(Ok(crate::runtime::Outcome::NotConnected)) => {
                 Err(anyhow::anyhow!("OpenAI is not connected in the app"))
+            }
+            Ok(Ok(crate::runtime::Outcome::OnCall)) => {
+                Ok("the conversation gave way to a phone call".to_owned())
             }
             Ok(Err(err)) => Err(err),
             Err(_) => Err(anyhow::anyhow!("did not end within two minutes")),

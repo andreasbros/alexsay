@@ -483,6 +483,19 @@ impl Player {
         q.extend(samples.iter().copied());
     }
 
+    /// Queues live audio (a GPT-Live reply, a phone call), dropping silence once playback is behind
+    /// (see `playout`), so the delay stays near the target however the stream arrives.
+    pub fn play_live(&self, samples: &[i16]) {
+        let mut q = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let queued_ms = (q.len() as u64) * 1_000 / u64::from(LIVE_RATE);
+        if alexsay_core::playout::keep(queued_ms, samples) {
+            q.extend(samples.iter().copied());
+        }
+    }
+
     /// Queues audio at another rate (the `OpenAI` speech endpoint speaks 24 kHz).
     pub fn play_at(&self, samples: &[i16], rate: u32) {
         if rate == LIVE_RATE {

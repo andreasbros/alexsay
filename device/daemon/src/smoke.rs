@@ -286,14 +286,7 @@ async fn conversation_check(
     };
     eprintln!("\nA conversation starts now: ask the assistant something, then say goodbye.");
     runtime.play_clip(sounds::READY);
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<i16>>(64);
-    std::thread::spawn(move || {
-        while let Ok(chunk) = capture.chunks.recv() {
-            if tx.blocking_send(chunk).is_err() {
-                break;
-            }
-        }
-    });
+    let mut rx = capture.pump();
     let result = tokio::time::timeout(
         Duration::from_secs(120),
         crate::runtime::converse(&runtime, &mut rx, Vec::new()),

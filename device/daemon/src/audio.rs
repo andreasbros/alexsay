@@ -13,6 +13,9 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{FastFixedIn, PolynomialDegree, Resampler};
 
 const CHUNK_FRAMES: usize = 480;
+/// Frames per callback asked of the device: about 50 ms at 48 kHz, so a busy moment does not overrun
+/// the card's buffer. A device that refuses it gets its own default.
+const PREFERRED_BUFFER_FRAMES: u32 = 2_400;
 
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
@@ -102,6 +105,21 @@ pub struct Capture {
 }
 
 impl Capture {
+    /// Hands the chunks to an async receiver. The whole struct moves into the pump thread: a closure
+    /// that touched only `chunks` would drop the stop guard and silently close the stream.
+    pub fn pump(self) -> tokio::sync::mpsc::Receiver<Vec<i16>> {
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<i16>>(64);
+        std::thread::spawn(move || {
+            let capture = self;
+            while let Ok(chunk) = capture.chunks.recv() {
+                if tx.blocking_send(chunk).is_err() {
+                    break;
+                }
+            }
+        });
+        rx
+    }
+
     pub fn open(settings: &Audio) -> anyhow::Result<Self> {
         let host = cpal::default_host();
         let devices: Vec<cpal::Device> = host
@@ -138,14 +156,31 @@ impl Capture {
                     }
                 };
                 let err = |err: cpal::Error| tracing::warn!("input stream: {err}");
-                let stream = match supported.sample_format() {
-                    cpal::SampleFormat::F32 => device.build_input_stream(config, data, err, None),
-                    other => {
-                        let _ = ready_tx
-                            .send(Err(anyhow!("input sample format {other} is not supported")));
-                        return;
+                if supported.sample_format() != cpal::SampleFormat::F32 {
+                    let _ = ready_tx.send(Err(anyhow!(
+                        "input sample format {} is not supported",
+                        supported.sample_format()
+                    )));
+                    return;
+                }
+                let data = std::sync::Arc::new(std::sync::Mutex::new(data));
+                let callback = {
+                    let data = std::sync::Arc::clone(&data);
+                    move |samples: &[f32], info: &cpal::InputCallbackInfo| {
+                        (data
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner))(
+                            samples, info
+                        );
                     }
                 };
+                let generous = cpal::StreamConfig {
+                    buffer_size: cpal::BufferSize::Fixed(PREFERRED_BUFFER_FRAMES),
+                    ..config
+                };
+                let stream = device
+                    .build_input_stream(generous, callback.clone(), err, None)
+                    .or_else(|_| device.build_input_stream(config, callback, err, None));
                 let stream = match stream.and_then(|s| s.play().map(|()| s)) {
                     Ok(stream) => stream,
                     Err(e) => {
@@ -236,15 +271,31 @@ impl Player {
                     }
                 };
                 let err = |err: cpal::Error| tracing::warn!("output stream: {err}");
-                let stream = match supported.sample_format() {
-                    cpal::SampleFormat::F32 => device.build_output_stream(config, data, err, None),
-                    other => {
-                        let _ = ready_tx.send(Err(anyhow!(
-                            "output sample format {other} is not supported"
-                        )));
-                        return;
+                if supported.sample_format() != cpal::SampleFormat::F32 {
+                    let _ = ready_tx.send(Err(anyhow!(
+                        "output sample format {} is not supported",
+                        supported.sample_format()
+                    )));
+                    return;
+                }
+                let data = std::sync::Arc::new(std::sync::Mutex::new(data));
+                let callback = {
+                    let data = std::sync::Arc::clone(&data);
+                    move |samples: &mut [f32], info: &cpal::OutputCallbackInfo| {
+                        (data
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner))(
+                            samples, info
+                        );
                     }
                 };
+                let generous = cpal::StreamConfig {
+                    buffer_size: cpal::BufferSize::Fixed(PREFERRED_BUFFER_FRAMES),
+                    ..config
+                };
+                let stream = device
+                    .build_output_stream(generous, callback.clone(), err, None)
+                    .or_else(|_| device.build_output_stream(config, callback, err, None));
                 let stream = match stream.and_then(|s| s.play().map(|()| s)) {
                     Ok(stream) => stream,
                     Err(e) => {
@@ -429,6 +480,26 @@ impl Upsampler {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_pump_keeps_the_stream_alive_for_as_long_as_it_runs() {
+        let (chunk_tx, chunk_rx) = mpsc::channel::<Vec<i16>>();
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let capture = Capture {
+            device: "fake".to_owned(),
+            source_rate: 16_000,
+            channels: 1,
+            chunks: chunk_rx,
+            _stop: stop_tx,
+        };
+        let mut pumped = capture.pump();
+        chunk_tx.send(vec![1, 2, 3]).unwrap();
+        assert_eq!(pumped.recv().await, Some(vec![1, 2, 3]));
+        // The stop guard is still held by the pump thread: the capture stream would not have been dropped
+        assert_eq!(stop_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+        drop(chunk_tx);
+        assert_eq!(pumped.recv().await, None);
+    }
 
     #[test]
     #[allow(clippy::cast_precision_loss)]

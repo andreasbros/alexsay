@@ -314,23 +314,10 @@ async fn update_loop(runtime: Arc<Runtime>) {
     }
 }
 
-/// Microphone chunks arrive on a std channel from the audio thread; this pumps them into tokio.
-fn pump(capture: Capture) -> mpsc::Receiver<Vec<i16>> {
-    let (tx, rx) = mpsc::channel::<Vec<i16>>(64);
-    std::thread::spawn(move || {
-        while let Ok(chunk) = capture.chunks.recv() {
-            if tx.blocking_send(chunk).is_err() {
-                break;
-            }
-        }
-    });
-    rx
-}
-
 async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
     let capture = Capture::open(&runtime.config.audio).context("opening the microphone")?;
     info!(input = %capture.device, rate = capture.source_rate, channels = capture.channels, output = %runtime.player.device, "audio open");
-    let mut mic = pump(capture);
+    let mut mic = capture.pump();
     let mut wake = match runtime.load_wake_word() {
         Ok(wake) if runtime.config.wake.enabled => Some(wake),
         Ok(_) => {

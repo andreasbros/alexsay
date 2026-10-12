@@ -25,8 +25,8 @@ use crate::server::{Server, Turn};
 use crate::{paths, tts, update};
 
 /// A chunk this loud counts as the user speaking (keeps the session alive); louder still interrupts playback.
-const SPEECH_RMS: f32 = 0.02;
-const BARGE_IN_RMS: f32 = 0.06;
+/// Reply audio quieter than this is the silence GPT-Live streams between words.
+const AUDIBLE_RMS: f32 = 0.003;
 const TICK: Duration = Duration::from_millis(250);
 const AUDIO_CHUNK: usize = 1_600;
 
@@ -317,7 +317,7 @@ async fn update_loop(runtime: Arc<Runtime>) {
 async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
     let capture = Capture::open(&runtime.config.audio).context("opening the microphone")?;
     info!(input = %capture.device, rate = capture.source_rate, channels = capture.channels, output = %runtime.player.device, "audio open");
-    let mut mic = capture.pump();
+    let mut mic = capture.pump_with(runtime.call.injection.clone());
     let mut wake = match runtime.load_wake_word() {
         Ok(wake) if runtime.config.wake.enabled => Some(wake),
         Ok(_) => {
@@ -418,7 +418,13 @@ pub async fn converse(
     let mut turns: Vec<Turn> = Vec::new();
     let (tool_tx, mut tool_rx) = mpsc::unbounded_channel::<(String, String)>();
     let mut ticker = tokio::time::interval(TICK);
-    let mut loud_chunks = 0u8;
+    let echo =
+        alexsay_core::duplex::Echo::from_config(&runtime.config.audio.echo, cfg!(feature = "flex"));
+    let mut duplex = alexsay_core::duplex::Duplex::new(echo);
+    // GPT-Live streams audio for the whole session, silence included: only audible audio counts as talking
+    let mut audible_until = Instant::now();
+    // What the microphone heard while a reply played: proof the speaker is audible in the room
+    let mut reply_heard: Option<(f32, f32)> = None;
     let mut notes = runtime.notes.lock().await;
     while notes.try_recv().is_ok() {}
     let mut mute_state = runtime.call.mute_state();
@@ -429,18 +435,29 @@ pub async fn converse(
                 if runtime.route_to_call(&chunk) {
                     continue;
                 }
+                let playing = Instant::now() < audible_until + Duration::from_millis(alexsay_core::duplex::ECHO_TAIL_MS);
                 let level = pcm::rms(&chunk);
-                if level > SPEECH_RMS {
+                if playing {
+                    let floor = duplex.floor();
+                    let heard = reply_heard.get_or_insert((0.0, floor));
+                    heard.0 = heard.0.max(level);
+                } else if let Some((peak, floor)) = reply_heard.take() {
+                    info!(
+                        "reply played: the microphone heard it at {:.1}% over a room level of {:.1}%{}",
+                        peak * 100.0,
+                        floor * 100.0,
+                        if peak < floor * 2.0 { " (barely: is the speaker muted or turned down?)" } else { "" }
+                    );
+                }
+                let decision = duplex.decide(level, playing);
+                if decision.speech {
                     session.heard_user(now_ms());
                 }
-                if level > BARGE_IN_RMS {
-                    loud_chunks = loud_chunks.saturating_add(1);
-                    if loud_chunks >= 2 && runtime.player.queued_ms() > 0 {
-                        runtime.player.clear();
-                    }
-                } else {
-                    loud_chunks = 0;
+                if decision.interrupt {
+                    tracing::debug!("barge-in: dropping the rest of the reply");
+                    runtime.player.clear();
                 }
+                let chunk = if decision.send { chunk } else { vec![0; chunk.len()] };
                 if allow_audio {
                     backlog.extend(chunk);
                     while backlog.len() >= AUDIO_CHUNK {
@@ -465,7 +482,14 @@ pub async fn converse(
                             }
                             backlog.clear();
                         }
-                        Action::PlayAudio(delta) => runtime.player.play(&pcm::decode(&delta)),
+                        Action::PlayAudio(delta) => {
+                            let samples = pcm::decode(&delta);
+                            runtime.player.play(&samples);
+                            if pcm::rms(&samples) > AUDIBLE_RMS {
+                                audible_until = Instant::now() + Duration::from_millis(runtime.player.queued_ms());
+                            }
+                            tracing::trace!(ms = samples.len() * 1_000 / LIVE_RATE as usize, queued_ms = runtime.player.queued_ms(), "reply audio");
+                        }
                         Action::RunTool(call) => {
                             if call.name == END_TOOL {
                                 session.close_after_reply();

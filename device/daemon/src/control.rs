@@ -14,6 +14,8 @@ use crate::line::LineSender;
 /// What the running speaker knows about its call, shared with the control socket and the loops.
 #[derive(Clone, Default)]
 pub struct CallState {
+    /// Audio fed in as if the microphone heard it (`alexsay call inject`).
+    pub injection: crate::audio::Injection,
     pub on_call: Arc<AtomicBool>,
     pub muted: Arc<AtomicBool>,
     pub conference: Arc<std::sync::Mutex<Option<String>>>,
@@ -55,8 +57,37 @@ pub fn socket_path(paths: &Paths) -> PathBuf {
     paths.data_dir().join("control.sock")
 }
 
+/// Reads a WAV (16-bit, any rate, any channels) as 16 kHz mono with a second of quiet after it.
+pub fn load_wav(path: &std::path::Path) -> anyhow::Result<Vec<i16>> {
+    use alexsay_core::pcm::{self, LIVE_RATE};
+    let mut reader =
+        hound::WavReader::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let spec = reader.spec();
+    let samples: Vec<i16> = reader.samples::<i16>().filter_map(Result::ok).collect();
+    let mono = pcm::pick_channel(&pcm::to_f32(&samples), usize::from(spec.channels), None);
+    let mut converter = crate::audio::Downsampler::new(spec.sample_rate, LIVE_RATE);
+    let mut out = Vec::new();
+    for chunk in converter.push(&mono) {
+        out.extend(pcm::to_i16(&chunk, 1.0));
+    }
+    out.extend(pcm::to_i16(&converter.flush(), 1.0));
+    out.extend(std::iter::repeat_n(0, LIVE_RATE as usize));
+    Ok(out)
+}
+
 /// Answers one command per connection with one line of JSON.
 pub fn reply(state: &CallState, line: Option<&LineSender>, command: &str) -> String {
+    if let Some(path) = command.trim().strip_prefix("inject ") {
+        return match load_wav(std::path::Path::new(path.trim())) {
+            Ok(samples) => {
+                #[allow(clippy::cast_precision_loss)]
+                let seconds = samples.len() as f32 / alexsay_core::pcm::LIVE_RATE as f32;
+                state.injection.push(&samples);
+                serde_json::json!({ "ok": true, "seconds": seconds }).to_string()
+            }
+            Err(err) => serde_json::json!({ "ok": false, "error": format!("{err:#}") }).to_string(),
+        };
+    }
     match command.trim() {
         "mute" | "unmute" => {
             let muted = command.trim() == "mute";

@@ -159,6 +159,10 @@ enum CallAction {
     Mute,
     Unmute,
     Hangup,
+    /// Feed a WAV recording into the running speaker's microphone, for tests
+    Inject {
+        file: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -459,12 +463,15 @@ async fn dispatch(
         }
         Command::Call { action } => {
             let command = match action {
-                CallAction::Status => "status",
-                CallAction::Mute => "mute",
-                CallAction::Unmute => "unmute",
-                CallAction::Hangup => "hangup",
+                CallAction::Status => "status".to_owned(),
+                CallAction::Mute => "mute".to_owned(),
+                CallAction::Unmute => "unmute".to_owned(),
+                CallAction::Hangup => "hangup".to_owned(),
+                CallAction::Inject { file } => {
+                    format!("inject {}", std::fs::canonicalize(&file)?.display())
+                }
             };
-            println!("{}", control::send(&paths, command).await?);
+            println!("{}", control::send(&paths, &command).await?);
             Ok(())
         }
         Command::Release { action } => match action {

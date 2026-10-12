@@ -117,7 +117,11 @@ impl Session {
 
     pub fn on_event(&mut self, event: &ServerEvent, now_ms: u64) -> Vec<Action> {
         let ServerEvent::Known(known) = event else {
-            return vec![Action::Log(format!("ignoring {}", event.kind()))];
+            return vec![Action::Log(format!(
+                "ignoring {} {:?}",
+                event.kind(),
+                event.keys()
+            ))];
         };
         match known {
             KnownServerEvent::SessionStarted { session } => {

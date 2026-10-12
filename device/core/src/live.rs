@@ -71,8 +71,10 @@ pub enum ClientEvent {
     SessionClose,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// Only `type` is guaranteed on any event: every other field defaults, so a lean or newer event still parses.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 pub struct StartedSession {
+    #[serde(default)]
     pub id: String,
     #[serde(default)]
     pub model: String,
@@ -80,11 +82,19 @@ pub struct StartedSession {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 pub struct Usage {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "whole_seconds")]
     pub seconds: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// GPT-Live reports usage as a whole or a fractional number of seconds.
+fn whole_seconds<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let value = f64::deserialize(deserializer)?;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let seconds = value.max(0.0).round() as u64;
+    Ok(seconds)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 pub struct ErrorBody {
     #[serde(rename = "type", default)]
     pub kind: String,
@@ -99,29 +109,45 @@ pub struct ErrorBody {
 #[serde(tag = "type")]
 pub enum KnownServerEvent {
     #[serde(rename = "session.started")]
-    SessionStarted { session: StartedSession },
+    SessionStarted {
+        #[serde(default)]
+        session: StartedSession,
+    },
     #[serde(rename = "session.output_audio.delta")]
     OutputAudioDelta {
+        #[serde(default)]
         delta: String,
+        #[serde(default)]
         start_ms: u64,
+        #[serde(default)]
         end_ms: u64,
     },
     #[serde(rename = "session.input_transcript.delta")]
     InputTranscriptDelta {
+        #[serde(default)]
         delta: String,
+        #[serde(default)]
         start_ms: u64,
+        #[serde(default)]
         end_ms: u64,
     },
     #[serde(rename = "session.output_transcript.delta")]
     OutputTranscriptDelta {
+        #[serde(default)]
         delta: String,
+        #[serde(default)]
         start_ms: u64,
+        #[serde(default)]
         end_ms: u64,
     },
     #[serde(rename = "session.usage.updated")]
-    UsageUpdated { usage: Usage },
+    UsageUpdated {
+        #[serde(default)]
+        usage: Usage,
+    },
     #[serde(rename = "session.closed")]
     SessionClosed {
+        #[serde(default)]
         reason: String,
         #[serde(default)]
         usage: Usage,
@@ -130,10 +156,14 @@ pub enum KnownServerEvent {
     ResponseEvent {
         #[serde(default)]
         delegation_id: Option<String>,
+        #[serde(default)]
         event: Value,
     },
     #[serde(rename = "error")]
-    Error { error: ErrorBody },
+    Error {
+        #[serde(default)]
+        error: ErrorBody,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -146,6 +176,17 @@ pub enum ServerEvent {
 impl ServerEvent {
     pub fn parse(text: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(text)
+    }
+
+    /// The field names of an event this crate does not model, for the debug log.
+    pub fn keys(&self) -> Vec<String> {
+        match self {
+            Self::Known(_) => Vec::new(),
+            Self::Other(value) => value
+                .as_object()
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default(),
+        }
     }
 
     /// The event name, also for events this crate does not model.
@@ -304,6 +345,39 @@ mod tests {
         assert!(
             matches!(error, ServerEvent::Known(KnownServerEvent::Error { error }) if error.code == "invalid_audio")
         );
+    }
+
+    #[test]
+    fn events_parse_with_only_the_fields_gpt_live_actually_sends() {
+        // As captured from gpt-live-1 on 12 Oct 2026: audio deltas carry no timing
+        assert_eq!(
+            ServerEvent::parse(r#"{"type":"session.output_audio.delta","delta":"AAEC"}"#).unwrap(),
+            ServerEvent::Known(KnownServerEvent::OutputAudioDelta {
+                delta: "AAEC".to_owned(),
+                start_ms: 0,
+                end_ms: 0
+            })
+        );
+        assert!(matches!(
+            ServerEvent::parse(r#"{"type":"session.output_audio.delta","delta":"AAEC","event_id":"e1","item_id":"i"}"#).unwrap(),
+            ServerEvent::Known(KnownServerEvent::OutputAudioDelta { .. })
+        ));
+        for lean in [
+            r#"{"type":"session.input_transcript.delta","delta":"hi"}"#,
+            r#"{"type":"session.output_transcript.delta","delta":"hi"}"#,
+            r#"{"type":"session.started","session":{"id":"s"}}"#,
+            r#"{"type":"session.started"}"#,
+            r#"{"type":"session.usage.updated"}"#,
+            r#"{"type":"session.usage.updated","usage":{"seconds":15.4},"context_window":{"usage_ratio":0.02}}"#,
+            r#"{"type":"session.closed"}"#,
+            r#"{"type":"error"}"#,
+            r#"{"type":"response.event"}"#,
+        ] {
+            assert!(
+                matches!(ServerEvent::parse(lean).unwrap(), ServerEvent::Known(_)),
+                "{lean}"
+            );
+        }
     }
 
     #[test]

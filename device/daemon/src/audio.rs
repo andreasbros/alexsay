@@ -153,10 +153,17 @@ impl Capture {
     /// Hands the chunks to an async receiver. The whole struct moves into the pump thread: a closure
     /// that touched only `chunks` would drop the stop guard and silently close the stream.
     pub fn pump(self) -> tokio::sync::mpsc::Receiver<Vec<i16>> {
+        self.pump_with(Injection::default())
+    }
+
+    /// As `pump`, but audio queued in `injection` replaces the microphone's while it lasts: a test
+    /// recording heard exactly as the microphone would deliver it, at the microphone's pace.
+    pub fn pump_with(self, injection: Injection) -> tokio::sync::mpsc::Receiver<Vec<i16>> {
         let (tx, rx) = tokio::sync::mpsc::channel::<Vec<i16>>(64);
         std::thread::spawn(move || {
             let capture = self;
             while let Ok(chunk) = capture.chunks.recv() {
+                let chunk = injection.replace(chunk);
                 if tx.blocking_send(chunk).is_err() {
                     break;
                 }
@@ -164,7 +171,34 @@ impl Capture {
         });
         rx
     }
+}
 
+/// 16 kHz samples waiting to stand in for the microphone (`alexsay call inject`).
+#[derive(Clone, Default)]
+pub struct Injection(Arc<Mutex<VecDeque<i16>>>);
+
+impl Injection {
+    pub fn push(&self, samples: &[i16]) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(samples.iter().copied());
+    }
+
+    fn replace(&self, chunk: Vec<i16>) -> Vec<i16> {
+        let mut queue = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if queue.is_empty() {
+            return chunk;
+        }
+        let len = chunk.len();
+        (0..len).map(|_| queue.pop_front().unwrap_or(0)).collect()
+    }
+}
+
+impl Capture {
     pub fn open(settings: &Audio) -> anyhow::Result<Self> {
         let host = cpal::default_host();
         let devices: Vec<cpal::Device> = host

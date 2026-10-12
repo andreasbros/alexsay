@@ -41,6 +41,9 @@ pub struct Audio {
     pub volume: f32,
     /// Microphone gain applied before the wake word and the session, 0.25 to 4.
     pub gain: f32,
+    /// "auto", "hardware" (the microphone cancels the speaker's sound: you can talk over the assistant)
+    /// or "none" (the assistant hears silence while it speaks). Auto is hardware on the Flex build.
+    pub echo: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -115,6 +118,7 @@ impl Default for Audio {
             channel: None,
             volume: 0.8,
             gain: 1.0,
+            echo: "auto".to_owned(),
         }
     }
 }
@@ -196,6 +200,9 @@ impl Config {
         if !(0.0..=1.0).contains(&self.audio.volume) {
             return bad("audio.volume must be between 0 and 1");
         }
+        if !matches!(self.audio.echo.as_str(), "auto" | "hardware" | "none") {
+            return bad("audio.echo must be auto, hardware or none");
+        }
         if !(0.25..=4.0).contains(&self.audio.gain) {
             return bad("audio.gain must be between 0.25 and 4");
         }
@@ -268,6 +275,9 @@ output = "auto"
 # channel = 1
 volume = 0.8
 gain = 1.0
+# auto, hardware (the microphone cancels the speaker: you can talk over the assistant) or none
+# (the assistant hears silence while it speaks); auto is hardware on the Flex build
+echo = "auto"
 
 [wake]
 enabled = true

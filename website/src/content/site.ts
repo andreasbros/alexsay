@@ -70,7 +70,7 @@ export const DEV_POINTS: DevPoint[] = [
   },
   {
     title: "Nothing to install",
-    text: "Static musl on Linux with the audio stack compiled in. No Python, no runtime, no packages: drop it in and run it.",
+    text: "Static musl on Linux with the audio stack compiled in. No Python, no Node.js, no runtime, no packages: drop it in and run it.",
   },
   {
     title: "Wake word on the device",

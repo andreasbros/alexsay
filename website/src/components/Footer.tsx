@@ -13,12 +13,14 @@ export function Footer() {
           <h4>Product</h4>
           <a href="/#features">Features</a>
           <a href="/#integrations">Integrations</a>
+          <a href="/#development">Development</a>
           <a href={APP_URL}>App</a>
         </nav>
         <nav aria-label="Project">
           <h4>Project</h4>
           <a href={GITHUB_URL}>GitHub</a>
           <a href={DOCS_URL}>Docs</a>
+          <a href="/blog">Blog</a>
           <a href={`${GITHUB_URL}/issues`}>Issues</a>
         </nav>
       </div>

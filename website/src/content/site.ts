@@ -1,3 +1,4 @@
+export const SITE_URL = "https://www.alexsay.com";
 export const APP_URL = "https://app.alexsay.com";
 export const GITHUB_URL = "https://github.com/andreasbros/alexsay";
 export const DOCS_URL = "https://github.com/andreasbros/alexsay/tree/main/docs";

@@ -1,0 +1,137 @@
+/* Blog: the index and the articles */
+.blog-inner,
+.post-inner {
+  max-width: 760px;
+}
+.blog h1,
+.post h1 {
+  font-size: clamp(34px, 5vw, 52px);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+}
+.blog-feed a,
+.post-back a,
+.post-crumb a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.prose a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+.post-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+}
+.post-card {
+  padding: 24px 26px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: border-color 0.2s;
+}
+.post-card:hover {
+  border-color: var(--border-2);
+}
+.post-card time {
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 600;
+}
+.post-card h2 {
+  margin: 6px 0 8px;
+  font-size: clamp(21px, 2.6vw, 26px);
+  line-height: 1.25;
+}
+.post-card h2 a {
+  color: var(--text);
+  text-decoration: none;
+}
+.post-card h2 a:hover {
+  color: var(--accent);
+}
+.post-card p {
+  margin: 0 0 10px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+.post-card .muted,
+.post-meta {
+  font-size: 13px;
+}
+.blog-feed,
+.post-back {
+  margin-top: 32px;
+  text-align: center;
+}
+.post-meta {
+  margin: 12px 0 36px;
+}
+.prose {
+  font-size: 18px;
+  line-height: 1.75;
+  color: var(--text-2);
+}
+.prose .lead {
+  font-size: 21px;
+  color: var(--text);
+  margin: 0 0 28px;
+}
+.prose h2 {
+  margin: 44px 0 12px;
+  font-size: clamp(23px, 3vw, 28px);
+  line-height: 1.25;
+  color: var(--text);
+}
+.prose p,
+.prose ul {
+  margin: 0 0 18px;
+}
+.prose ul {
+  padding-left: 22px;
+}
+.prose li {
+  margin-bottom: 10px;
+}
+.prose strong {
+  color: var(--text);
+}
+.prose code {
+  font:
+    500 0.88em "JetBrains Mono",
+    "SFMono-Regular",
+    Menlo,
+    Consolas,
+    monospace;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.prose pre {
+  margin: 0 0 22px;
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  background: #0d0f17;
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+.prose pre code {
+  padding: 0;
+  background: none;
+  color: #d7dae5;
+  font-size: 15px;
+}
+@media (max-width: 640px) {
+  .prose {
+    font-size: 17px;
+  }
+  .prose pre code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+  }
+}

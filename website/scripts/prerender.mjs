@@ -10,7 +10,6 @@ const template = fs.readFileSync(path.join(dist, "index.html"), "utf8");
 const { render, ROUTES } = await import(path.join(root, "dist-ssr", "entry-server.js"));
 
 const site = "https://www.alexsay.com";
-const indexed = [];
 for (const route of ROUTES) {
   const { html, head } = render(route.path);
   const page = template.replace("<!--app-head-->", head).replace("<!--app-html-->", html);
@@ -18,21 +17,12 @@ for (const route of ROUTES) {
     route.path === "/" ? path.join(dist, "index.html") : path.join(dist, route.path.replace(/^\//, ""), "index.html");
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, page);
-  if (!route.noindex) {
-    indexed.push(`${site}${route.path}`);
-  }
   console.log("prerendered", route.path);
 }
 
 // Cloudflare's 404-page handling serves /404.html for unknown paths
 fs.copyFileSync(path.join(dist, "404", "index.html"), path.join(dist, "404.html"));
 
-const today = new Date().toISOString().slice(0, 10);
-fs.writeFileSync(
-  path.join(dist, "sitemap.xml"),
-  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${indexed
-    .map((url) => `  <url><loc>${url}</loc><lastmod>${today}</lastmod></url>`)
-    .join("\n")}\n</urlset>\n`,
-);
+// sitemap.xml and blog/feed.xml come from the Worker, so scheduled posts join them on their date
 fs.writeFileSync(path.join(dist, "robots.txt"), `User-agent: *\nAllow: /\nSitemap: ${site}/sitemap.xml\n`);
 fs.rmSync(path.join(root, "dist-ssr"), { recursive: true, force: true });

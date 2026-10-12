@@ -8,7 +8,9 @@ const THEME_KEY = "ay-theme";
 const NAV: [string, string][] = [
   ["Features", "/#features"],
   ["Integrations", "/#integrations"],
+  ["Development", "/#development"],
   ["Open source", "/#open-source"],
+  ["Blog", "/blog"],
 ];
 
 function useTheme(): [string, () => void] {

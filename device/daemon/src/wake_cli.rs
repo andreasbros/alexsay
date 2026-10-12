@@ -112,10 +112,12 @@ pub fn write_wav(path: &std::path::Path, samples: &[i16]) -> anyhow::Result<()> 
 }
 
 /// Trains a model from the recordings (and any WAV takes in `extra` dirs) into data/models/alexsay.rpw.
+/// With `from`, the given model keeps learning from these takes: the way to add your own voice to the shipped one.
 pub fn train(
     paths: &Paths,
     extra: &[std::path::PathBuf],
     epochs: usize,
+    from: Option<&[u8]>,
 ) -> anyhow::Result<std::path::PathBuf> {
     let mut takes: Vec<(String, Vec<u8>)> = Vec::new();
     for dir in std::iter::once(paths.recordings_dir()).chain(extra.iter().cloned()) {
@@ -140,50 +142,72 @@ pub fn train(
     let negatives = takes.len() - positives;
     anyhow::ensure!(
         positives >= 5 && negatives >= 5,
-        "need at least 5 takes of each: {positives} of {POSITIVE_LABEL}, {negatives} others (alexsay wake record)"
+        "need at least 5 takes of each: {positives} of {POSITIVE_LABEL}, {negatives} others (alexsay wake record, and --negatives)"
     );
     println!(
-        "Training on {positives} takes of {POSITIVE_LABEL} and {negatives} others, {epochs} epochs..."
+        "Training {}on {positives} takes of {POSITIVE_LABEL} and {negatives} others, {epochs} epochs...",
+        if from.is_some() {
+            "the existing model further "
+        } else {
+            ""
+        }
     );
     let (train_set, test_set): (HashMap<String, Vec<u8>>, HashMap<String, Vec<u8>>) =
         wake::split_samples(takes);
-    let model = wake::train(train_set, test_set, epochs).map_err(anyhow::Error::msg)?;
+    let model = wake::train(train_set, test_set, epochs, from).map_err(anyhow::Error::msg)?;
     let path = paths.models_dir().join("alexsay.rpw");
     std::fs::create_dir_all(paths.models_dir())?;
     std::fs::write(&path, model).with_context(|| format!("writing {}", path.display()))?;
-    println!(
-        "Saved {}. Set [wake] model = \"data/models/alexsay.rpw\" in the config to use it.",
-        path.display()
-    );
+    println!("Saved {}.", path.display());
     Ok(path)
 }
 
 /// Listens and prints every detection and the microphone level, for checking a model or the sensitivity.
-pub fn test(config: &Config, model: &[u8]) -> anyhow::Result<()> {
+/// With `scores`, the best partial score of each second is shown too, so a near miss is visible.
+pub fn test(config: &Config, model: &[u8], scores: bool) -> anyhow::Result<()> {
     let mut wake = wake::WakeWord::new(model, config.wake.sensitivity, config.wake.refractory_s)
         .map_err(anyhow::Error::msg)?;
+    let mut probe = if scores {
+        Some(wake::WakeWord::probe(model).map_err(anyhow::Error::msg)?)
+    } else {
+        None
+    };
     let capture = Capture::open(&config.audio).context("opening the microphone")?;
     println!(
         "Listening on {} for \"Alexsay\" (sensitivity {}). The level prints every second; Ctrl-C to stop.",
         capture.device, config.wake.sensitivity
     );
+    if scores {
+        println!(
+            "The best score of each second is shown; a detection needs three frames in a row above the threshold."
+        );
+    }
     let mut peak = 0.0f32;
+    let mut best = 0.0f32;
     let mut since_print = 0usize;
     loop {
         let chunk = capture.chunks.recv().context("the microphone stopped")?;
         peak = peak.max(pcm::rms(&chunk));
         since_print += chunk.len();
+        if let Some(probe) = probe.as_mut()
+            && let Some(partial) = probe.feed(&chunk)
+        {
+            best = best.max(partial.score);
+        }
         if since_print >= LIVE_RATE as usize {
-            println!(
-                "level {:>5.1}%{}",
-                peak * 100.0,
-                if peak < 0.005 {
-                    "  (silent: is it the right device?)"
-                } else {
-                    ""
-                }
-            );
+            let score = if scores && best > 0.0 {
+                format!("  best score {best:.2}")
+            } else {
+                String::new()
+            };
+            let silent = if peak < 0.005 {
+                "  (silent: is it the right device?)"
+            } else {
+                ""
+            };
+            println!("level {:>5.1}%{score}{silent}", peak * 100.0);
             peak = 0.0;
+            best = 0.0;
             since_print = 0;
         }
         if let Some(detection) = wake.feed(&chunk) {

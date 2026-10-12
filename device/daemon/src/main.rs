@@ -129,18 +129,24 @@ enum WakeAction {
         #[arg(long)]
         negatives: bool,
     },
-    /// Train a model from the recordings into data/models/alexsay.rpw
+    /// Train from the recordings into data/models/alexsay.rpw and switch the config to it. By default the
+    /// shipped model keeps learning from your takes; --from none starts over, --from <file> continues another
     Train {
         #[arg(long, default_value_t = 60)]
         epochs: usize,
         /// Extra directories of labelled WAV takes
         #[arg(long)]
         dir: Vec<PathBuf>,
+        #[arg(long, default_value = "builtin")]
+        from: String,
     },
     /// Listen and print every detection and the microphone level; with --file, run over a WAV instead
     Test {
         #[arg(long)]
         file: Vec<PathBuf>,
+        /// Also print the best score each second, to see how close a word gets
+        #[arg(long)]
+        scores: bool,
     },
 }
 
@@ -406,17 +412,32 @@ async fn dispatch(
                 WakeAction::Record { takes, negatives } => {
                     wake_cli::record(&paths, &config, takes, negatives)
                 }
-                WakeAction::Train { epochs, dir } => {
-                    wake_cli::train(&paths, &dir, epochs).map(|_| ())
+                WakeAction::Train { epochs, dir, from } => {
+                    let previous: Option<Vec<u8>> = match from.as_str() {
+                        "builtin" => Some(runtime::BUILTIN_MODEL.to_vec()),
+                        "none" => None,
+                        path => Some(
+                            std::fs::read(paths.home.join(path))
+                                .or_else(|_| std::fs::read(path))?,
+                        ),
+                    };
+                    wake_cli::train(&paths, &dir, epochs, previous.as_deref())?;
+                    let mut config = config;
+                    config.wake.model = "data/models/alexsay.rpw".to_owned();
+                    paths::save_config(&paths, &config)?;
+                    println!(
+                        "The config now uses it (wake.model = data/models/alexsay.rpw); restart `alexsay run`."
+                    );
+                    Ok(())
                 }
-                WakeAction::Test { file } => {
+                WakeAction::Test { file, scores } => {
                     let bytes = if config.wake.model == "builtin" {
                         runtime::BUILTIN_MODEL.to_vec()
                     } else {
                         std::fs::read(paths.home.join(&config.wake.model))?
                     };
                     if file.is_empty() {
-                        wake_cli::test(&config, &bytes)
+                        wake_cli::test(&config, &bytes, scores)
                     } else {
                         for path in &file {
                             wake_cli::test_file(&config, &bytes, path)?;

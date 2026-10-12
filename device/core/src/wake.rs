@@ -33,6 +33,21 @@ pub struct WakeWord {
 impl WakeWord {
     /// `sensitivity` 0 to 1: higher fires on fainter or sloppier pronunciations.
     pub fn new(model: &[u8], sensitivity: f32, refractory_s: f32) -> Result<Self, String> {
+        Self::build(model, threshold_for(sensitivity), 3, false, refractory_s)
+    }
+
+    /// A diagnostic engine: reports every frame scoring above 0.3, as `alexsay wake test --scores` shows.
+    pub fn probe(model: &[u8]) -> Result<Self, String> {
+        Self::build(model, 0.3, 1, true, 0.0)
+    }
+
+    fn build(
+        model: &[u8],
+        threshold: f32,
+        min_scores: usize,
+        eager: bool,
+        refractory_s: f32,
+    ) -> Result<Self, String> {
         if model.is_empty() {
             return Err("no wake word model: train one with `alexsay wake train`".to_owned());
         }
@@ -44,9 +59,10 @@ impl WakeWord {
                 ..rustpotter::AudioFmt::default()
             },
             detector: DetectorConfig {
-                threshold: threshold_for(sensitivity),
+                threshold,
                 avg_threshold: 0.0,
-                min_scores: 3,
+                min_scores,
+                eager,
                 score_mode: ScoreMode::Max,
                 ..DetectorConfig::default()
             },
@@ -132,12 +148,14 @@ pub fn label_of(file_name: &str) -> Option<&str> {
     Some(&file_name[start..end])
 }
 
-/// Trains a model from labelled WAV files (16-bit PCM, any rate); `tests` must have both labels too.
+/// Trains a model from labelled WAV files (16-bit, any rate); `tests` must have both labels too.
+/// With `from`, an existing model keeps learning from the new takes instead of starting over.
 #[allow(clippy::implicit_hasher)]
 pub fn train(
     samples: HashMap<String, Vec<u8>>,
     tests: HashMap<String, Vec<u8>>,
     epochs: usize,
+    from: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     let options = WakewordModelTrainOptions::new(
         ModelType::Small,
@@ -146,7 +164,11 @@ pub fn train(
         (epochs / 10).max(1),
         16,
     );
-    let model = WakewordModel::train_from_buffers(options, samples, tests, None)
+    let previous = match from {
+        Some(bytes) if !bytes.is_empty() => Some(WakewordModel::load_from_buffer(bytes)?),
+        _ => None,
+    };
+    let model = WakewordModel::train_from_buffers(options, samples, tests, previous)
         .map_err(|err| err.to_string())?;
     model.save_to_buffer()
 }
@@ -244,7 +266,7 @@ mod tests {
             ));
         }
         let (train_set, test_set) = split_samples(takes);
-        let model = train(train_set, test_set, 2).unwrap();
+        let model = train(train_set, test_set, 2, None).unwrap();
         assert_ne!(model.len(), 0);
         let mut wake = WakeWord::new(&model, 0.5, 1.0).unwrap();
         assert!(wake.frame_len() > 0);

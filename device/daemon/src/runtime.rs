@@ -513,6 +513,10 @@ pub async fn converse(
                             backlog.clear();
                         }
                         Action::PlayAudio(delta) => {
+                            // GPT-Live streams silence all session long; queued behind the call it would bury the call's audio
+                            if runtime.call.on_call() {
+                                continue;
+                            }
                             let samples = pcm::decode(&delta);
                             runtime.player.play(&samples);
                             if pcm::rms(&samples) > alexsay_core::session::AUDIBLE_RMS {

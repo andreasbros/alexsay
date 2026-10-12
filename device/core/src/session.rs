@@ -137,7 +137,8 @@ impl Session {
         self.held = held;
         if !held {
             self.last_input_ms = now_ms;
-            self.last_output_ms = 0;
+            // The quiet rules count from the release, so the call report gets its reply
+            self.last_output_ms = now_ms;
             self.started_at_ms = now_ms;
         }
     }
@@ -160,6 +161,10 @@ impl Session {
                 ]
             }
             KnownServerEvent::OutputAudioDelta { delta, .. } => {
+                // The phone call owns the speaker while it lasts
+                if self.held {
+                    return Vec::new();
+                }
                 // Only audible audio is the assistant talking: the stream carries silence between replies
                 if crate::pcm::rms(&crate::pcm::decode(delta)) > AUDIBLE_RMS {
                     self.last_output_ms = now_ms;
@@ -216,10 +221,10 @@ impl Session {
     /// Called on a timer: asks for a close when the room went quiet, the user said goodbye, the model
     /// was asked to stop, or the cap is reached. A pending tool call pauses the quiet rules, never the cap.
     pub fn on_tick(&mut self, now_ms: u64) -> Vec<Action> {
-        if self.state != SessionState::Open || self.held {
+        if self.state != SessionState::Open {
             return Vec::new();
         }
-        // Lines are printed as soon as each side pauses, not when the other side next speaks
+        // Lines are printed as soon as each side pauses, not when the other side next speaks (or a call ends)
         let mut lines = Vec::new();
         if !self.user_text.trim().is_empty()
             && now_ms.saturating_sub(self.last_user_text_ms) >= USER_LINE_GAP_MS
@@ -230,6 +235,9 @@ impl Session {
             && now_ms.saturating_sub(self.last_assistant_text_ms) >= REPLY_GAP_MS
         {
             lines.extend(self.flush_assistant_text());
+        }
+        if self.held {
+            return lines;
         }
         let reply_over =
             self.last_output_ms > 0 && now_ms.saturating_sub(self.last_output_ms) >= REPLY_GAP_MS;
@@ -590,6 +598,34 @@ mod tests {
             session.on_tick(110_000),
             vec![Action::Log("closing: idle".to_owned()), Action::Close]
         );
+    }
+
+    #[test]
+    fn a_reply_spoken_during_a_call_is_printed_then_and_the_report_gets_time_after_it() {
+        let mut session = open_session();
+        session.hold(true, 2_000);
+        session.on_event(
+            &event(r#"{"type":"session.output_transcript.delta","delta":"Calling them now."}"#),
+            3_000,
+        );
+        output(&mut session, 3_000);
+        assert_eq!(
+            session.on_tick(10_000),
+            vec![Action::Transcript {
+                role: "assistant",
+                text: "Calling them now.".to_owned()
+            }]
+        );
+        assert_eq!(
+            session.on_event(
+                &event(r#"{"type":"session.output_audio.delta","delta":"AAAA"}"#),
+                11_000
+            ),
+            Vec::new()
+        );
+        session.hold(false, 100_000);
+        assert_eq!(session.on_tick(102_000), Vec::new());
+        assert_eq!(session.on_tick(104_000), Vec::new());
     }
 
     #[test]

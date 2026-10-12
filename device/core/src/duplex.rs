@@ -22,19 +22,27 @@ pub const ECHO_TAIL_MS: u64 = 400;
 pub enum Echo {
     /// The microphone hardware removes the speaker's sound: full duplex, barge-in on.
     Hardware,
+    /// The speaker removes its own sound in software (AEC3): full duplex, barge-in on.
+    Software,
     /// Nothing removes it: half duplex while the assistant is audible.
     None,
 }
 
 impl Echo {
-    /// `auto` means hardware when built for the Flex, none otherwise.
+    /// `auto` means hardware when built for the Flex, software otherwise.
     pub fn from_config(value: &str, flex_build: bool) -> Self {
         match value {
             "hardware" => Self::Hardware,
+            "software" => Self::Software,
             "none" => Self::None,
             _ if flex_build => Self::Hardware,
-            _ => Self::None,
+            _ => Self::Software,
         }
+    }
+
+    /// The speaker must cancel its own sound in software.
+    pub fn needs_software(self) -> bool {
+        self == Self::Software
     }
 }
 
@@ -103,7 +111,7 @@ impl Duplex {
                     interrupt: false,
                 }
             }
-            (Echo::Hardware, true) => {
+            (Echo::Hardware | Echo::Software, true) => {
                 self.loud_run = if level > barge_bar {
                     self.loud_run.saturating_add(1)
                 } else {
@@ -180,7 +188,8 @@ mod tests {
     #[test]
     fn auto_follows_the_build() {
         assert_eq!(Echo::from_config("auto", true), Echo::Hardware);
-        assert_eq!(Echo::from_config("auto", false), Echo::None);
+        assert_eq!(Echo::from_config("auto", false), Echo::Software);
+        assert_eq!(Echo::from_config("software", true), Echo::Software);
         assert_eq!(Echo::from_config("hardware", false), Echo::Hardware);
         assert_eq!(Echo::from_config("none", true), Echo::None);
     }

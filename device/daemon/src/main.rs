@@ -2,6 +2,7 @@
 
 mod audio;
 mod control;
+mod echo;
 mod line;
 mod live;
 mod logging;

@@ -199,7 +199,17 @@ impl Injection {
 }
 
 impl Capture {
+    /// Opens the microphone without echo cancellation (setup, recording, tests).
     pub fn open(settings: &Audio) -> anyhow::Result<Self> {
+        Self::open_with(settings, None)
+    }
+
+    /// With `reference`, the speaker's own sound is cancelled from the microphone (see `echo.rs`).
+    #[allow(clippy::too_many_lines)]
+    pub fn open_with(
+        settings: &Audio,
+        reference: Option<std::sync::mpsc::Receiver<Vec<f32>>>,
+    ) -> anyhow::Result<Self> {
         let host = cpal::default_host();
         let devices: Vec<cpal::Device> = host
             .input_devices()
@@ -231,9 +241,26 @@ impl Capture {
             .name("alexsay-resample".into())
             .spawn(move || {
                 let mut resampler = Downsampler::new(source_rate, LIVE_RATE);
+                let mut canceller = reference.map(crate::echo::EchoCanceller::new);
+                let mut since_report = std::time::Instant::now();
                 while let Ok(frames) = raw_rx.recv() {
                     let mono = pcm::pick_channel(&frames, channels, channel);
                     for chunk in resampler.push(&mono) {
+                        let chunk = match canceller.as_mut() {
+                            Some(canceller) => {
+                                if since_report.elapsed() >= std::time::Duration::from_secs(5) {
+                                    since_report = std::time::Instant::now();
+                                    if let Some(erle) = canceller.erle_db() {
+                                        tracing::debug!("echo cancellation removes {erle:.1} dB");
+                                    }
+                                }
+                                canceller.process(&chunk)
+                            }
+                            None => chunk,
+                        };
+                        if chunk.is_empty() {
+                            continue;
+                        }
                         if tx.send(pcm::to_i16(&chunk, gain)).is_err() {
                             return;
                         }
@@ -314,6 +341,15 @@ pub struct Player {
 impl Player {
     #[allow(clippy::too_many_lines)]
     pub fn open(settings: &Audio) -> anyhow::Result<Self> {
+        Self::open_with(settings, None)
+    }
+
+    /// With `reference`, every block played (silence included) is copied to the echo canceller.
+    #[allow(clippy::too_many_lines)]
+    pub fn open_with(
+        settings: &Audio,
+        reference: Option<crate::echo::Reference>,
+    ) -> anyhow::Result<Self> {
         let host = cpal::default_host();
         let devices: Vec<cpal::Device> = host
             .output_devices()
@@ -356,6 +392,9 @@ impl Player {
                                     .map_or(0.0, |s| f32::from(s) / 32768.0 * volume),
                             );
                         }
+                    }
+                    if let Some(reference) = &reference {
+                        let _ = reference.send(source.clone());
                     }
                     let out = upsampler.render(&source, frames);
                     for (frame, sample) in data

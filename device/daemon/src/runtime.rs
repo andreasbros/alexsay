@@ -42,12 +42,22 @@ pub struct Runtime {
     /// Notes for the open conversation (a call report), read by the conversation loop.
     notes: tokio::sync::Mutex<mpsc::UnboundedReceiver<String>>,
     notes_tx: mpsc::UnboundedSender<String>,
+    /// What the player plays, for the microphone's echo canceller; taken once when the microphone opens.
+    echo_reference: Mutex<Option<std::sync::mpsc::Receiver<Vec<f32>>>>,
 }
 
 impl Runtime {
     pub fn new(paths: Paths, config: Config, id: DeviceId) -> anyhow::Result<Self> {
         let server = Server::new(&config.server.url, id)?;
-        let player = Player::open(&config.audio).context("opening the speaker")?;
+        let echo =
+            alexsay_core::duplex::Echo::from_config(&config.audio.echo, cfg!(feature = "flex"));
+        let (reference, reference_rx) = if echo.needs_software() {
+            let (tx, rx) = crate::echo::link();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
+        let player = Player::open_with(&config.audio, reference).context("opening the speaker")?;
         let (notes_tx, notes_rx) = mpsc::unbounded_channel();
         Ok(Self {
             paths,
@@ -60,6 +70,7 @@ impl Runtime {
             line: None,
             notes: tokio::sync::Mutex::new(notes_rx),
             notes_tx,
+            echo_reference: Mutex::new(reference_rx),
         })
     }
 
@@ -313,7 +324,16 @@ async fn update_loop(runtime: Arc<Runtime>) {
 }
 
 async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
-    let capture = Capture::open(&runtime.config.audio).context("opening the microphone")?;
+    let reference = runtime
+        .echo_reference
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    if reference.is_some() {
+        info!("echo cancellation: software (AEC3)");
+    }
+    let capture =
+        Capture::open_with(&runtime.config.audio, reference).context("opening the microphone")?;
     info!(input = %capture.device, rate = capture.source_rate, channels = capture.channels, output = %runtime.player.device, "audio open");
     let mut mic = capture.pump_with(runtime.call.injection.clone());
     let mut wake = match runtime.load_wake_word() {

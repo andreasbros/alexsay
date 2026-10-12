@@ -91,18 +91,43 @@ function agentOf(args: Record<string, unknown>): TestAgent | { error: string } {
   return { role, scenario, voice: pickVoice(string(args, "voice")) };
 }
 
+/**
+ * Where a call opens: wherever the user is talking from (the Assistant page with its line up, or a
+ * speaker with its line up), and their mobile only when they ask for it.
+ */
 function callHost(c: ToolContext, args: Record<string, unknown>): { host: VoiceClient } | { error: string } {
   if (string(args, "via") === "mobile") {
     return { host: "mobile" };
   }
-  if (c.voice === "browser") {
-    return { host: "browser" };
+  if (c.voice === "browser" || c.voice === "speaker") {
+    return { host: c.voice };
   }
   return {
     error:
-      "the Assistant page's phone line is not ready, so the call cannot open there. Tell the user: keep the " +
-      "Assistant page open and check the phone line notice, or say 'on my mobile' to take the call on their phone.",
+      "there is no phone line where the user is talking from, so the call cannot open there. Tell the user: " +
+      "on the Assistant page, check the phone line notice; on a speaker, check it is running and claimed; or say " +
+      "'on my mobile' to take the call on their phone.",
   };
+}
+
+const VIA_PROPERTY = {
+  type: "string",
+  enum: ["here", "mobile"],
+  description:
+    "Where the user takes the call: here (the page or speaker they are talking from) unless they ask for their mobile",
+};
+
+/** How the model should describe where the call is opening. */
+function hostNote(host: VoiceClient, pending: string[]): string {
+  const dials = pending.join(", ");
+  switch (host) {
+    case "browser":
+      return `the call is opening in the app: it answers the moment you stop talking, then dials ${dials}.`;
+    case "speaker":
+      return `the call is opening on the speaker: its line answers at once, then dials ${dials}.`;
+    default:
+      return `the user's mobile is ringing; once they pick up, ${dials} is dialled.`;
+  }
 }
 
 /** Telephony preconditions are told to the model as plain errors it can relay, not thrown. */
@@ -571,7 +596,8 @@ export const TOOLS: Tool[] = [
         "Phones someone for the user. The call opens in the Assistant page the user is talking from, so they hear " +
         "and speak through it, and you are on the line as well when their OpenAI project allows it: give a task " +
         "when the user wants you to speak for them (ask something, book, explain), otherwise you listen and only " +
-        "speak when addressed. Only when the user explicitly asks for it on their mobile, set via to mobile. " +
+        "speak when addressed. The call opens where the user is talking from: the Assistant page or the speaker. " +
+        "Only when the user explicitly asks for it on their mobile, set via to mobile. " +
         "A message phones the person and reads it out without the user. Confirm who, and the task or message, " +
         "before calling.",
       parameters: {
@@ -580,11 +606,7 @@ export const TOOLS: Tool[] = [
           ...RECIPIENT_PROPERTIES,
           task: { type: "string", description: "What you should get done on the call, in the user's words" },
           message: { type: "string", description: "Spoken to the person instead of connecting anyone" },
-          via: {
-            type: "string",
-            enum: ["app", "mobile"],
-            description: "Where the user takes the call; app unless asked",
-          },
+          via: VIA_PROPERTY,
         },
         additionalProperties: false,
       },
@@ -607,13 +629,10 @@ export const TOOLS: Tool[] = [
           ? "the message is being delivered"
           : "conference" in result
             ? [
-                result.host === "browser"
-                  ? "the call is opening in the app: it answers the moment you stop talking, then dials " +
-                    `${result.pending.join(", ")}.`
-                  : `the user's mobile is ringing; once they pick up, ${result.pending.join(", ")} is dialled.`,
+                hostNote(result.host, result.pending),
                 result.assistant
                   ? "You join the call yourself once someone has answered and take it from there"
-                  : "You are not on the line (OpenAI phone calls are not set up); the user talks directly",
+                  : `You are not on the line (${result.without_assistant ?? "not set up"}); the user talks directly`,
                 "Reply with one short sentence such as 'Calling now' and then say nothing more.",
               ].join(" ")
             : "placed";
@@ -627,8 +646,8 @@ export const TOOLS: Tool[] = [
       type: "function",
       name: "start_conference",
       description:
-        "Starts a group call: the user's phone rings and joins as host, then every listed person is dialled in. " +
-        "Confirm the list with the user first.",
+        "Starts a group call: the user joins as host where they are talking from (or on their mobile when asked), " +
+        "then every listed person is dialled in. Confirm the list with the user first.",
       parameters: {
         type: "object",
         properties: {
@@ -638,11 +657,7 @@ export const TOOLS: Tool[] = [
             maxItems: 9,
             items: { type: "object", properties: RECIPIENT_PROPERTIES, additionalProperties: false },
           },
-          via: {
-            type: "string",
-            enum: ["app", "mobile"],
-            description: "Where the user takes the call; app unless asked",
-          },
+          via: VIA_PROPERTY,
         },
         required: ["participants"],
         additionalProperties: false,
@@ -746,11 +761,7 @@ export const TOOLS: Tool[] = [
           },
           task: { type: "string", description: "What you should get done on the call, if the user wants you to talk" },
           voice: { type: "string", description: "male, female, or an OpenAI voice name; female if omitted" },
-          via: {
-            type: "string",
-            enum: ["app", "mobile"],
-            description: "Where the user takes the call; app unless asked",
-          },
+          via: VIA_PROPERTY,
         },
         required: ["role", "scenario"],
         additionalProperties: false,
@@ -772,7 +783,7 @@ export const TOOLS: Tool[] = [
           ok: true,
           ...result,
           note:
-            `the test call is opening in the ${result.host === "browser" ? "app" : "user's mobile"}; the agent ` +
+            `the test call is opening ${result.host === "browser" ? "in the app" : result.host === "speaker" ? "on the speaker" : "on the user's mobile"}; the agent ` +
             `(${agent.role}, voice ${agent.voice}) answers once the user is on, and you join right behind it. ` +
             "Reply with one short sentence and then say nothing more.",
         };

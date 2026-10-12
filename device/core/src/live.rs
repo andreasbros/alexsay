@@ -23,7 +23,32 @@ pub fn session_with_audio_format(mut session: Value, rate: u32) -> Value {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Item {
-    FunctionCallOutput { call_id: String, output: String },
+    FunctionCallOutput {
+        call_id: String,
+        output: String,
+    },
+    /// A note from the app, as the web page hands over a call report; the model answers it like speech.
+    Message {
+        role: String,
+        content: Vec<Content>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Content {
+    InputText { text: String },
+}
+
+impl Item {
+    pub fn note(text: &str) -> Self {
+        Self::Message {
+            role: "user".to_owned(),
+            content: vec![Content::InputText {
+                text: text.to_owned(),
+            }],
+        }
+    }
 }
 
 /// Client to server.
@@ -217,6 +242,13 @@ mod tests {
         assert_eq!(
             serde_json::to_value(output).unwrap(),
             json!({"type": "response.item.create", "item": {"type": "function_call_output", "call_id": "call_1", "output": "{}"}})
+        );
+        let note = ClientEvent::ResponseItemCreate {
+            item: Item::note("the call ended"),
+        };
+        assert_eq!(
+            serde_json::to_value(note).unwrap(),
+            json!({"type": "response.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "the call ended"}]}})
         );
     }
 

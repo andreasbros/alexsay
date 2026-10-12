@@ -2,6 +2,7 @@ import { DEFAULT_LOCALE, type Locale } from "./locale";
 import { purgeLog } from "./log";
 import { searchName } from "./phone";
 import type {
+  BridgeRow,
   CallReportRow,
   CallRow,
   CallSpeaker,
@@ -257,6 +258,7 @@ export async function purgeExpired(db: D1Database, now: number): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now),
     db.prepare("DELETE FROM login_failures WHERE at <= ?").bind(now - DAY_MS),
+    db.prepare("DELETE FROM bridges WHERE created_at <= ?").bind(now - DAY_MS),
     purgeLog(db, now),
   ]);
 }
@@ -709,6 +711,37 @@ export const calls = {
         .bind(username, since)
         .first<{ conference: string }>()
     )?.conference ?? null,
+};
+
+/** Pending speaker bridges: one row per call opened on a speaker, consumed when Twilio calls back. */
+export const bridges = {
+  create: (
+    db: D1Database,
+    row: { token: string; username: string; device_id: string; conference: string; at: number },
+  ) =>
+    db
+      .prepare("INSERT INTO bridges (token, username, device_id, conference, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(row.token, row.username, row.device_id, row.conference, row.at)
+      .run(),
+
+  get: (db: D1Database, token: string) =>
+    db.prepare("SELECT * FROM bridges WHERE token = ?").bind(token).first<BridgeRow>(),
+
+  /** The newest bridge of a user that Twilio has not called back for yet. */
+  pending: (db: D1Database, username: string, since: number) =>
+    db
+      .prepare(
+        "SELECT * FROM bridges WHERE username = ? AND used_at IS NULL AND created_at > ? ORDER BY created_at DESC LIMIT 1",
+      )
+      .bind(username, since)
+      .first<BridgeRow>(),
+
+  use: (db: D1Database, token: string, at: number) =>
+    db.prepare("UPDATE bridges SET used_at = ? WHERE token = ?").bind(at, token).run(),
+
+  remove: (db: D1Database, token: string) => db.prepare("DELETE FROM bridges WHERE token = ?").bind(token).run(),
+
+  purge: (db: D1Database, before: number) => db.prepare("DELETE FROM bridges WHERE created_at < ?").bind(before).run(),
 };
 
 export type { CallRow } from "./types";

@@ -178,6 +178,19 @@ impl Server {
         Ok(())
     }
 
+    /// The report of a call this speaker was on; `ready` is false while the assistant's leg is still closing.
+    pub async fn call_report(&self, conference: &str) -> anyhow::Result<Value> {
+        let url = format!("{}/v1/device/conferences/{conference}/report", self.base);
+        let res = self
+            .http
+            .get(&url)
+            .header(DEVICE_ID_HEADER, self.id.to_string())
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+        Self::decode(res).await
+    }
+
     pub async fn end_conversation(&self, id: &str) -> anyhow::Result<()> {
         let url = format!("{}/v1/device/conversations/{id}/end", self.base);
         let res = self

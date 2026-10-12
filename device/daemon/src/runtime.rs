@@ -18,6 +18,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::audio::{Capture, Player};
+use crate::control::{self, CallState};
+use crate::line::{self, LineSender, LineSignal};
 use crate::live::Live;
 use crate::server::{Server, Turn};
 use crate::{paths, tts, update};
@@ -37,12 +39,18 @@ pub struct Runtime {
     pub server: Server,
     pub player: Player,
     pub latest: Arc<Mutex<Option<HeartbeatReply>>>,
+    pub call: CallState,
+    pub line: Option<LineSender>,
+    /// Notes for the open conversation (a call report), read by the conversation loop.
+    notes: tokio::sync::Mutex<mpsc::UnboundedReceiver<String>>,
+    notes_tx: mpsc::UnboundedSender<String>,
 }
 
 impl Runtime {
     pub fn new(paths: Paths, config: Config, id: DeviceId) -> anyhow::Result<Self> {
         let server = Server::new(&config.server.url, id)?;
         let player = Player::open(&config.audio).context("opening the speaker")?;
+        let (notes_tx, notes_rx) = mpsc::unbounded_channel();
         Ok(Self {
             paths,
             config,
@@ -50,6 +58,10 @@ impl Runtime {
             server,
             player,
             latest: Arc::new(Mutex::new(None)),
+            call: CallState::default(),
+            line: None,
+            notes: tokio::sync::Mutex::new(notes_rx),
+            notes_tx,
         })
     }
 
@@ -98,9 +110,34 @@ impl Runtime {
         .map_err(anyhow::Error::msg)
     }
 
+    /// The microphone during a phone call goes to the line (unless muted) and nowhere else.
+    fn route_to_call(&self, chunk: &[i16]) -> bool {
+        if !self.call.on_call() {
+            return false;
+        }
+        if !self.call.muted()
+            && let Some(line) = &self.line
+        {
+            line.send_audio(chunk);
+        }
+        true
+    }
+
     /// Runs until Ctrl-C (or SIGTERM from the service manager).
-    pub async fn run(self) -> anyhow::Result<()> {
+    pub async fn run(mut self) -> anyhow::Result<()> {
+        let (line, signals) = line::start(&self.config.server.url, self.id);
+        self.line = Some(line.clone());
         let runtime = Arc::new(self);
+        tokio::spawn(line_loop(Arc::clone(&runtime), signals));
+        let control = tokio::spawn({
+            let paths = runtime.paths.clone();
+            let state = runtime.call.clone();
+            async move {
+                if let Err(err) = control::serve(&paths, state, Some(line)).await {
+                    warn!("control socket: {err:#}");
+                }
+            }
+        });
         if runtime.config.sounds.startup {
             runtime.play_clip(sounds::STARTUP);
         }
@@ -130,8 +167,54 @@ impl Runtime {
         }
         heartbeat.abort();
         updates.abort();
+        control.abort();
         runtime.player.clear();
         Ok(())
+    }
+}
+
+/// What the phone line reports: a call starting, its audio, its end (then the report for the assistant).
+async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<LineSignal>) {
+    while let Some(signal) = signals.recv().await {
+        match signal {
+            LineSignal::CallStart { conference, who } => {
+                info!(conference = %conference, who = %who, "on a call");
+                runtime.player.clear();
+                runtime.call.begin(&conference);
+            }
+            LineSignal::Audio(samples) => runtime.player.play(&samples),
+            LineSignal::CallEnd => {
+                let Some(conference) = runtime.call.end() else {
+                    continue;
+                };
+                info!(conference = %conference, "call ended");
+                runtime.player.clear();
+                runtime.play_clip(sounds::END);
+                let handed = Arc::clone(&runtime);
+                tokio::spawn(async move { hand_back(&handed, &conference).await });
+            }
+        }
+    }
+}
+
+/// Fetches the call's report once it is whole (or after a few seconds) and hands it to the conversation.
+async fn hand_back(runtime: &Runtime, conference: &str) {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        match runtime.server.call_report(conference).await {
+            Ok(report) if report["ready"] == true || Instant::now() > deadline => {
+                let _ = runtime.notes_tx.send(alexsay_core::report::note(&report));
+                return;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                warn!("call report: {err:#}");
+                if Instant::now() > deadline {
+                    return;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(600)).await;
     }
 }
 
@@ -273,6 +356,10 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
         let Some(chunk) = mic.recv().await else {
             anyhow::bail!("the microphone stopped");
         };
+        if runtime.route_to_call(&chunk) {
+            preroll.clear();
+            continue;
+        }
         preroll.extend(chunk.iter().copied());
         while preroll.len() > preroll_len {
             preroll.pop_front();
@@ -340,10 +427,16 @@ pub async fn converse(
     let (tool_tx, mut tool_rx) = mpsc::unbounded_channel::<(String, String)>();
     let mut ticker = tokio::time::interval(TICK);
     let mut loud_chunks = 0u8;
+    let mut notes = runtime.notes.lock().await;
+    while notes.try_recv().is_ok() {}
+    let mut mute_state = runtime.call.mute_state();
     loop {
         tokio::select! {
             chunk = mic.recv() => {
                 let Some(chunk) = chunk else { anyhow::bail!("the microphone stopped") };
+                if runtime.route_to_call(&chunk) {
+                    continue;
+                }
                 let level = pcm::rms(&chunk);
                 if level > SPEECH_RMS {
                     session.heard_user(now_ms());
@@ -415,7 +508,23 @@ pub async fn converse(
                 live.send(ClientEvent::ResponseCreate);
                 session.tool_finished();
             }
+            Some(note) = notes.recv() => {
+                info!("handing the call report to the assistant");
+                live.send(ClientEvent::ResponseItemCreate { item: Item::note(&note) });
+                live.send(ClientEvent::ResponseCreate);
+            }
             _ = ticker.tick() => {
+                // A phone call or the mute button changes what the session may hear
+                let now_state = runtime.call.mute_state();
+                if now_state != mute_state {
+                    if now_state.session_muted() != mute_state.session_muted() {
+                        live.send(if now_state.session_muted() { ClientEvent::InputAudioMute } else { ClientEvent::InputAudioUnmute });
+                    }
+                    if now_state.on_call != mute_state.on_call {
+                        session.hold(now_state.on_call, now_ms());
+                    }
+                    mute_state = now_state;
+                }
                 for action in session.on_tick(now_ms()) {
                     match action {
                         Action::Close => live.send(ClientEvent::SessionClose),

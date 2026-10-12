@@ -100,6 +100,7 @@ async fn the_binary_is_claimed_and_every_server_check_passes() {
         "server",
         "session",
         "tools",
+        "phone line",
         "conversation record",
         "updates",
     ] {

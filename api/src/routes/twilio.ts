@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { countryCode, twilioConnection, twilioSigningKey } from "../connections";
 import { calls, contacts } from "../db";
+import { isPublicOrigin, LOCAL_SERVER_NOTE, serverOrigin } from "../origin";
 import { providerFailure } from "../provider_errors";
 import { CLIENT_IDENTITY, configureNumber, listNumbers, voiceToken } from "../providers/twilio";
 import { type Recipient, resolveRecipient } from "../recipients";
@@ -46,6 +47,9 @@ export const twilioRoutes = new Hono<AppEnv>()
     if (!connection.settings.from_number) {
       return c.json({ error: "no_from_number" }, 412);
     }
+    if (!isPublicOrigin(serverOrigin(c))) {
+      return c.json({ error: "local_server", detail: LOCAL_SERVER_NOTE }, 412);
+    }
     try {
       const number = (await listNumbers(connection.client)).find(
         (n) => n.phone_number === connection.settings.from_number,
@@ -53,7 +57,7 @@ export const twilioRoutes = new Hono<AppEnv>()
       if (!number) {
         return c.json({ error: "number_not_found" }, 404);
       }
-      return c.json(await configureNumber(connection.client, number.sid, webhooks(new URL(c.req.url).origin)));
+      return c.json(await configureNumber(connection.client, number.sid, webhooks(serverOrigin(c))));
     } catch (err) {
       return providerFailure(c, "twilio", err);
     }
@@ -140,7 +144,7 @@ export const twilioRoutes = new Hono<AppEnv>()
       return c.json({ error: "not_found" }, 404);
     }
     return telephony(c, async () => {
-      await hostAnswered({ env: c.env, origin: new URL(c.req.url).origin }, host);
+      await hostAnswered({ env: c.env, origin: serverOrigin(c) }, host);
       return c.json({ ok: true });
     });
   })

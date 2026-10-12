@@ -89,7 +89,7 @@ export const featureWrites = z.object({
     .max(50),
 });
 
-export const voiceClient = z.enum(["browser", "mobile"]);
+export const voiceClient = z.enum(["browser", "speaker", "mobile"]);
 export const memoryId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const id = memoryId;
 export const memoryCategory = z.enum(MEMORY_CATEGORIES);

@@ -3,7 +3,9 @@ import { createMiddleware } from "hono/factory";
 import { addTurns, endConversation, runToolFor, sessionFor, startConversation } from "../assistant_api";
 import { openaiConnection, twilioConnection } from "../connections";
 import { devices, users } from "../db";
+import { serverOrigin } from "../origin";
 import * as schemas from "../schemas";
+import { callReport, speakerOnline, TelephonyError } from "../telephony";
 import type { AppEnv } from "../types";
 import { jsonBody, parse } from "../validate";
 
@@ -70,9 +72,33 @@ export const deviceApiRoutes = new Hono<AppEnv>()
   .use("/tools/*", requireClaimedDevice)
   .use("/conversations", requireClaimedDevice)
   .use("/conversations/*", requireClaimedDevice)
+  .use("/line", requireClaimedDevice)
+  .use("/line/*", requireClaimedDevice)
+  .use("/conferences/*", requireClaimedDevice)
+  /** The speaker's phone line: a WebSocket held open while it runs, so calls can open on it. */
+  .get("/line", async (c) => {
+    if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
+      return c.json({ error: "expected a websocket" }, 426);
+    }
+    const id = c.get("device").id;
+    const bridge = c.env.LINE_BRIDGE.get(c.env.LINE_BRIDGE.idFromName(id));
+    return bridge.fetch("https://line/device", { headers: { upgrade: "websocket" } });
+  })
+  .get("/line/status", async (c) => c.json({ online: await speakerOnline(c, c.get("device").id) }))
+  .get("/conferences/:name/report", async (c) => {
+    const name = parse(schemas.conferenceName, c.req.param("name"));
+    try {
+      return c.json(await callReport(c, c.get("user").username, name));
+    } catch (err) {
+      if (err instanceof TelephonyError) {
+        return c.json({ error: err.code, detail: err.message }, 412);
+      }
+      throw err;
+    }
+  })
   /** The GPT-Live session to start, built exactly as for the web page, with the owner's key for the socket. */
   .get("/session", async (c) => {
-    const built = await sessionFor({ env: c.env, user: c.get("user"), origin: new URL(c.req.url).origin });
+    const built = await sessionFor({ env: c.env, user: c.get("user"), origin: serverOrigin(c) });
     if (!built) {
       return c.json({ error: "no_openai_connection" }, 412);
     }
@@ -80,7 +106,10 @@ export const deviceApiRoutes = new Hono<AppEnv>()
   })
   .post("/tools/call", async (c) => {
     const { name, arguments: args, conversation_id } = await jsonBody(c, schemas.toolCall);
-    const context = { env: c.env, user: c.get("user"), origin: new URL(c.req.url).origin, voice: "mobile" as const };
+    const device = c.get("device").id;
+    // With its line up the speaker takes calls itself; otherwise they ring the owner's mobile
+    const voice = (await speakerOnline(c, device)) ? ("speaker" as const) : ("mobile" as const);
+    const context = { env: c.env, user: c.get("user"), origin: serverOrigin(c), voice, device };
     return c.json({ output: await runToolFor(context, name, args, conversation_id ?? null) });
   })
   .post("/conversations", async (c) => {

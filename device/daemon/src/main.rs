@@ -1,6 +1,8 @@
 //! `alexsay`: the speaker. One static binary: wake word, GPT-Live, the server's tools, updates.
 
 mod audio;
+mod control;
+mod line;
 mod live;
 mod logging;
 mod paths;
@@ -86,6 +88,11 @@ enum Command {
         #[command(subcommand)]
         action: WakeAction,
     },
+    /// The phone call in progress: status, mute, unmute, hang up (talks to the running speaker)
+    Call {
+        #[command(subcommand)]
+        action: CallAction,
+    },
     /// Release tooling (used by the build pipeline)
     #[command(hide = true)]
     Release {
@@ -132,6 +139,14 @@ enum WakeAction {
     },
     /// Listen and print every detection
     Test,
+}
+
+#[derive(Subcommand)]
+enum CallAction {
+    Status,
+    Mute,
+    Unmute,
+    Hangup,
 }
 
 #[derive(Subcommand)]
@@ -400,6 +415,16 @@ async fn dispatch(
                     wake_cli::test(&config, &bytes)
                 }
             }
+        }
+        Command::Call { action } => {
+            let command = match action {
+                CallAction::Status => "status",
+                CallAction::Mute => "mute",
+                CallAction::Unmute => "unmute",
+                CallAction::Hangup => "hangup",
+            };
+            println!("{}", control::send(&paths, command).await?);
+            Ok(())
         }
         Command::Release { action } => match action {
             ReleaseAction::SignSums { file } => {

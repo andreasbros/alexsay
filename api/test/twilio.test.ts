@@ -348,7 +348,7 @@ describe("twilio", () => {
     const quiet = mockUpstream({});
     const result = (await tool(maria, "place_call", { name: "mum" })) as { error: string };
     quiet.done();
-    expect(result.error).toContain("phone line is not ready");
+    expect(result.error).toContain("no phone line where the user is talking from");
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM calls").first<{ n: number }>()).toEqual({ n: 0 });
   });
 

@@ -21,7 +21,12 @@ Run on the machine with the microphone and speaker, claimed in the app with Open
 | Reply | Ask anything | Speech starts within about 1.5 s of you finishing; no clicks or gaps |
 | Barge-in | Interrupt a long answer by talking | Playback stops within half a second and the assistant answers the new question |
 | Tools | "Turn on the kitchen lights", "remember that I like tea", "what is in my memory" | The light changes; the memory shows in the app under Memory |
-| Call | "Call Mum" (Twilio connected) | Your mobile rings (the speaker has no phone line yet); the assistant says so |
+| Call | "Call Mum" (Twilio connected, speaker claimed, server public) | The speaker's line takes the call: you hear Mum through the speaker, she hears you, the assistant joins; `alexsay call status` shows `on_call: true` |
+| Call on the mobile | "Call Mum on my mobile" | Your phone rings instead; the speaker stays quiet |
+| Mute on a call | `alexsay call mute`, speak | Mum hears nothing; `alexsay call unmute` restores it; the assistant in the room stays muted for the whole call |
+| Hang up | `alexsay call hangup`, or "Alexsay, hang up" | The end tone; within a few seconds the assistant summarises the call unprompted |
+| No answer | "Call" a number that does not pick up | The report says the number did not answer; no stuck call (`alexsay call status` shows `on_call: false`) |
+| Line down | Stop the speaker, ask the page's assistant to call on the speaker | A clear error that the speaker's line is not up |
 | Quiet end | Stop talking after a reply | The end tone after `session.after_reply_s` (8 s) |
 | Goodbye | Say "thanks, that's all" | The assistant signs off and the end tone follows at once |
 | Hard stop | "Alexsay, end the conversation" | The end tone right after the reply |

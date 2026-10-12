@@ -13,6 +13,14 @@ pub fn encode(samples: &[i16]) -> String {
     STANDARD.encode(bytes)
 }
 
+pub fn encode_bytes(bytes: &[u8]) -> String {
+    STANDARD.encode(bytes)
+}
+
+pub fn decode_bytes(text: &str) -> Vec<u8> {
+    STANDARD.decode(text).unwrap_or_default()
+}
+
 pub fn decode(text: &str) -> Vec<i16> {
     let bytes = STANDARD.decode(text).unwrap_or_default();
     bytes

@@ -45,7 +45,7 @@ export interface OpenAiSettings {
   call_model: string;
 }
 
-export type VoiceClient = "browser" | "mobile";
+export type VoiceClient = "browser" | "speaker" | "mobile";
 
 export interface NumberRouting {
   sid: string;

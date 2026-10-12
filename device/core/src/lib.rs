@@ -3,8 +3,12 @@
 pub mod config;
 pub mod heartbeat;
 pub mod identity;
+pub mod line;
 pub mod live;
+pub mod mulaw;
+pub mod mute;
 pub mod pcm;
+pub mod report;
 pub mod session;
 pub mod sounds;
 pub mod state;

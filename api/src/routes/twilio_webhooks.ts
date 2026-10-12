@@ -1,12 +1,13 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { type TwilioConnection, twilioFromRow } from "../connections";
-import { calls, connections, contacts, devices, messages } from "../db";
+import { bridges, calls, connections, contacts, devices, messages } from "../db";
 import { logFor } from "../log";
+import { serverOrigin } from "../origin";
 import { bareNumber, normalisePhone, WHATSAPP_PREFIX } from "../phone";
 import { CLIENT_IDENTITY, validSignature } from "../providers/twilio";
-import { callEnded, endedByFromLegs, guestAnswered, hostAnswered } from "../telephony";
-import { dialOutTwiml, emptyTwiml, rejectTwiml, ringTwiml } from "../twiml";
+import { BRIDGE_WINDOW_MS, callEnded, endedByFromLegs, guestAnswered, hostAnswered, streamUrl } from "../telephony";
+import { dialOutTwiml, emptyTwiml, rejectTwiml, ringTwiml, streamTwiml } from "../twiml";
 import type { AppEnv } from "../types";
 
 const SIP_USER = /^sip:([^@;]+)@/;
@@ -32,6 +33,22 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     }
     const from = params.From ?? "";
     const { settings } = owner.connection;
+    const place = { env: c.env, origin: serverOrigin(c) };
+    // The number calling itself is a speaker's host leg: answer with the stream to that speaker
+    if (bareNumber(from) === bareNumber(params.To ?? "")) {
+      const bridge = await bridges.pending(c.env.DB, owner.username, Date.now() - BRIDGE_WINDOW_MS);
+      if (!bridge) {
+        return xml(c, rejectTwiml("No speaker is waiting for this call."));
+      }
+      await bridges.use(c.env.DB, bridge.token, Date.now());
+      const host = await calls.hostLeg(c.env.DB, owner.username, bridge.conference);
+      if (host) {
+        await calls.setStatus(c.env.DB, host.sid ?? "", "in-progress");
+        await hostAnswered(place, host);
+      }
+      void logFor(place, owner.username, "info", `call ${bridge.conference}: streaming to the speaker`);
+      return xml(c, streamTwiml(streamUrl(place, bridge.token), bridge.conference, "speaker"));
+    }
     const speakers = settings.sip_domain
       ? (await devices.list(c.env.DB, owner.username)).map((d) => `sip:${d.id}@${settings.sip_domain}`)
       : [];
@@ -126,7 +143,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     }
     const status = (params.CallStatus ?? "").slice(0, 32);
     await calls.setStatus(c.env.DB, call.sid ?? "", status);
-    const place = { env: c.env, origin: new URL(c.req.url).origin };
+    const place = { env: c.env, origin: serverOrigin(c) };
     void logFor(place, call.username, "info", `twilio: ${call.role || call.kind} leg ${call.phone} is ${status}`);
     if (status === "in-progress" && call.role === "host") {
       await hostAnswered(place, call);
@@ -136,6 +153,25 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     }
     return c.body(null, 204);
   });
+
+/**
+ * Twilio opens the media stream for a speaker's call here, naming the pending bridge by its token;
+ * the socket is handed to that speaker's line, which carries the audio both ways.
+ */
+export const twilioStreamRoute = new Hono<AppEnv>().get("/stream/:token", async (c) => {
+  if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
+    return c.json({ error: "expected a websocket" }, 426);
+  }
+  const bridge = await bridges.get(c.env.DB, c.req.param("token"));
+  if (!bridge || bridge.created_at < Date.now() - BRIDGE_WINDOW_MS * 4) {
+    return c.text("forbidden", 403);
+  }
+  const line = c.env.LINE_BRIDGE.get(c.env.LINE_BRIDGE.idFromName(bridge.device_id));
+  const url = new URL("https://line/twilio");
+  url.searchParams.set("conference", bridge.conference);
+  url.searchParams.set("who", "speaker");
+  return line.fetch(url.toString(), { headers: { upgrade: "websocket" } });
+});
 
 /**
  * Conference events are the stages' second trigger: when a leg's own callbacks go missing (they did
@@ -157,7 +193,7 @@ export const twilioConferenceRoute = new Hono<AppEnv>().post("/conference", asyn
   }
   const event = (params.StatusCallbackEvent ?? "").slice(0, 32);
   const leg = params.CallSid ? (legs.find((l) => l.sid === params.CallSid) ?? null) : null;
-  const place = { env: c.env, origin: new URL(c.req.url).origin };
+  const place = { env: c.env, origin: serverOrigin(c) };
   void logFor(
     place,
     first.username,

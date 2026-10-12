@@ -9,6 +9,7 @@ export async function resetDb(): Promise<void> {
   await env.DB.batch(
     [
       "server_log",
+      "bridges",
       "call_turns",
       "call_reports",
       "messages",

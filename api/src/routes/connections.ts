@@ -9,6 +9,7 @@ import {
   twilioConnection,
 } from "../connections";
 import { connections } from "../db";
+import { isPublicOrigin, LOCAL_SERVER_NOTE, serverOrigin } from "../origin";
 import { providerFailure } from "../provider_errors";
 import { structureIds } from "../providers/lightwave";
 import { listModels, ProviderError } from "../providers/openai";
@@ -92,6 +93,7 @@ export const connectionRoutes = new Hono<AppEnv>()
     const before = existing ? twilioSettings.parse(JSON.parse(existing.settings)) : null;
     // The server owns the backup: the number's routing before this app took it, restored when it lets go
     settings.number_backup = before?.number_backup ?? null;
+    let local = false;
     try {
       if (pasted) {
         await verifyAccount(client);
@@ -106,9 +108,14 @@ export const connectionRoutes = new Hono<AppEnv>()
           if (!number) {
             return c.json({ error: "number_not_found" }, 400);
           }
-          const hooks = webhooks(new URL(c.req.url).origin);
-          settings.number_backup = routedTo(number, hooks) ? null : routingOf(number);
-          await configureNumber(client, number.sid, hooks);
+          if (isPublicOrigin(serverOrigin(c))) {
+            const hooks = webhooks(serverOrigin(c));
+            settings.number_backup = routedTo(number, hooks) ? null : routingOf(number);
+            await configureNumber(client, number.sid, hooks);
+          } else {
+            // Pointing the number at a private address would break it; callbacks cannot arrive here anyway
+            local = true;
+          }
         }
       }
     } catch (err) {
@@ -119,7 +126,7 @@ export const connectionRoutes = new Hono<AppEnv>()
     }
     const sealed = pasted ? await seal(c.env.SECRETS_KEY, pasted) : (existing?.secret ?? "");
     await connections.put(c.env.DB, username, "twilio", sealed, JSON.stringify(settings));
-    return c.json({ provider: "twilio", settings });
+    return c.json({ provider: "twilio", settings, ...(local ? { local: true, note: LOCAL_SERVER_NOTE } : {}) });
   })
   .post("/openai/test", async (c) => {
     const connection = await openaiConnection(c, c.get("user").username);

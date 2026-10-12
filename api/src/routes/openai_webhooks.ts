@@ -3,6 +3,7 @@ import type { CallAgentStart } from "../call_agent";
 import { openaiConnection } from "../connections";
 import { calls, connections, users } from "../db";
 import { logFor } from "../log";
+import { serverOrigin } from "../origin";
 import { acceptCall, ProviderError, rejectCall, verifyWebhook } from "../providers/openai";
 import { AGENT_HEADER, agentBrief, CONFERENCE_HEADER, isLiveLeg, notOnCalls, parseAgent } from "../telephony";
 import { agentToolDefinitions, toolDefinitions } from "../tools";
@@ -75,7 +76,7 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
       apiKey: openai.apiKey,
       baseUrl: c.env.OPENAI_BASE_URL,
       username: leg.username,
-      origin: new URL(c.req.url).origin,
+      origin: serverOrigin(c),
     };
     void logFor(
       c,

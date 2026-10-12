@@ -1,8 +1,9 @@
 import { canJoinCalls, openaiConnection, type TwilioConnection, twilioConnection } from "./connections";
-import { type CallRow, calls, contacts, messages } from "./db";
+import { bridges, type CallRow, calls, contacts, messages } from "./db";
 import { type Locale, localeInstructions } from "./locale";
 import { logFor } from "./log";
 import { contextInstructions, currentConversation, loadContext } from "./memory";
+import { isPublicOrigin } from "./origin";
 import { toWhatsapp } from "./phone";
 import {
   addParticipant,
@@ -15,7 +16,7 @@ import {
   type Webhooks,
 } from "./providers/twilio";
 import type { Recipient } from "./recipients";
-import { announceTwiml, digitsTwiml } from "./twiml";
+import { announceTwiml, conferenceHostTwiml, digitsTwiml } from "./twiml";
 import type { CallSpeaker, Channel, Scope, ToolContext, VoiceClient } from "./types";
 
 /** A precondition the user can fix in Connections, told apart from a Twilio failure. */
@@ -57,6 +58,16 @@ export interface Conference {
   pending: string[];
   /** True when the assistant will join once someone has answered. */
   assistant: boolean;
+  /** Why the assistant stays off the call, when it does. */
+  without_assistant?: string;
+}
+
+/** Why the assistant cannot be seated on this user's calls, or null when it can. */
+async function assistantAbsence(place: Place, username: string): Promise<string | null> {
+  if (!isPublicOrigin(place.origin)) {
+    return "the server has no public address for OpenAI's call webhook";
+  }
+  return canJoinCalls(await openaiConnection(place, username)) ? null : "OpenAI phone calls are not set up";
 }
 
 /** A scripted AI that answers a test call over SIP, playing a part the user dictated. */
@@ -121,6 +132,11 @@ export interface Place extends Scope {
 
 export const statusCallbackUrl = (place: Place) => `${place.origin}/v1/twilio/status`;
 export const conferenceStatusCallbackUrl = (place: Place) => `${place.origin}/v1/twilio/conference`;
+/** Twilio connects the speaker's media stream here; the token names the pending bridge. */
+export const streamUrl = (place: Place, token: string) =>
+  `${place.origin.replace(/^http/, "ws")}/v1/twilio/stream/${token}`;
+/** A bridge Twilio has not called back for within this long is dead. */
+export const BRIDGE_WINDOW_MS = 90_000;
 
 /** The URLs a Twilio number is pointed at, derived from the request so local and live differ naturally. */
 export function webhooks(origin: string): Webhooks {
@@ -251,7 +267,7 @@ export async function startConference(
 }
 
 async function openConference(
-  c: Place,
+  c: Place & { device?: string },
   username: string,
   connection: Ready,
   guests: Guest[],
@@ -259,22 +275,24 @@ async function openConference(
   task?: string,
 ): Promise<Conference> {
   const conference = `ay-${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
-  const hostTo = host === "browser" ? `client:${CLIENT_IDENTITY}?conference=${conference}` : myNumber(connection);
   const brief: HostBrief = { task, guests };
-  const hostLeg = await addParticipant(connection.client, conference, {
-    to: hostTo,
-    from: connection.from,
-    label: "host",
-    host: true,
-    statusCallback: statusCallbackUrl(c),
-    conferenceStatusCallback: conferenceStatusCallbackUrl(c),
-  });
+  const hostLeg =
+    host === "speaker"
+      ? await ringSpeaker(c, username, connection, conference)
+      : await addParticipant(connection.client, conference, {
+          to: host === "browser" ? `client:${CLIENT_IDENTITY}?conference=${conference}` : myNumber(connection),
+          from: connection.from,
+          label: "host",
+          host: true,
+          statusCallback: statusCallbackUrl(c),
+          conferenceStatusCallback: conferenceStatusCallbackUrl(c),
+        });
   await calls.create(c.env.DB, {
     username,
     contact_id: null,
     direction: "out",
     kind: "conference",
-    phone: host === "browser" ? "browser" : hostTo,
+    phone: host === "mobile" ? myNumber(connection) : host,
     conference,
     role: "host",
     brief: JSON.stringify(brief),
@@ -282,21 +300,59 @@ async function openConference(
     status: hostLeg.status,
     at: Date.now(),
   });
-  const openai = await openaiConnection(c, username);
+  const absence = await assistantAbsence(c, username);
   const pending = brief.guests.map((g) => g.name ?? g.phone);
   void logFor(
     c,
     username,
     "info",
-    `call ${conference}: ringing the ${host === "browser" ? "app" : "mobile"} first; ` +
-      `then ${pending.join(", ")}; assistant ${canJoinCalls(openai) ? "will join" : "not set up"}`,
+    `call ${conference}: ringing the ${host === "browser" ? "app" : host} first; ` +
+      `then ${pending.join(", ")}; assistant ${absence ?? "will join"}`,
   );
   return {
     conference,
     host,
     pending,
-    assistant: canJoinCalls(openai),
+    assistant: absence === null,
+    ...(absence ? { without_assistant: absence } : {}),
   };
+}
+
+/**
+ * The speaker is the host: its line must be up, then the user's number calls itself. The outbound
+ * side joins the conference as host; the inbound side (the voice webhook) streams it to the speaker.
+ */
+async function ringSpeaker(c: Place & { device?: string }, username: string, connection: Ready, conference: string) {
+  const device = c.device;
+  if (!isPublicOrigin(c.origin)) {
+    throw new TelephonyError(
+      "no_public_server",
+      "a speaker's phone line needs a server with a public address (set PUBLIC_URL)",
+    );
+  }
+  if (!device || !(await speakerOnline(c, device))) {
+    throw new TelephonyError("speaker_offline", "the speaker's phone line is not up (is it running and claimed?)");
+  }
+  const token = crypto.randomUUID();
+  await bridges.create(c.env.DB, { token, username, device_id: device, conference, at: Date.now() });
+  try {
+    return await createCall(connection.client, {
+      to: connection.from,
+      from: connection.from,
+      twiml: conferenceHostTwiml(conference, conferenceStatusCallbackUrl(c)),
+      statusCallback: statusCallbackUrl(c),
+    });
+  } catch (err) {
+    await bridges.remove(c.env.DB, token);
+    throw err;
+  }
+}
+
+/** Whether the speaker's line socket is connected right now, straight from its bridge. */
+export async function speakerOnline(scope: Scope, device: string): Promise<boolean> {
+  const bridge = scope.env.LINE_BRIDGE.get(scope.env.LINE_BRIDGE.idFromName(device));
+  const status = (await (await bridge.fetch("https://line/status")).json()) as { device?: boolean };
+  return status.device === true;
 }
 
 /**
@@ -363,7 +419,7 @@ export async function guestAnswered(place: Place, guestLeg: CallRow): Promise<vo
 /** Dials the assistant's SIP leg into the conference; the unique seat means it happens once per call. */
 async function seatAssistant(place: Place, username: string, conference: string, hostBrief: HostBrief): Promise<void> {
   const openai = await openaiConnection(place, username);
-  if (!canJoinCalls(openai)) {
+  if (!canJoinCalls(openai) || !isPublicOrigin(place.origin)) {
     return;
   }
   const seat = { id: crypto.randomUUID(), username, conference, at: Date.now() };
@@ -664,7 +720,11 @@ export function endedByFromLegs(legs: CallRow[]): EndedBy {
 
 async function legName(c: Scope, leg: CallRow): Promise<string> {
   if (leg.role === "host") {
-    return leg.phone === "browser" ? "the user, in the app" : "the user, on their mobile";
+    return leg.phone === "browser"
+      ? "the user, in the app"
+      : leg.phone === "speaker"
+        ? "the user, on the speaker"
+        : "the user, on their mobile";
   }
   if (leg.role === "assistant") {
     return "you, the assistant";

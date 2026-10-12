@@ -44,6 +44,8 @@ pub struct Session {
     last_output_ms: u64,
     pending_tools: usize,
     close_after_reply: bool,
+    /// A phone call is in progress: the quiet rules and the cap wait until it is over.
+    held: bool,
     user_text: String,
     assistant_text: String,
     user_farewell_at: Option<u64>,
@@ -65,6 +67,7 @@ impl Session {
             last_output_ms: 0,
             pending_tools: 0,
             close_after_reply: false,
+            held: false,
             user_text: String::new(),
             assistant_text: String::new(),
             user_farewell_at: None,
@@ -100,6 +103,16 @@ impl Session {
     /// The microphone heard the user (the daemon's level gate), which keeps the session alive.
     pub fn heard_user(&mut self, now_ms: u64) {
         self.last_input_ms = now_ms;
+    }
+
+    /// While the user is on a phone call the session stays open however long it takes; released, the clocks restart.
+    pub fn hold(&mut self, held: bool, now_ms: u64) {
+        self.held = held;
+        if !held {
+            self.last_input_ms = now_ms;
+            self.last_output_ms = 0;
+            self.started_at_ms = now_ms;
+        }
     }
 
     pub fn on_event(&mut self, event: &ServerEvent, now_ms: u64) -> Vec<Action> {
@@ -167,7 +180,7 @@ impl Session {
     /// Called on a timer: asks for a close when the room went quiet, the user said goodbye, the model
     /// was asked to stop, or the cap is reached. A pending tool call pauses the quiet rules, never the cap.
     pub fn on_tick(&mut self, now_ms: u64) -> Vec<Action> {
-        if self.state != SessionState::Open {
+        if self.state != SessionState::Open || self.held {
             return Vec::new();
         }
         let reply_over =
@@ -480,6 +493,19 @@ mod tests {
                 Action::Log("closing: goodbye".to_owned()),
                 Action::Close
             ]
+        );
+    }
+
+    #[test]
+    fn a_phone_call_holds_the_session_open_and_releases_it_with_fresh_clocks() {
+        let mut session = open_session();
+        session.hold(true, 2_000);
+        assert_eq!(session.on_tick(1_000 + 60 * 60_000), Vec::new());
+        session.hold(false, 100_000);
+        assert_eq!(session.on_tick(105_000), Vec::new());
+        assert_eq!(
+            session.on_tick(110_000),
+            vec![Action::Log("closing: idle".to_owned()), Action::Close]
         );
     }
 

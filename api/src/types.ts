@@ -32,7 +32,8 @@ export interface ConnectionRow {
 }
 
 /** Where the user takes phone calls: the Assistant page's own line, or their mobile. */
-export type VoiceClient = "browser" | "mobile";
+/** Where the user takes a call: the Assistant page, a speaker with its line up, or their mobile. */
+export type VoiceClient = "browser" | "speaker" | "mobile";
 
 export interface AppEnv {
   Bindings: Env;
@@ -57,6 +58,17 @@ export interface ToolContext extends Scope {
   onCall?: boolean;
   /** The calls row of the leg this context speaks for: a test agent hanging up leaves only its own line. */
   legId?: string;
+  /** The speaker this context runs for, when a tool call comes from one. */
+  device?: string;
+}
+
+export interface BridgeRow {
+  token: string;
+  username: string;
+  device_id: string;
+  conference: string;
+  created_at: number;
+  used_at: number | null;
 }
 
 export type ConversationSource = "app" | "device";

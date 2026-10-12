@@ -110,6 +110,23 @@ pub async fn run(paths: &Paths, config: &Config, voice: bool, quiet: bool, audio
                 .await,
             ));
             checks.push(check(
+                "phone line",
+                async {
+                    let url = crate::line::line_url(server.base_url());
+                    let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(url.as_str())?;
+                    request.headers_mut().insert(
+                        alexsay_core::heartbeat::DEVICE_ID_HEADER,
+                        id.as_ref().map_or(String::new(), ToString::to_string).parse()?,
+                    );
+                    let (socket, _) = tokio::time::timeout(Duration::from_secs(8), tokio_tungstenite::connect_async(request))
+                        .await
+                        .map_err(|_| anyhow::anyhow!("no answer in 8 s"))??;
+                    drop(socket);
+                    Ok("the server accepts this speaker's line".to_owned())
+                }
+                .await,
+            ));
+            checks.push(check(
                 "conversation record",
                 async {
                     let id = server.start_conversation().await?;

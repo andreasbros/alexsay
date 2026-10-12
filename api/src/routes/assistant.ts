@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { sessionFor } from "../assistant_api";
 import { lightwaveToken, lightwaveUrls } from "../connections";
 import { logFor } from "../log";
+import { serverOrigin } from "../origin";
 import { providerFailure } from "../provider_errors";
 import { lights, writeFeature, writeFeatures } from "../providers/lightwave";
 import { createLiveSession, ProviderError } from "../providers/openai";
@@ -13,7 +14,7 @@ import { jsonBody } from "../validate";
 export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) => {
   const { sdp, resume_from } = await jsonBody(c, schemas.assistantSession);
   const me = c.get("user");
-  const built = await sessionFor({ env: c.env, user: me, origin: new URL(c.req.url).origin });
+  const built = await sessionFor({ env: c.env, user: me, origin: serverOrigin(c) });
   if (!built) {
     return c.json({ error: "no_openai_connection" }, 412);
   }

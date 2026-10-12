@@ -39,6 +39,26 @@ export function ringTwiml(sipUris: string[], mobile: string | null, client: stri
   return response(`<Dial timeout="${RING_SECONDS}">${targets.join("")}</Dial>`);
 }
 
+/**
+ * The host leg of a call taken on a speaker: a call from the user's number to itself joins the
+ * conference as host, and the inbound side of that call carries the conference to the speaker.
+ */
+export const conferenceHostTwiml = (conference: string, conferenceStatusCallback: string) =>
+  response(
+    `<Dial><Conference beep="false" startConferenceOnEnter="true" endConferenceOnExit="true" ` +
+      `statusCallback="${escapeXml(conferenceStatusCallback)}" statusCallbackEvent="start end join leave">` +
+      `${escapeXml(conference)}</Conference></Dial>`,
+  );
+
+/** The inbound side of that self-call: a two-way media stream to the speaker's line. */
+export const streamTwiml = (url: string, conference: string, who: string) =>
+  response(
+    `<Connect><Stream url="${escapeXml(url)}">` +
+      `<Parameter name="conference" value="${escapeXml(conference)}"/>` +
+      `<Parameter name="who" value="${escapeXml(who)}"/>` +
+      `</Stream></Connect>`,
+  );
+
 /** A speaker dialled out through the SIP domain: place the real call with the user's Twilio number. */
 export const dialOutTwiml = (to: string, callerId: string) => bridgeTwiml(to, callerId);
 

@@ -5,15 +5,51 @@ use std::io::Write;
 use std::time::Duration;
 
 use alexsay_core::config::{Config, Paths};
+use alexsay_core::endpoint::{Endpointer, Status};
 use alexsay_core::pcm::{self, LIVE_RATE};
 use alexsay_core::wake::{self, NEGATIVE_LABEL, POSITIVE_LABEL};
 use anyhow::Context;
 
 use crate::audio::{Capture, Player};
 
-const TAKE_SECONDS: f32 = 1.6;
+const COUNTDOWN_STEP: Duration = Duration::from_millis(600);
+
+enum Answer {
+    Record,
+    Redo,
+    Quit,
+}
+
+fn ask(question: &str) -> anyhow::Result<Answer> {
+    print!("{question}");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line)? == 0 {
+        return Ok(Answer::Quit);
+    }
+    Ok(match line.trim().to_lowercase().as_str() {
+        "q" | "quit" => Answer::Quit,
+        "r" | "redo" => Answer::Redo,
+        _ => Answer::Record,
+    })
+}
+
+/// The room's level just before a take: the median 20 ms frame, so a click or a breath does not set the bar.
+fn noise_floor(capture: &Capture, length: Duration) -> f32 {
+    let started = std::time::Instant::now();
+    let mut levels = Vec::new();
+    while started.elapsed() < length {
+        if let Ok(chunk) = capture.chunks.recv_timeout(Duration::from_millis(100)) {
+            levels.extend(chunk.chunks(320).map(pcm::rms));
+        }
+    }
+    levels.sort_by(f32::total_cmp);
+    levels.get(levels.len() / 2).copied().unwrap_or(0.0)
+}
 
 /// Records takes into data/recordings as labelled WAV files; the negatives are what the word must not match.
+/// Enter starts a take, a 3-2-1 countdown and a tick follow, and the take ends when you stop speaking.
+#[allow(clippy::too_many_lines)]
 pub fn record(paths: &Paths, config: &Config, takes: usize, negatives: bool) -> anyhow::Result<()> {
     let dir = paths.recordings_dir();
     std::fs::create_dir_all(&dir)?;
@@ -37,7 +73,7 @@ pub fn record(paths: &Paths, config: &Config, takes: usize, negatives: bool) -> 
     } else {
         &["Alexsay"]
     };
-    let existing = std::fs::read_dir(&dir)?
+    let mut number = std::fs::read_dir(&dir)?
         .flatten()
         .filter(|e| {
             e.file_name()
@@ -45,51 +81,88 @@ pub fn record(paths: &Paths, config: &Config, takes: usize, negatives: bool) -> 
                 .starts_with(&format!("[{label}]"))
         })
         .count();
+    println!("Recording {takes} takes as {label}, about a metre from the microphone.");
     println!(
-        "Recording {takes} takes of {prompts:?} as {label}. Speak after the beep, about a metre from the microphone."
+        "Enter starts a take; after 3, 2, 1 and the tick, say the word. It stops when you stop talking."
     );
-    for i in 0..takes {
-        let prompt = prompts[i % prompts.len()];
-        print!("\nTake {} of {takes}: say \"{prompt}\" ... ", i + 1);
-        std::io::stdout().flush()?;
-        std::thread::sleep(Duration::from_millis(700));
+    println!("Type r then Enter to redo the last take, q then Enter to finish early.");
+    let mut done = 0usize;
+    let mut last: Option<std::path::PathBuf> = None;
+    while done < takes {
+        let prompt = prompts[done % prompts.len()];
+        match ask(&format!(
+            "\nTake {} of {takes}: \"{prompt}\". Enter to record ",
+            done + 1
+        ))? {
+            Answer::Quit => break,
+            Answer::Redo => {
+                if let Some(path) = last.take() {
+                    let _ = std::fs::remove_file(&path);
+                    done -= 1;
+                    number -= 1;
+                    println!("removed {}; recording it again", path.display());
+                }
+                continue;
+            }
+            Answer::Record => {}
+        }
+        while capture.chunks.try_recv().is_ok() {}
+        for count in ["3", "2", "1"] {
+            print!("{count}... ");
+            std::io::stdout().flush()?;
+            std::thread::sleep(COUNTDOWN_STEP);
+        }
+        let noise = noise_floor(&capture, Duration::from_millis(400));
         if let Some(player) = &player {
             player.play(&alexsay_core::sounds::render(
                 alexsay_core::sounds::READY,
                 LIVE_RATE,
             ));
+            // The tick itself must not start the take
+            player.wait_until_quiet(Duration::from_secs(1));
         }
         while capture.chunks.try_recv().is_ok() {}
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            clippy::cast_precision_loss
-        )]
-        let wanted = (TAKE_SECONDS * LIVE_RATE as f32) as usize;
-        let mut samples = Vec::with_capacity(wanted);
-        while samples.len() < wanted {
+        println!("speak now");
+        let mut endpointer = Endpointer::new(noise, LIVE_RATE);
+        let status = loop {
             let chunk = capture
                 .chunks
                 .recv_timeout(Duration::from_secs(5))
                 .context("the microphone went quiet")?;
-            samples.extend(chunk);
-        }
-        samples.truncate(wanted);
+            match endpointer.feed(&chunk) {
+                Status::Waiting | Status::Speaking => {}
+                finished => break finished,
+            }
+        };
+        let Some(samples) = endpointer.take().filter(|_| status == Status::Done) else {
+            println!(
+                "  did not hear anything (room level {:.1}%): try again, a little louder or closer",
+                noise * 100.0
+            );
+            continue;
+        };
         let level = pcm::rms(&samples);
-        let tag = format!(
-            "{}-{}",
-            prompt.replace(' ', "_").to_lowercase(),
-            existing + i + 1
-        );
+        number += 1;
+        let tag = format!("{}-{number}", prompt.replace(' ', "_").to_lowercase());
         let path = dir.join(wake::sample_file_name(label, &tag));
         write_wav(&path, &samples)?;
-        println!("level {:.0}% -> {}", level * 100.0, path.display());
-        if level < 0.01 {
-            println!("  (very quiet: check the microphone or speak up)");
+        #[allow(clippy::cast_precision_loss)]
+        let seconds = samples.len() as f32 / LIVE_RATE as f32;
+        println!(
+            "  kept {seconds:.1} s, level {:.0}% -> {}",
+            level * 100.0,
+            path.display()
+        );
+        if level > 0.5 {
+            println!(
+                "  (very loud: lower the capture level or step back, clipping blurs the word)"
+            );
         }
+        last = Some(path);
+        done += 1;
     }
     println!(
-        "\nDone. Train with `alexsay wake train` once you have about 20 takes of Alexsay and 20 of other words."
+        "\n{done} takes recorded. Train with `alexsay wake train` once you have about 20 of each kind."
     );
     Ok(())
 }

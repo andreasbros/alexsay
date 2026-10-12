@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ACTS, type Act, PROMPT } from "../content/terminal";
 
-const TYPE_MS = 42;
+const TYPE_MS = 21;
 const PAUSE_BETWEEN_ACTS = 1600;
 const PAUSE_BEFORE_REPLAY = 7000;
 
@@ -23,7 +23,7 @@ async function play(term: Writer, act: Act, signal: AbortSignal, typing: boolean
   for (const ch of act.command) {
     term.write(ch);
     if (typing) {
-      await sleep(TYPE_MS + Math.random() * 40, signal);
+      await sleep(TYPE_MS + Math.random() * 20, signal);
     }
   }
   term.write("\r\n");

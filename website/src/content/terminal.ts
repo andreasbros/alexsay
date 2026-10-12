@@ -39,7 +39,7 @@ interface Logged {
 
 /** A line as tracing-subscriber prints it: time, level, message, fields. */
 function log(time: string, level: "INFO" | "DEBUG", message: string, ...fields: string[]): Logged {
-  const tag = level === "INFO" ? green(" INFO") : blue("DEBUG");
+  const tag = level === "INFO" ? `${green("INFO")} ` : blue("DEBUG");
   return { stamp: dim(`2026-10-12T${time}Z`), text: [tag, message, ...fields].join(" ") };
 }
 

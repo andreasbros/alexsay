@@ -46,6 +46,10 @@ describe("home page", () => {
     const run = ACTS.at(-1)?.lines ?? [];
     expect(run.every((line) => line.stamp?.includes("2026-10-12T"))).toBe(true);
     expect(run.some((line) => line.text.includes("2026-10-12T"))).toBe(false);
+    // Without the timestamp a line starts at its level tag, not a space
+    const ansi = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+    const plain = (text: string) => text.replace(ansi, "");
+    expect(run.every((line) => /^(INFO |DEBUG) \S/.test(plain(line.text)))).toBe(true);
     for (const act of ACTS) {
       for (const line of act.lines) {
         expect(line.text).not.toMatch(/\u2014/);

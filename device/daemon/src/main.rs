@@ -139,6 +139,9 @@ enum WakeAction {
         dir: Vec<PathBuf>,
         #[arg(long, default_value = "builtin")]
         from: String,
+        /// Network size for a fresh model: tiny, small, medium or large (ignored when continuing one)
+        #[arg(long, default_value = "small")]
+        size: String,
     },
     /// Listen and print every detection and the microphone level; with --file, run over a WAV instead
     Test {
@@ -412,7 +415,12 @@ async fn dispatch(
                 WakeAction::Record { takes, negatives } => {
                     wake_cli::record(&paths, &config, takes, negatives)
                 }
-                WakeAction::Train { epochs, dir, from } => {
+                WakeAction::Train {
+                    epochs,
+                    dir,
+                    from,
+                    size,
+                } => {
                     let previous: Option<Vec<u8>> = match from.as_str() {
                         "builtin" => Some(runtime::BUILTIN_MODEL.to_vec()),
                         "none" => None,
@@ -421,7 +429,7 @@ async fn dispatch(
                                 .or_else(|_| std::fs::read(path))?,
                         ),
                     };
-                    wake_cli::train(&paths, &dir, epochs, previous.as_deref())?;
+                    wake_cli::train(&paths, &dir, epochs, previous.as_deref(), &size)?;
                     let mut config = config;
                     "data/models/alexsay.rpw".clone_into(&mut config.wake.model);
                     paths::save_config(&paths, &config)?;

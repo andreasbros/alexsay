@@ -28,7 +28,6 @@ pub fn record(paths: &Paths, config: &Config, takes: usize, negatives: bool) -> 
         &[
             "Alexa",
             "Alex says",
-            "Alexei",
             "a lexicon",
             "Alexander",
             "excellent day",
@@ -118,6 +117,7 @@ pub fn train(
     extra: &[std::path::PathBuf],
     epochs: usize,
     from: Option<&[u8]>,
+    size: &str,
 ) -> anyhow::Result<std::path::PathBuf> {
     let mut takes: Vec<(String, Vec<u8>)> = Vec::new();
     for dir in std::iter::once(paths.recordings_dir()).chain(extra.iter().cloned()) {
@@ -154,7 +154,7 @@ pub fn train(
     );
     let (train_set, test_set): (HashMap<String, Vec<u8>>, HashMap<String, Vec<u8>>) =
         wake::split_samples(takes);
-    let model = wake::train(train_set, test_set, epochs, from).map_err(anyhow::Error::msg)?;
+    let model = wake::train(train_set, test_set, epochs, from, size).map_err(anyhow::Error::msg)?;
     let path = paths.models_dir().join("alexsay.rpw");
     std::fs::create_dir_all(paths.models_dir())?;
     std::fs::write(&path, model).with_context(|| format!("writing {}", path.display()))?;
@@ -234,6 +234,14 @@ pub fn test_file(config: &Config, model: &[u8], path: &std::path::Path) -> anyho
         at16.extend(pcm::to_i16(&chunk, 1.0));
     }
     at16.extend(pcm::to_i16(&converter.flush(), 1.0));
+    // A second of quiet either side, as speech arrives from a live microphone: the detector needs a lead-in
+    let quiet = vec![0i16; LIVE_RATE as usize];
+    let at16: Vec<i16> = quiet
+        .iter()
+        .chain(at16.iter())
+        .chain(quiet.iter())
+        .copied()
+        .collect();
     let mut fired = 0;
     for chunk in at16.chunks(480) {
         if let Some(detection) = wake.feed(chunk) {

@@ -128,7 +128,8 @@ Ending a session. GPT-Live has no idle timeout of its own and bills open voice t
 - Fires on score ≥ threshold for 2 consecutive frames; 2 s refractory period.
 - **Training:**
   - Positives: openWakeWord's synthetic set (Piper TTS voices) plus ~200 real takes from this device (ASR beam and raw channels, 6 ch image), several speakers and distances.
-  - Negatives: "Alexa", **"Alexa, say..."** (near-identical sound), "Alex", "Alex says", "Alexei", "Alexander", "Alexis", "a lexicon", plus TV and podcast audio and 24 h of household audio from the device.
+  - Positives include the spoken pronunciations "Alexei" and "Aleksey" (that is how the brand is said).
+- Negatives: "Alexa", **"Alexa, say..."** (near-identical sound), "Alex", "Alex says", "Alexander", "Alexis", "a lexicon", plus TV and podcast audio and 24 h of household audio from the device.
 - Targets: < 1 false accept per 24 h of household audio, > 90 % detection at 3 m (see [measurements.md](measurements.md)).
 - Phase 1 shortcut if the ONNX port takes time: the `wyoming-openwakeword` container plus a Wyoming client in the daemon.
 - Alternative: microWakeWord (TFLite, smaller), if openWakeWord's false-accept rate on "Alexa" can't be trained down.

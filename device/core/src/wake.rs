@@ -156,14 +156,16 @@ pub fn train(
     tests: HashMap<String, Vec<u8>>,
     epochs: usize,
     from: Option<&[u8]>,
+    size: &str,
 ) -> Result<Vec<u8>, String> {
-    let options = WakewordModelTrainOptions::new(
-        ModelType::Small,
-        0.017,
-        epochs.max(1),
-        (epochs / 10).max(1),
-        16,
-    );
+    let model_type = match size {
+        "tiny" => ModelType::Tiny,
+        "medium" => ModelType::Medium,
+        "large" => ModelType::Large,
+        _ => ModelType::Small,
+    };
+    let options =
+        WakewordModelTrainOptions::new(model_type, 0.017, epochs.max(1), (epochs / 10).max(1), 16);
     let previous = match from {
         Some(bytes) if !bytes.is_empty() => Some(WakewordModel::load_from_buffer(bytes)?),
         _ => None,
@@ -266,7 +268,7 @@ mod tests {
             ));
         }
         let (train_set, test_set) = split_samples(takes);
-        let model = train(train_set, test_set, 2, None).unwrap();
+        let model = train(train_set, test_set, 2, None, "small").unwrap();
         assert_ne!(model.len(), 0);
         let mut wake = WakeWord::new(&model, 0.5, 1.0).unwrap();
         assert!(wake.frame_len() > 0);

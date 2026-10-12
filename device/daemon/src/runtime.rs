@@ -2,6 +2,7 @@
 //! tools, then back to listening. Heartbeats and update checks run alongside.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -44,6 +45,8 @@ pub struct Runtime {
     notes_tx: mpsc::UnboundedSender<String>,
     /// What the player plays, for the microphone's echo canceller; taken once when the microphone opens.
     echo_reference: Mutex<Option<std::sync::mpsc::Receiver<Vec<f32>>>>,
+    /// A conversation is open: the microphone goes to GPT-Live (echo-cancelled), not to the wake word.
+    in_session: Arc<AtomicBool>,
 }
 
 impl Runtime {
@@ -71,6 +74,7 @@ impl Runtime {
             notes: tokio::sync::Mutex::new(notes_rx),
             notes_tx,
             echo_reference: Mutex::new(reference_rx),
+            in_session: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -393,8 +397,16 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
     if reference.is_some() {
         info!("echo cancellation: software (AEC3)");
     }
-    let capture =
-        Capture::open_with(&runtime.config.audio, reference).context("opening the microphone")?;
+    // Echo cancellation is for the conversation and the call; the wake word hears the raw microphone
+    let cancelled = {
+        let in_session = Arc::clone(&runtime.in_session);
+        let call = runtime.call.clone();
+        Arc::new(move || {
+            alexsay_core::duplex::echo_cancelled(in_session.load(Ordering::Relaxed), call.on_call())
+        })
+    };
+    let capture = Capture::open_with(&runtime.config.audio, reference, cancelled)
+        .context("opening the microphone")?;
     info!(input = %capture.device, rate = capture.source_rate, channels = capture.channels, output = %runtime.player.device, "audio open");
     let mut mic = capture.pump_with(runtime.call.injection.clone());
     let mut wake = match runtime.load_wake_word() {
@@ -455,7 +467,10 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
         );
         runtime.play_clip(sounds::READY);
         let head: Vec<i16> = preroll.drain(..).collect();
-        match converse(&runtime, &mut mic, head).await {
+        runtime.in_session.store(true, Ordering::Relaxed);
+        let outcome = converse(&runtime, &mut mic, head).await;
+        runtime.in_session.store(false, Ordering::Relaxed);
+        match outcome {
             Ok(Outcome::Done) => runtime.play_clip(sounds::END),
             Ok(Outcome::NotConnected) => {
                 if last_refusal.elapsed() > Duration::from_secs(60) {

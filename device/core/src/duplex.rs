@@ -127,6 +127,12 @@ impl Duplex {
     }
 }
 
+/// Who gets the echo-cancelled microphone: GPT-Live in a conversation and the far side of a call.
+/// The wake word gets the raw microphone, as its model was trained on it; the speaker is quiet then.
+pub fn echo_cancelled(in_session: bool, on_call: bool) -> bool {
+    in_session || on_call
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +198,13 @@ mod tests {
         assert_eq!(Echo::from_config("software", true), Echo::Software);
         assert_eq!(Echo::from_config("hardware", false), Echo::Hardware);
         assert_eq!(Echo::from_config("none", true), Echo::None);
+    }
+
+    #[test]
+    fn only_conversations_and_calls_hear_the_echo_cancelled_microphone() {
+        assert!(!echo_cancelled(false, false));
+        assert!(echo_cancelled(true, false));
+        assert!(echo_cancelled(false, true));
+        assert!(echo_cancelled(true, true));
     }
 }

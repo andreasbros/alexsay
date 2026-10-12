@@ -202,14 +202,18 @@ impl Injection {
 impl Capture {
     /// Opens the microphone without echo cancellation (setup, recording, tests).
     pub fn open(settings: &Audio) -> anyhow::Result<Self> {
-        Self::open_with(settings, None)
+        Self::open_with(settings, None, Arc::new(|| true))
     }
 
     /// With `reference`, the speaker's own sound is cancelled from the microphone (see `echo.rs`).
+    /// The canceller runs on every block to stay converged, but its output is delivered only while
+    /// `wants_clean()` says so (a conversation or a call); otherwise the raw microphone goes out, as the
+    /// wake word was trained on it.
     #[allow(clippy::too_many_lines)]
     pub fn open_with(
         settings: &Audio,
         reference: Option<std::sync::mpsc::Receiver<Vec<f32>>>,
+        wants_clean: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> anyhow::Result<Self> {
         let host = cpal::default_host();
         let devices: Vec<cpal::Device> = host
@@ -255,7 +259,8 @@ impl Capture {
                                         tracing::debug!("echo cancellation removes {erle:.1} dB");
                                     }
                                 }
-                                canceller.process(&chunk)
+                                let clean = canceller.process(&chunk);
+                                if wants_clean() { clean } else { chunk }
                             }
                             None => chunk,
                         };

@@ -152,6 +152,9 @@ enum WakeAction {
         /// livekit, rustpotter or both
         #[arg(long, default_value = "both")]
         engine: String,
+        /// A classifier (.onnx) to judge instead of the configured one, such as one just trained
+        #[arg(long)]
+        livekit_model: Option<PathBuf>,
     },
     /// Listen and print every detection and the microphone level; with --file, run over a WAV instead
     Test {
@@ -455,7 +458,11 @@ async fn dispatch(
                     );
                     Ok(())
                 }
-                WakeAction::Eval { dir, engine } => {
+                WakeAction::Eval {
+                    dir,
+                    engine,
+                    livekit_model,
+                } => {
                     use alexsay_core::wake_engine::EngineKind;
                     let engines = match engine.as_str() {
                         "both" => vec![EngineKind::Livekit, EngineKind::Rustpotter],
@@ -464,6 +471,10 @@ async fn dispatch(
                         })?],
                     };
                     let dir = dir.unwrap_or_else(|| paths.recordings_dir());
+                    let mut config = config;
+                    if let Some(model) = livekit_model {
+                        config.wake.livekit_model = model.display().to_string();
+                    }
                     wake_cli::eval(&paths, &config, &dir, &engines)
                 }
                 WakeAction::Test { file, scores } => {

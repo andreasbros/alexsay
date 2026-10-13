@@ -172,6 +172,20 @@ wait-live:
     done
     echo "not settled: serving $got, wanted $want"; exit 1
 
+# Wake word training for the LiveKit engine: the toolkit, Piper's voice and the data (about 18 GB in
+# ~/.cache/alexsay/wake); `just wake-setup small` skips the 16 GB of speech features for a quick run
+wake-setup size="":
+    scripts/wake-train.sh setup {{size}}
+
+# Train the "Alexsay" classifier (device/wake/alexsay.yaml) and install it as device/models/alexsay.onnx;
+# `just wake-train small` checks the pipeline end to end in minutes, with a model not worth shipping
+wake-train size="":
+    scripts/wake-train.sh train {{size}}
+
+# Both wake word engines over the owner's takes: caught, false fires, CPU
+wake-eval:
+    cd device && cargo run --quiet --release -p alexsay-daemon -- wake eval --dir testdata/takes
+
 # Build and deploy the website Worker (www.alexsay.com)
 deploy-website: test-js
     pnpm --filter website exec wrangler deploy

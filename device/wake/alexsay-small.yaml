@@ -1,0 +1,69 @@
+# A quick end-to-end check of the pipeline (`just wake-train small`): the same phrases at a tiny scale.
+# Its model is not good; it shows the steps run.
+model_name: alexsay
+target_phrases:
+- alexsay
+- aleksay
+n_samples: 200
+n_samples_val: 40
+n_background_samples: 50
+n_background_samples_val: 10
+tts_batch_size: 10
+custom_negative_phrases:
+- alexa
+- alexa say
+- alexa stop
+- alexa play
+- hey alexa
+- alex
+- alex says
+- alex said
+- hey alex
+- alexis
+- alexander
+- lexi
+- a lexicon
+- excellent
+- excellent day
+- electric
+- let's say
+- hello there
+- what time is it
+noise_scales:
+- 0.98
+noise_scale_ws:
+- 0.98
+length_scales:
+- 0.75
+- 1.0
+- 1.25
+slerp_weights:
+- 0.2
+- 0.35
+- 0.5
+- 0.65
+- 0.8
+data_dir: ./data
+output_dir: ./output
+augmentation:
+  clip_duration: 2.0
+  batch_size: 8
+  rounds: 1
+  background_paths:
+  - ./data/backgrounds
+  rir_paths:
+  - ./data/rirs
+model:
+  model_type: conv_attention
+  model_size: small
+steps: 500
+learning_rate: 0.001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 1000
+target_fp_per_hour: 1.0
+batch_n_per_class:
+  positive: 10
+  adversarial_negative: 10
+  ACAV100M_sample: 64
+  background_noise: 10

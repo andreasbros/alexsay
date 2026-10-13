@@ -99,6 +99,11 @@
             file
             gh
             git-cliff
+            # Wake word training (`just wake-train`): LiveKit's Python toolkit runs under uv; its TTS
+            # front end shells out to espeak-ng, and ffmpeg converts audio
+            uv
+            espeak-ng
+            ffmpeg
           ];
 
           CARGO_TARGET_DIR = "target/nix";

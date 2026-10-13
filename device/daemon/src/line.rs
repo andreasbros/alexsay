@@ -16,6 +16,9 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 const PING_EVERY: Duration = Duration::from_secs(25);
+/// During a call the server hangs up after 12 s without a word from the speaker (a dead line), so
+/// a muted call, which sends no audio, still says something well inside that.
+const CALL_PING_EVERY: Duration = Duration::from_secs(5);
 const RETRY_MIN: Duration = Duration::from_secs(2);
 const RETRY_MAX: Duration = Duration::from_secs(30);
 
@@ -66,6 +69,14 @@ pub fn line_url(server_base: &str) -> String {
 
 /// Starts the line task; it reconnects forever until the daemon stops.
 pub fn start(server_base: &str, id: DeviceId) -> (LineSender, mpsc::UnboundedReceiver<LineSignal>) {
+    start_pinging(server_base, id, CALL_PING_EVERY)
+}
+
+fn start_pinging(
+    server_base: &str,
+    id: DeviceId,
+    call_ping_every: Duration,
+) -> (LineSender, mpsc::UnboundedReceiver<LineSignal>) {
     let (tx, rx) = mpsc::unbounded_channel::<LineCommand>();
     let (signal_tx, signal_rx) = mpsc::unbounded_channel::<LineSignal>();
     let connected = Arc::new(AtomicBool::new(false));
@@ -77,7 +88,17 @@ pub fn start(server_base: &str, id: DeviceId) -> (LineSender, mpsc::UnboundedRec
         let mut commands = rx;
         let mut wait = RETRY_MIN;
         loop {
-            match connect_once(&url, id, &mut commands, &signal_tx, &flag, &loudest).await {
+            match connect_once(
+                &url,
+                id,
+                &mut commands,
+                &signal_tx,
+                &flag,
+                &loudest,
+                call_ping_every,
+            )
+            .await
+            {
                 Ok(()) => wait = RETRY_MIN,
                 Err(err) => {
                     tracing::debug!("line: {err:#}; retrying in {}s", wait.as_secs());
@@ -105,6 +126,7 @@ async fn connect_once(
     signals: &mpsc::UnboundedSender<LineSignal>,
     connected: &AtomicBool,
     loudest_out: &AtomicU32,
+    call_ping_every: Duration,
 ) -> anyhow::Result<()> {
     let mut request = url.into_client_request()?;
     request
@@ -116,6 +138,9 @@ async fn connect_once(
     let (mut sink, mut stream) = socket.split();
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
+    let mut call_ping = tokio::time::interval(call_ping_every);
+    call_ping.tick().await;
+    let mut on_call = false;
     // Frames each way per second, logged at debug while a call carries audio
     let mut report = tokio::time::interval(Duration::from_secs(1));
     let (mut frames_in, mut frames_out) = (0u32, 0u32);
@@ -147,6 +172,14 @@ async fn connect_once(
                             tracing::debug!(message = %text, "line: from the server");
                         }
                         if let Some(signal) = decode(&text) {
+                            match signal {
+                                LineSignal::CallStart { .. } => {
+                                    on_call = true;
+                                    call_ping.reset();
+                                }
+                                LineSignal::CallEnd => on_call = false,
+                                LineSignal::Audio(_) => {}
+                            }
                             let _ = signals.send(signal);
                         }
                     }
@@ -156,6 +189,9 @@ async fn connect_once(
                 }
             }
             _ = ping.tick() => {
+                sink.send(Message::Text(serde_json::to_string(&LineCommand::Ping)?.into())).await?;
+            }
+            _ = call_ping.tick(), if on_call => {
                 sink.send(Message::Text(serde_json::to_string(&LineCommand::Ping)?.into())).await?;
             }
         }
@@ -263,5 +299,43 @@ mod tests {
             pcm::decode_bytes(command["payload"].as_str().unwrap()).len(),
             160
         );
+    }
+
+    #[tokio::test]
+    async fn pings_every_few_seconds_while_a_call_is_on() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let (mut sink, mut stream) = ws.split();
+            sink.send(Message::Text(
+                r#"{"type":"call.start","conference":"ay-9","who":"speaker"}"#.into(),
+            ))
+            .await
+            .unwrap();
+            let started = std::time::Instant::now();
+            let mut pings = Vec::new();
+            while pings.len() < 3 {
+                if let Message::Text(text) = stream.next().await.unwrap().unwrap()
+                    && text.contains("ping")
+                {
+                    pings.push(started.elapsed());
+                }
+            }
+            pings
+        });
+        let every = Duration::from_millis(50);
+        let (_sender, mut signals) = start_pinging(
+            &format!("http://127.0.0.1:{port}"),
+            DeviceId::generate(),
+            every,
+        );
+        assert!(matches!(
+            signals.recv().await,
+            Some(LineSignal::CallStart { .. })
+        ));
+        let pings = server.await.unwrap();
+        assert!(pings[2] < Duration::from_secs(2), "{pings:?}");
     }
 }

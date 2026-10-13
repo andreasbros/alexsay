@@ -2,9 +2,9 @@ import { DurableObject } from "cloudflare:workers";
 import { logFor } from "./log";
 import { endCall, TelephonyError } from "./telephony";
 
-/** The speaker pings every 25 s and sends audio 50 times a second while unmuted; silence past this is a dead line. */
-export const DEVICE_SILENCE_MS = 40_000;
-const CHECK_EVERY_MS = 5_000;
+/** During a call the speaker sends audio 50 times a second and pings every 5 s (muted too); nothing for this long is a dead line. */
+export const DEVICE_SILENCE_MS = 12_000;
+const CHECK_EVERY_MS = 2_000;
 
 /** What the line keeps on Twilio's stream socket. */
 interface StreamAttachment {

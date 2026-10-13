@@ -35,7 +35,7 @@ pub struct Audio {
     /// Part of the input device's name, or "auto" for the system default (the Flex when built for it).
     pub input: String,
     pub output: String,
-    /// Which capture channel carries speech, 0-based: the Flex's ASR beam is channel 1 of its 6.
+    /// Which capture channel carries speech, 0-based: the Flex's finished voice is channel 0 of its 6.
     pub channel: Option<usize>,
     /// Loudness of the assistant and the sounds, 0 to 1.
     pub volume: f32,
@@ -284,8 +284,9 @@ poll_s = 30
 # Part of the device name as `alexsay devices` prints it, or "auto"
 input = "auto"
 output = "auto"
-# The capture channel carrying speech (the ReSpeaker Flex's ASR beam is channel 1); unset picks the first
-# channel = 1
+# The capture channel carrying speech, 0-based; unset uses the ReSpeaker Flex's voice (channel 0) on a Flex
+# build and the average of all channels elsewhere
+# channel = 0
 volume = 0.8
 gain = 1.0
 # auto, hardware (the microphone cancels the speaker), software (the speaker cancels it with WebRTC's

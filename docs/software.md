@@ -173,7 +173,7 @@ Ending a session. GPT-Live has no idle timeout of its own and bills open voice t
 
 ```toml
 [server]      url = "https://app.alexsay.com", poll_s = 30
-[audio]       input = "auto", output = "auto", channel = 1 (Flex ASR beam; unset = average), volume = 0.8, gain = 1.0, echo = "auto" (hardware on the Flex, software AEC3 elsewhere, or none)
+[audio]       input = "auto", output = "auto", channel (0-based; unset = the Flex's voice, channel 0, on a Flex build, else the average), volume = 0.8, gain = 1.0, echo = "auto" (hardware on the Flex, software AEC3 elsewhere, or none)
 [wake]        enabled = true, model = "builtin" | "data/models/alexsay.rpw", sensitivity = 0.5, refractory_s = 2.0
 [session]     idle_timeout_s = 20, after_reply_s = 8, max_minutes = 10, end_on_farewell = true, preroll_s = 1.5
 [sounds]      enabled = true, startup = true

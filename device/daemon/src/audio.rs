@@ -104,15 +104,19 @@ fn matches(device: &cpal::Device, wanted: &str) -> bool {
         .contains(&wanted.to_lowercase())
 }
 
-/// Names the Seeed ReSpeaker Flex carries on USB; preferred automatically when built for it.
+/// Names the Seeed `ReSpeaker` Flex carries on USB; preferred automatically when built for it.
 #[cfg(feature = "flex")]
 const PREFERRED_INPUT: &[&str] = &["XVF3800", "ReSpeaker", "respeaker", "Flex"];
 #[cfg(not(feature = "flex"))]
 const PREFERRED_INPUT: &[&str] = &[];
-#[cfg(feature = "flex")]
-const DEFAULT_CHANNEL: Option<usize> = Some(1);
-#[cfg(not(feature = "flex"))]
-const DEFAULT_CHANNEL: Option<usize> = None;
+/// The Flex's channel 0 is its finished voice (beams, echo cancelling, noise suppression, gain). Channel 1 is
+/// an inner AEC residual or ASR beam that still carries the speaker's own voice (firmware v1.0.4, 14 Oct 2026).
+const FLEX_VOICE_CHANNEL: usize = 0;
+
+/// The capture channel to use: the configured one, else the Flex's voice on a Flex build, else all averaged
+fn capture_channel(configured: Option<usize>, flex: bool) -> Option<usize> {
+    configured.or(flex.then_some(FLEX_VOICE_CHANNEL))
+}
 
 fn pick(
     devices: Vec<cpal::Device>,
@@ -323,7 +327,7 @@ impl Capture {
         let config = supported.config();
         let channels = usize::from(config.channels);
         let source_rate = config.sample_rate;
-        let channel = settings.channel.or(DEFAULT_CHANNEL);
+        let channel = capture_channel(settings.channel, cfg!(feature = "flex"));
         let gain = settings.gain;
         let (tx, rx) = mpsc::sync_channel::<Vec<i16>>(CHUNKS_WAITING);
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -898,6 +902,14 @@ impl Upsampler {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_flex_is_heard_on_its_finished_voice_channel_unless_the_config_names_one() {
+        assert_eq!(capture_channel(None, true), Some(0));
+        assert_eq!(capture_channel(None, false), None);
+        assert_eq!(capture_channel(Some(3), true), Some(3));
+        assert_eq!(capture_channel(Some(2), false), Some(2));
+    }
 
     #[tokio::test]
     async fn the_pump_keeps_the_stream_alive_for_as_long_as_it_runs() {

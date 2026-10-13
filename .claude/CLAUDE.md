@@ -29,6 +29,7 @@ Owner:
 | BOM, enclosure, acoustics, power, thermal, edge cases | `docs/device-design.md` |
 | Daemon design: state machine, audio formats, realtime events, wake word, tools, deployment | `docs/software.md` |
 | Step-by-step bring-up | `docs/build-manual.md` |
+| Training the wake word with your own takes | `docs/train-with-your-voice.md` |
 | What was bought / still to buy | `docs/procurement.md` |
 | Test plan and results | `docs/measurements.md` |
 | Why decisions were made | `docs/decisions.md` |

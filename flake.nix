@@ -50,6 +50,8 @@
               HOST_CC = "${pkgs.stdenv.cc.nativePrefix}cc";
               CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
               PKG_CONFIG_ALL_STATIC = "1";
+              # alsa-lib keeps this store path for its config; off this machine the daemon uses the system's
+              ALEXSAY_ALSA_CONFIG_DIR = "${crossPkgs.pkgsStatic.alsa-lib}/share/alsa";
               PKG_CONFIG_PATH = "${alsa}/lib/pkgconfig";
               "PKG_CONFIG_PATH_${envTarget}" = "${alsa}/lib/pkgconfig";
             };

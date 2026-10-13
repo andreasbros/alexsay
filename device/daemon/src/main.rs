@@ -1,5 +1,6 @@
 //! `alexsay`: the speaker. One static binary: wake word, GPT-Live, the server's tools, updates.
 
+mod alsa_config;
 mod audio;
 mod control;
 mod echo;
@@ -189,6 +190,7 @@ enum ReleaseAction {
 }
 
 fn main() -> anyhow::Result<()> {
+    alsa_config::use_system_config_if_needed();
     let cli = Cli::parse();
     let paths = paths::resolve(cli.home.as_deref())?;
     let config = paths::load_config(&paths)?;

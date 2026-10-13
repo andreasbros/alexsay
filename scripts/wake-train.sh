@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The "Alexsay" classifier for the LiveKit wake word engine, made with LiveKit's own toolkit
 # (github.com/livekit/livekit-wakeword 0.2.3, commit fb92cb3): synthetic takes from Piper TTS (positives,
-# device/wake/alexsay.yaml's near-misses, phonetic neighbours), background noise and room echo, LiveKit's
-# frozen embeddings, a conv-attention head, ONNX export.
+# phonetic neighbours, and device/wake/alexsay.yaml's near-misses as an extra 30%), background noise and
+# room echo, LiveKit's frozen embeddings, a conv-attention head, ONNX export.
 #
 #   scripts/wake-train.sh setup [small]   the toolkit, Piper's voice, noise, room impulses and, unless small,
 #                                         16 GB of ACAV100M speech features (about 18 GB in all)
@@ -125,7 +125,15 @@ case "$step" in
     ;;
   train)
     started=$(date +%s)
-    "$venv/bin/livekit-wakeword" run "$config"
+    lkw="$venv/bin/livekit-wakeword"
+    # The toolkit's stages one by one (its `run` does the same), with our hard negatives after generation:
+    # its own ordering never reaches the config's custom negative phrases (device/wake/hard_negatives.py)
+    "$lkw" generate "$config"
+    "$venv/bin/python" "$root/device/wake/hard_negatives.py" "$config"
+    "$lkw" augment "$config"
+    "$lkw" train "$config"
+    "$lkw" export "$config"
+    "$lkw" eval "$config"
     model=$(find "$work/output" -name alexsay.onnx -newermt "@$started" | head -1)
     [ -n "$model" ] || { echo "the pipeline finished without output/**/alexsay.onnx"; exit 1; }
     echo "trained: $model ($(du -h "$model" | cut -f1)) in $(( ($(date +%s) - started) / 60 )) minutes"

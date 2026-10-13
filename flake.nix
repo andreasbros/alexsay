@@ -99,16 +99,25 @@
             file
             gh
             git-cliff
-            # Wake word training (`just wake-train`): LiveKit's Python toolkit runs under uv; its TTS
-            # front end shells out to espeak-ng, and ffmpeg converts audio
+            # Wake word training (`just wake-train`): LiveKit's Python toolkit in a uv venv on this
+            # Python; its TTS front end shells out to espeak-ng; curl, jq and sha256sum fetch and check
+            # the pinned datasets
             uv
+            python312
             espeak-ng
             ffmpeg
+            curl
+            coreutils
           ];
 
           CARGO_TARGET_DIR = "target/nix";
           PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsers;
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
+
+          # The venv's binary wheels (torch, numpy) need a C++ runtime and zlib under a Nix Python;
+          # scripts/wake-train.sh puts these on LD_LIBRARY_PATH for the toolkit only
+          ALEXSAY_WHEEL_LIBS = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.zlib ];
+          UV_PYTHON_DOWNLOADS = "never";
 
           shellHook = ''
             export WRANGLER_SEND_METRICS=false

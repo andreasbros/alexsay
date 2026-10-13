@@ -31,14 +31,14 @@ Steps run on Andreas's Ubuntu laptop (flashing) and on the Pi over SSH. Record r
 2. Mount the mic board on M3 nylon standoffs with the **mic ports (the back side) facing up/out**, nothing touching them.
 3. On the Pi: `sudo apt install -y dfu-util alsa-utils` (the laptop's `dfu-util` comes from the Nix shell).
 4. **Safe Mode:** with the Flex unplugged, hold **Boot**, plug the 15 cm cable into the **XMOS USB-C port next to the RST button** (not the XIAO's port), release.
-5. `sudo dfu-util -l` must list `2886:001a` with alt 0 "Factory" and alt 1 "Upgrade". No output means the wrong port or Safe Mode didn't engage.
+5. `sudo dfu-util -l` must list `2886:801c` ("reSpeaker XVF3800 Safe Mode") with alt 0 "Factory", alt 1 "Upgrade", alt 2 "DataPartition". No output means the wrong port or Safe Mode didn't engage.
 6. Flash the 6-channel circular image (never a linear `l` image) from the laptop, on the Pi over SSH (or locally without the host):
 
    ```sh
    just flex-flash c16k6ch <user>@<pi-host>
    ```
 
-7. `arecord -l` now lists the Flex as a capture card; `aplay -l` lists it for playback. Note the card name for the config.
+7. The Flex comes back as `2886:001e` "reSpeaker Flex XVF3800 C16K6Ch"; `arecord -l` lists it as a capture card; `aplay -l` lists it for playback. Note the card name for the config.
 8. udev rule so tools work without sudo (later in `deploy/`): `SUBSYSTEM=="usb", ATTRS{idVendor}=="2886", MODE="0660", TAG+="uaccess"`.
 
 ## 4. Capture test

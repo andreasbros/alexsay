@@ -40,11 +40,14 @@ echo "firmware: $name (sha256 ok)"
 # Lists DFU devices, flashes alt 1 ("Upgrade") and resets into the new image
 flash='
 set -e
-if ! sudo "$DFU" -l 2>/dev/null | grep -q "ID 2886:"; then
+if ! sudo "$DFU" -l 2>/dev/null | grep -q "\\[2886:"; then
   echo "no Flex in DFU mode: unplug it, hold Boot, plug the XMOS USB-C port (next to RST), release"
   exit 1
 fi
-sudo "$DFU" -R -e -a 1 -D "$FILE"
+# The board resets and leaves the bus before dfu-util finishes, so "Done!" is the success signal
+out=$(sudo "$DFU" -R -e -a 1 -D "$FILE" 2>&1) || true
+echo "$out" | grep -v "^Download\s*\["
+echo "$out" | grep -q "^Done!" || { echo "flash failed"; exit 1; }
 sleep 4
 arecord -l 2>/dev/null | grep -i -A1 "respeaker\|xvf\|flex" || echo "not listed as a capture card yet: replug it"
 '

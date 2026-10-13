@@ -116,7 +116,7 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 
 ## Gotchas already discovered
 
-- The Flex with XIAO ships with **I2S firmware**: it does not appear as a sound card. Safe Mode = hold **Boot** while powering on, then `sudo dfu-util -l` shows `2886:001a`. I2S firmware only accepts I2C DFU, so Safe Mode is the only USB route.
+- The Flex with XIAO ships with **I2S firmware**: it does not appear as a sound card. Safe Mode = hold **Boot** while powering on, then `sudo dfu-util -l` shows `2886:801c` "reSpeaker XVF3800 Safe Mode"; after `just flex-flash c16k6ch` it runs as `2886:001e` (USB card `C16K6Ch`; flashed 13 Oct 2026). I2S firmware only accepts I2C DFU, so Safe Mode is the only USB route.
 - Flash through the **XMOS USB-C port next to the RST button**, not the XIAO's USB-C.
 - Seeed's firmware comes from its GitHub release (`just flex-flash`); GitHub "save as" on a source-tree `.bin` corrupts it.
 - The Flex has **no mute button and no LED ring** (one green power LED). Mic mute and status feedback are software: earcons through the speaker.

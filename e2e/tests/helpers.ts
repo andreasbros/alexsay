@@ -71,7 +71,7 @@ export function heartbeat(request: APIRequestContext, deviceId: string, report: 
 
 /**
  * `deviceId`: a speaker id unique to this test, deleted by an admin afterwards.
- * `account`: a freshly registered user, so parallel tests never share connections; removed afterwards.
+ * `account`: a fresh user made by the admin, so parallel tests never share connections; removed afterwards.
  */
 export const test = base.extend<{ deviceId: string; account: Account }>({
   // biome-ignore lint/correctness/noEmptyPattern: Playwright fixtures take a destructured first argument
@@ -87,14 +87,14 @@ export const test = base.extend<{ deviceId: string; account: Account }>({
   account: async ({}, use) => {
     const account = { username: `e2e-${crypto.randomUUID().slice(0, 8)}`, password: crypto.randomUUID() };
     mask(account.password);
-    const context = await request.newContext({ baseURL: env.appUrl() });
-    const res = await context.post("/api/session/register", { data: account });
-    await context.dispose();
+    // Made by the admin: public registration is limited per address, and a few runs an hour would use it up
+    const admin = await apiSession(env.admin());
+    const res = await admin.post("/api/users", { data: account });
     if (res.status() !== 201) {
-      throw new Error(`register failed: ${res.status()}`);
+      await admin.dispose();
+      throw new Error(`creating the test account failed: ${res.status()}`);
     }
     await use(account);
-    const admin = await apiSession(env.admin());
     await admin.delete(`/api/users/${account.username}`);
     await admin.dispose();
   },

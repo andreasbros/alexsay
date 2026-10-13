@@ -21,6 +21,7 @@ export const claimDevice = z.object({ id: deviceId, name: deviceName.default("")
 export const updateDevice = z.object({ name: deviceName, owner: username.nullable() }).partial();
 
 export const updateUser = z.object({ role });
+export const createUser = z.object({ username, password, role: role.default("user") });
 
 export const heartbeat = z.object({
   firmware: z.string().max(64).optional(),

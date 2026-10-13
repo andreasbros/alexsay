@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { hashPassword } from "../crypto";
 import { users } from "../db";
 import * as schemas from "../schemas";
 import type { AppEnv } from "../types";
@@ -7,6 +8,15 @@ import { jsonBody, parse } from "../validate";
 /** Admin only: who registered, what role they have, how many speakers they own. */
 export const userRoutes = new Hono<AppEnv>()
   .get("/", async (c) => c.json(await users.list(c.env.DB)))
+  /** An account made by an admin: no registration limit, no session for the new user. */
+  .post("/", async (c) => {
+    const { username, password, role } = await jsonBody(c, schemas.createUser);
+    if (await users.get(c.env.DB, username)) {
+      return c.json({ error: "exists" }, 409);
+    }
+    await users.create(c.env.DB, { username, role, password_hash: await hashPassword(password) });
+    return c.json({ username, role }, 201);
+  })
   .patch("/:username", async (c) => {
     const username = parse(schemas.username, c.req.param("username"));
     const { role } = await jsonBody(c, schemas.updateUser);

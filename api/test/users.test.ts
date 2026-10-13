@@ -33,4 +33,25 @@ describe("users", () => {
     expect((await json(`${APP}/api/users/andreas`, "PATCH", { role: "user" }, admin)).status).toBe(204);
     expect((await call(`${APP}/api/users`, {}, admin)).status).toBe(403);
   });
+
+  it("lets an admin create accounts without using up the address's registrations", async () => {
+    const maria = await signIn("maria", "maria-pass");
+    expect((await json(`${APP}/api/users`, "POST", { username: "tom", password: "tom-pass-123" }, maria)).status).toBe(
+      403,
+    );
+    for (let i = 0; i < 45; i++) {
+      const res = await json(`${APP}/api/users`, "POST", { username: `e2e-${i}`, password: "a-long-password" }, admin);
+      expect(res.status).toBe(201);
+    }
+    expect(
+      (await json(`${APP}/api/users`, "POST", { username: "e2e-0", password: "a-long-password" }, admin)).status,
+    ).toBe(409);
+    expect(await signIn("e2e-44", "a-long-password")).toBeTruthy();
+    const registered = await call(`${APP}/api/session/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "walk-in", password: "a-long-password" }),
+    });
+    expect(registered.status).toBe(201);
+  });
 });

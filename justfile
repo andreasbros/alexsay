@@ -148,17 +148,29 @@ deploy: test-js
     just wait-live
     just e2e
 
-# Wait until app.alexsay.com serves the build just uploaded; the first requests after a deploy can still hit the old assets
+# Wait until app.alexsay.com serves the build just uploaded, with its scripts and styles, five times in a row:
+# right after a deploy some requests still reach the old build, and a page whose assets 404 never starts
 wait-live:
     #!/usr/bin/env bash
     set -euo pipefail
+    base="${E2E_APP_URL:-https://app.alexsay.com}"
     want=$(jq -r .build app/public/version.json)
-    for _ in $(seq 1 30); do
-      got=$(curl -fsS "${E2E_APP_URL:-https://app.alexsay.com}/version.json" | jq -r .build || true)
-      [ "$got" = "$want" ] && { echo "live: $want"; exit 0; }
-      sleep 2
+    streak=0
+    for _ in $(seq 1 60); do
+      got=$(curl -fsS "$base/version.json" | jq -r .build || true)
+      assets_ok=1
+      for asset in $(curl -fsS "$base/" | grep -oE '/assets/[^"]+\.(js|css)' | sort -u); do
+        curl -fsS -o /dev/null "$base$asset" || { assets_ok=0; break; }
+      done
+      if [ "$got" = "$want" ] && [ "$assets_ok" = 1 ]; then
+        streak=$((streak + 1))
+        [ "$streak" -ge 5 ] && { echo "live: $want"; exit 0; }
+      else
+        streak=0
+      fi
+      sleep 1
     done
-    echo "still serving $got, wanted $want"; exit 1
+    echo "not settled: serving $got, wanted $want"; exit 1
 
 # Build and deploy the website Worker (www.alexsay.com)
 deploy-website: test-js

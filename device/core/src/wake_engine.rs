@@ -206,6 +206,21 @@ mod tests {
 
     const RUSTPOTTER: &[u8] = include_bytes!("../../models/alexsay.rpw");
 
+    const LIVEKIT: &[u8] = include_bytes!("../../models/alexsay.onnx");
+
+    /// The first `LiveKit` classifier (13 Oct 2026: 10,000 synthetic clips a class plus 30% of hand-picked
+    /// near-misses, 60,000 training steps) on the owner's takes at the default sensitivity: no near-miss
+    /// fires it, a quarter of the owner's "Alexsay" takes do not either (18 of 20 caught from sensitivity
+    /// 0.7, at the price of 2 near-misses). Pinned, as rustpotter's are, so a retrained model is compared.
+    #[test]
+    fn the_shipped_livekit_model_on_the_owners_takes() {
+        let mut engine = open(EngineKind::Livekit, LIVEKIT, 0.5, 2.0).unwrap();
+        let card = evaluate(engine.as_mut(), &takes());
+        assert_eq!((card.positives, card.negatives), (20, 20));
+        assert_eq!(card.false_fires, 0, "fired on {:?}", card.fired_on);
+        assert_eq!(card.detected, 15, "missed {:?}", card.missed);
+    }
+
     #[test]
     fn engines_are_named_in_config_terms() {
         assert_eq!(EngineKind::parse("livekit"), Some(EngineKind::Livekit));

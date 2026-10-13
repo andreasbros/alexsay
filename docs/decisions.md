@@ -88,3 +88,12 @@ Newest last. Each entry: what was decided, why, what was rejected.
 - **Linux:** workerd is glibc-only, so the bundle carries glibc's loader and libc; the launcher is static musl and the whole thing runs on Alpine.
 - **No updates:** the server never checks for or installs updates; users upgrade by hand.
 - **Rejected:** Bun or Node with a D1 emulation (a second runtime to keep in step), rewriting the API in Rust.
+
+## 2026-10-14: Bench bring-up choices
+
+- **Flex firmware:** Seeed renamed the images (`respeaker_flex_usb_<image>_v1.0.4.bin`); `c16k6ch` is the old io16-6ch. `just flex-flash` takes it from the GitHub release at a pinned SHA-256 and flashes on the Pi over SSH, so a reflash is one command.
+- **Board AEC is enough:** ~45 dB of echo removed and clean double talk on ch1 (measurements.md), so the Flex build keeps hardware echo cancelling and barge-in on.
+- **Pi OS by the Imager CLI:** `rpi-imager` from Nix dumps core before drawing its window on Ubuntu; `rpi-imager --cli` with cloud-init `user-data` and `network-config` does the same customisation (key-only SSH, Wi-Fi), with no Wi-Fi password in the repo.
+- **Static ALSA:** the release binary found no sound cards off the build machine (alsa-lib's config path is a Nix store path); the daemon now falls back to `/usr/share/alsa`.
+- **Service:** a systemd user unit plus `loginctl enable-linger`, so the speaker starts at boot without a login.
+- **Rejected:** a USB-C gadget link to the Pi (the Pi 5's USB-C is its 5 A power input), the Flex's 12 V terminal (speech is loud enough on USB 5 V).

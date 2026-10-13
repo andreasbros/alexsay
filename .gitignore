@@ -25,6 +25,7 @@ data/
 # except the takes and fixtures the wake word tests run on
 !device/testdata/**/*.wav
 !device/core/testdata/**/*.wav
+!device/wake/takes/*.wav
 
 e2e/report/
 e2e/test-results/

@@ -182,6 +182,13 @@ wake-setup size="":
 wake-train size="":
     scripts/wake-train.sh train {{size}}
 
+# Copy the takes recorded on a speaker (`alexsay wake record`, as `[alexsay]` or `[none]`) into the training
+# takes, device/wake/takes: `just wake-takes-pull user@host`
+wake-takes-pull host:
+    mkdir -p device/wake/takes
+    scp '{{host}}:.local/alexsay/data/recordings/*.wav' device/wake/takes/
+    @ls device/wake/takes | sed 's/-[0-9]*\.wav$//' | sort | uniq -c
+
 # Both wake word engines over the owner's takes: caught, false fires, CPU
 wake-eval:
     cd device && cargo run --quiet --release -p alexsay-daemon -- wake eval --dir testdata/takes

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The "Alexsay" classifier for the LiveKit wake word engine, made with LiveKit's own toolkit
 # (github.com/livekit/livekit-wakeword 0.2.3, commit fb92cb3): synthetic takes from Piper TTS (positives,
-# phonetic neighbours, and device/wake/alexsay.yaml's near-misses as an extra 30%), background noise and
-# room echo, LiveKit's frozen embeddings, a conv-attention head, ONNX export.
+# phonetic neighbours, and device/wake/alexsay.yaml's near-misses as an extra 30%), the owner's own takes
+# from device/wake/takes (`just wake-takes-pull`; device/testdata/takes stays the held-out test set),
+# background noise and room echo, LiveKit's frozen embeddings, a conv-attention head, ONNX export.
 #
 #   scripts/wake-train.sh setup [small]   the toolkit, Piper's voice, noise, room impulses and, unless small,
 #                                         16 GB of ACAV100M speech features (about 18 GB in all)
@@ -34,6 +35,7 @@ venv="$work/.venv"
 lock="$root/device/wake/requirements.lock"
 step="${1:-}"
 config=alexsay.yaml
+takes="${ALEXSAY_WAKE_TAKES:-$root/device/wake/takes}"
 [ "${2:-}" = "small" ] && config=alexsay-small.yaml
 
 # Hugging Face datasets at the commits the first model was trained from (13 Oct 2026)
@@ -126,10 +128,13 @@ case "$step" in
   train)
     started=$(date +%s)
     lkw="$venv/bin/livekit-wakeword"
+    (cd "$root/device/wake" && "$venv/bin/python" -m unittest --quiet test_own_takes)
+    "$venv/bin/python" "$root/device/wake/own_takes.py" clear "$config"
     # The toolkit's stages one by one (its `run` does the same), with our hard negatives after generation:
     # its own ordering never reaches the config's custom negative phrases (device/wake/hard_negatives.py)
     "$lkw" generate "$config"
     "$venv/bin/python" "$root/device/wake/hard_negatives.py" "$config"
+    "$venv/bin/python" "$root/device/wake/own_takes.py" add "$config" "$takes"
     "$lkw" augment "$config"
     "$lkw" train "$config"
     "$lkw" export "$config"

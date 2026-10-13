@@ -76,6 +76,25 @@ describe("App", () => {
     expect(await screen.findByText("The passwords differ.")).toBeDefined();
   });
 
+  it("says why an account could not be created, whatever the reason", async () => {
+    const register = async (code: string) => {
+      cleanup();
+      mockApi({
+        "/api/session/me": json({ error: "unauthenticated" }, 401),
+        "/api/session/register": json({ error: code }, 429),
+      });
+      renderApp("/register");
+      fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "maria" } });
+      fireEvent.change(screen.getByLabelText("Password"), { target: { value: "battery staple" } });
+      fireEvent.change(screen.getByLabelText("Repeat password"), { target: { value: "battery staple" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    };
+    await register("too_many");
+    expect(await screen.findByText("Too many new accounts from this address. Try again in an hour.")).toBeDefined();
+    await register("something_new");
+    expect(await screen.findByText("The account could not be created (something_new).")).toBeDefined();
+  });
+
   it("lists the signed-in user's speakers", async () => {
     mockApi({
       "/api/session/me": json({ username: "maria", role: "user" }),

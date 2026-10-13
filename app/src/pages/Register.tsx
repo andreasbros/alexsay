@@ -8,6 +8,7 @@ import { useRegister } from "../session";
 
 const MESSAGES: Record<string, string> = {
   exists: "That username is taken.",
+  too_many: "Too many new accounts from this address. Try again in an hour.",
   registration_closed: "This server does not take new accounts. Ask its owner to add you.",
   bad_request:
     "Use 2 to 32 lowercase letters, digits, dots, dashes or underscores, and at least 8 characters of password.",
@@ -32,7 +33,7 @@ export function Register() {
   const error = mismatch
     ? "The passwords differ."
     : register.error instanceof ApiError
-      ? MESSAGES[register.error.code]
+      ? (MESSAGES[register.error.code] ?? `The account could not be created (${register.error.code}).`)
       : register.error?.message;
 
   return (

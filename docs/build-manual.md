@@ -10,7 +10,7 @@ Steps run on Andreas's Ubuntu laptop (flashing) and on the Pi over SSH. Record r
    3. In that project → API keys → create a secret key, owned by the project, named `alexsay-pi`. Copy it once.
    4. Put it only in `.env` (dev) and later `/etc/alexsay/env` (0600) on the Pi as `OPENAI_API_KEY=...`.
    5. Smoke test from the laptop: open a WebSocket to `wss://api.openai.com/v1/live/sessions` with `Authorization: Bearer $OPENAI_API_KEY`, send `session.start` with `"model": "gpt-live-1"`, expect `session.started`.
-2. Download the Seeed reSpeaker Flex firmware repo **as a whole** (`git clone` or "Download ZIP"); GitHub "save as" on a single `.bin` corrupts it. Keep it in `vendor/` (git-ignored).
+2. Flex firmware: `just flex-flash` fetches it from Seeed's release (github.com/respeaker/reSpeaker_Flex, v1.0.4) and checks it against a pinned SHA-256 (GitHub "save as" on a single `.bin` from the source tree corrupts it).
 3. Install Raspberry Pi Imager on the laptop.
 
 ## 1. SD card
@@ -29,13 +29,13 @@ Steps run on Andreas's Ubuntu laptop (flashing) and on the Pi over SSH. Record r
 
 1. Power off. Connect the 24-pin FPC between the core board and the circular mic board: keyed, 0.5 mm pitch, contacts facing the same way at both ends. Don't flex it repeatedly.
 2. Mount the mic board on M3 nylon standoffs with the **mic ports (the back side) facing up/out**, nothing touching them.
-3. On the Pi: `sudo apt install -y dfu-util alsa-utils`.
+3. On the Pi: `sudo apt install -y dfu-util alsa-utils` (the laptop's `dfu-util` comes from the Nix shell).
 4. **Safe Mode:** with the Flex unplugged, hold **Boot**, plug the 15 cm cable into the **XMOS USB-C port next to the RST button** (not the XIAO's port), release.
 5. `sudo dfu-util -l` must list `2886:001a` with alt 0 "Factory" and alt 1 "Upgrade". No output means the wrong port or Safe Mode didn't engage.
-6. Flash the 6-channel circular image (never a `-lin` image):
+6. Flash the 6-channel circular image (never a linear `l` image) from the laptop, on the Pi over SSH (or locally without the host):
 
    ```sh
-   sudo dfu-util -R -e -a 1 -D vendor/<seeed-repo>/<path>/respeaker_flex_ua-io16-6ch-cir.bin
+   just flex-flash c16k6ch <user>@<pi-host>
    ```
 
 7. `arecord -l` now lists the Flex as a capture card; `aplay -l` lists it for playback. Note the card name for the config.
@@ -73,7 +73,7 @@ Speak from 1 m and 3 m. In Audacity (on the laptop): ch1 (ASR) should be clean a
 ## 7. 16 vs 48 kHz playback
 
 1. Play a 10 kHz tone with the io16-6ch image: it should be silent.
-2. Flash `respeaker_flex_ua-io48-cir.bin` (Safe Mode not needed: USB firmware accepts USB DFU directly) and repeat. Audible means the 48 kHz path is full-band.
+2. `just flex-flash c48k2ch <user>@<pi-host>` (Safe Mode not needed: USB firmware accepts USB DFU directly) and repeat. Audible means the 48 kHz path is full-band.
 3. Repeat the AEC test on io48. Flash back to io16-6ch for wake-word recording.
 
 ## 8. Home Assistant

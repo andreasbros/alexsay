@@ -102,11 +102,11 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 ## Key facts to keep straight
 
 - The **XVF3800 does both capture and playback**, so the AEC reference is the exact signal sent to the speaker. Never route speech output through another sound card: that breaks AEC and brings back the combine-sink/clock-drift problem we designed away.
-- Flex firmware is **geometry-specific**: only `*-cir.bin` images for this board. Flashing a `-lin` image is explicitly unsupported by Seeed.
-- Flex USB firmware options (Seeed repo, whole-repo download only):
-  - `respeaker_flex_ua-io16-6ch-cir.bin`: 16 kHz, 6 ch (0 conference, 1 ASR, 2 to 5 raw mics). Bring-up and wake-word data capture.
-  - `respeaker_flex_ua-io48-cir.bin`: 48 kHz, 2 ch. Production candidate if playback proves full-band.
-  - `respeaker_flex_ua-io16-cir.bin`: 16 kHz, 2 ch.
+- Flex firmware is **geometry-specific**: only circular (`c`) images for this board. Flashing a linear (`l`) image is explicitly unsupported by Seeed.
+- Flex USB firmware (Seeed renamed them; release v1.0.4, 29 Sep 2026, `respeaker_flex_usb_<image>_v1.0.4.bin`), flashed by `just flex-flash [image] [ssh-host]` (`scripts/flex-flash.sh`: release asset, pinned SHA-256, cached in `~/.cache/alexsay/flex`, `dfu-util -R -e -a 1`; on an ssh host with its own apt `dfu-util`, else the Nix shell's):
+  - `c16k6ch`: 16 kHz, 6 ch (1 to 2 processed stereo, 3 to 6 raw mics). Bring-up and wake-word data capture.
+  - `c48k2ch`: 48 kHz, 2 ch. Production candidate if playback proves full-band.
+  - `c16k2ch`: 16 kHz, 2 ch.
 - 16 kHz playback cuts everything above ~8 kHz: speech stays clear (wideband, like HD Voice), music sounds muffled.
 - Flex amp: rated 10 W at 4 Ω on its 12 V terminal; on USB 5 V expect ~3 W (estimate, to measure). We run it from USB only.
 - Visaton R 10 S 4 Ω: fs 160 Hz, Qts 1.45, Vas 1.9 L, Xmax ±0.5 mm, 92.6 dB/1 W, 100 Hz to 13 kHz, 93 mm cut-out. High Qts: any small sealed box peaks 6 to 8 dB around 220 to 270 Hz, so **high-pass ~150 Hz and a peaking cut at fc are mandatory** (applied in the daemon before playback, so AEC still sees the true output).
@@ -118,7 +118,7 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 
 - The Flex with XIAO ships with **I2S firmware**: it does not appear as a sound card. Safe Mode = hold **Boot** while powering on, then `sudo dfu-util -l` shows `2886:001a`. I2S firmware only accepts I2C DFU, so Safe Mode is the only USB route.
 - Flash through the **XMOS USB-C port next to the RST button**, not the XIAO's USB-C.
-- Download Seeed's firmware by cloning the whole repo; GitHub "save as" corrupts the `.bin`.
+- Seeed's firmware comes from its GitHub release (`just flex-flash`); GitHub "save as" on a source-tree `.bin` corrupts it.
 - The Flex has **no mute button and no LED ring** (one green power LED). Mic mute and status feedback are software: earcons through the speaker.
 - The XIAO ESP32-S3 stays powered after the reflash and runs whatever it shipped with. Check its current draw and RF; flash a deep-sleep sketch if it matters.
 - The **JST PH 2-pin "male header" cables** ordered from The Pi Hut mate with *female plug* cables (LiPo style), so they likely do not fit the board's speaker header. The female version is sold out. The Flex has a **solder pad for a hard-wired speaker**: use it.
@@ -132,7 +132,7 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 
 - [ ] OpenAI platform: add prepaid credit (Free tier can't use `gpt-live-1`), create project `alexsay` with a monthly budget, create a project API key.
 - [ ] On arrival: `f3` the SD card; flash Raspberry Pi OS Lite 64-bit; check `vcgencmd get_throttled` is `0x0`.
-- [ ] Reflash the Flex to `respeaker_flex_ua-io16-6ch-cir.bin`; capture all 6 channels.
+- [ ] Reflash the Flex (`just flex-flash c16k6ch <user>@<pi-host>`); capture all 6 channels.
 - [ ] Inspect the Flex speaker connector against the JST cables; otherwise solder to the pad.
 - [ ] Bench test: playback, AEC residual (ch1 vs raw), io48 vs io16 playback bandwidth (10 kHz tone).
 - [ ] Measure: XVF3800 + amp current at 5 V, XIAO idle draw, Pi temperature under HA + daemon with the fan held off.

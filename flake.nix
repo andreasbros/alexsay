@@ -108,6 +108,11 @@
             ffmpeg
             curl
             coreutils
+            # Pi bring-up: f3 proves the SD card's real capacity, rpi-imager flashes Raspberry Pi OS,
+            # dfu-util flashes the Flex (`just flex-flash`)
+            f3
+            rpi-imager
+            dfu-util
           ];
 
           CARGO_TARGET_DIR = "target/nix";

@@ -186,6 +186,11 @@ wake-train size="":
 wake-eval:
     cd device && cargo run --quiet --release -p alexsay-daemon -- wake eval --dir testdata/takes
 
+# Flash the reSpeaker Flex with Seeed's circular USB firmware (pinned release and SHA-256), here or on
+# an ssh host the Flex is plugged into: `just flex-flash`, `just flex-flash c16k6ch user@host`
+flex-flash image="c16k6ch" host="":
+    scripts/flex-flash.sh {{image}} {{host}}
+
 # Build and deploy the website Worker (www.alexsay.com)
 deploy-website: test-js
     pnpm --filter website exec wrangler deploy

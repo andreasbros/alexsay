@@ -27,8 +27,8 @@
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         speakerSrc = pkgs.lib.cleanSourceWith {
           src = craneLib.path ./device;
-          # The wake word model ships inside the binary, so it rides along with the Cargo sources
-          filter = path: type: (craneLib.filterCargoSources path type) || (pkgs.lib.hasSuffix ".rpw" path);
+          # The wake word models ship inside the binary, so they ride along with the Cargo sources
+          filter = path: type: (craneLib.filterCargoSources path type) || (pkgs.lib.hasSuffix ".rpw" path) || (pkgs.lib.hasSuffix ".onnx" path);
         };
         speakerFor = { crossPkgs, target, features ? [ ] }:
           let
@@ -53,7 +53,16 @@
               PKG_CONFIG_PATH = "${alsa}/lib/pkgconfig";
               "PKG_CONFIG_PATH_${envTarget}" = "${alsa}/lib/pkgconfig";
             };
-            cargoArtifacts = craneLib.buildDepsOnly args;
+            # The dependency build stubs out local crates; the vendored candle-core is a real dependency
+            cargoArtifacts = craneLib.buildDepsOnly (args // {
+              dummySrc = craneLib.mkDummySrc {
+                src = speakerSrc;
+                extraDummyScript = ''
+                  rm -rf $out/vendor
+                  cp -r ${speakerSrc}/vendor $out/vendor
+                '';
+              };
+            });
           in
           craneLib.buildPackage (args // {
             inherit cargoArtifacts;

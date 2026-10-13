@@ -13,7 +13,7 @@ use alexsay_core::live::{ClientEvent, Item};
 use alexsay_core::pcm::{self, LIVE_RATE};
 use alexsay_core::session::{Action, END_TOOL, Session, SessionState};
 use alexsay_core::sounds;
-use alexsay_core::wake::WakeWord;
+use alexsay_core::wake_engine::{EngineKind, WakeEngine};
 use anyhow::Context;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -30,22 +30,42 @@ const TICK: Duration = Duration::from_millis(250);
 const AUDIO_CHUNK: usize = 1_600;
 
 pub const BUILTIN_MODEL: &[u8] = include_bytes!("../../models/alexsay.rpw");
+pub const BUILTIN_LIVEKIT_MODEL: &[u8] = include_bytes!("../../models/alexsay.onnx");
 
-/// The wake word model the config names (`wake.model`: "builtin", or a path under the home or absolute),
-/// and how to name it in a report. Every command loads it here, so they all use the same model.
-pub fn wake_model(paths: &Paths, config: &Config) -> anyhow::Result<(Vec<u8>, String)> {
-    if config.wake.model == "builtin" {
-        return Ok((BUILTIN_MODEL.to_vec(), "builtin".to_owned()));
+/// The wake word engine the config names (`wake.engine`) and its model (`wake.livekit_model` or
+/// `wake.model`: "builtin", or a path under the home or absolute), with a name for reports. Every
+/// command loads it here, so they all listen the same way.
+pub fn wake_model(paths: &Paths, config: &Config) -> anyhow::Result<(EngineKind, Vec<u8>, String)> {
+    let kind = EngineKind::parse(&config.wake.engine)
+        .with_context(|| format!("unknown wake.engine {:?}", config.wake.engine))?;
+    let (named, builtin) = match kind {
+        EngineKind::Livekit => (&config.wake.livekit_model, BUILTIN_LIVEKIT_MODEL),
+        EngineKind::Rustpotter => (&config.wake.model, BUILTIN_MODEL),
+    };
+    if named == "builtin" {
+        return Ok((kind, builtin.to_vec(), format!("{} builtin", kind.name())));
     }
-    let in_home = paths.home.join(&config.wake.model);
+    let in_home = paths.home.join(named);
     let path = if in_home.exists() {
         in_home
     } else {
-        std::path::PathBuf::from(&config.wake.model)
+        std::path::PathBuf::from(named)
     };
     let bytes = std::fs::read(&path)
         .with_context(|| format!("reading the wake word model {}", path.display()))?;
-    Ok((bytes, path.display().to_string()))
+    Ok((kind, bytes, format!("{} {}", kind.name(), path.display())))
+}
+
+/// The engine `wake_model` names, ready to listen.
+pub fn open_wake_word(paths: &Paths, config: &Config) -> anyhow::Result<Box<dyn WakeEngine>> {
+    let (kind, bytes, _) = wake_model(paths, config)?;
+    alexsay_core::wake_engine::open(
+        kind,
+        &bytes,
+        config.wake.sensitivity,
+        config.wake.refractory_s,
+    )
+    .map_err(anyhow::Error::msg)
 }
 
 pub struct Runtime {
@@ -118,14 +138,8 @@ impl Runtime {
         }
     }
 
-    pub fn load_wake_word(&self) -> anyhow::Result<WakeWord> {
-        let (bytes, _) = wake_model(&self.paths, &self.config)?;
-        WakeWord::new(
-            &bytes,
-            self.config.wake.sensitivity,
-            self.config.wake.refractory_s,
-        )
-        .map_err(anyhow::Error::msg)
+    pub fn load_wake_word(&self) -> anyhow::Result<Box<dyn WakeEngine>> {
+        open_wake_word(&self.paths, &self.config)
     }
 
     /// The microphone during a phone call goes to the line (unless muted) and nowhere else.
@@ -459,7 +473,7 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
                     continue;
                 };
                 let detection = engine.feed(&chunk);
-                listening.add(&chunk, engine);
+                listening.add(&chunk, engine.as_ref());
                 if listening.due() {
                     listening.report();
                 }
@@ -537,11 +551,11 @@ struct Listening {
 }
 
 impl Listening {
-    fn add(&mut self, chunk: &[i16], engine: &alexsay_core::wake::WakeWord) {
+    fn add(&mut self, chunk: &[i16], engine: &dyn WakeEngine) {
         self.samples += chunk.len();
         self.loudest = self.loudest.max(pcm::rms(chunk));
-        self.best_score = self.best_score.max(engine.partial_score().unwrap_or(0.0));
-        self.gain = self.gain.max(engine.levels().1);
+        self.best_score = self.best_score.max(engine.score().unwrap_or(0.0));
+        self.gain = self.gain.max(engine.gain());
     }
 
     fn due(&self) -> bool {
@@ -826,25 +840,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_command_gets_the_model_the_config_names() {
+    fn every_command_gets_the_engine_and_model_the_config_names() {
         let home = tempfile::tempdir().unwrap();
         let paths = Paths::new(home.path());
         let mut config = Config::default();
-        config.wake.model = "data/models/alexsay.rpw".to_owned();
         std::fs::create_dir_all(home.path().join("data/models")).unwrap();
         std::fs::write(home.path().join("data/models/alexsay.rpw"), b"trained").unwrap();
-        let (bytes, name) = wake_model(&paths, &config).unwrap();
-        assert_eq!(bytes, b"trained");
-        assert!(name.ends_with("data/models/alexsay.rpw"), "{name}");
+        std::fs::write(home.path().join("data/models/mine.onnx"), b"classifier").unwrap();
 
-        config.wake.model = "builtin".to_owned();
-        let (bytes, name) = wake_model(&paths, &config).unwrap();
+        // LiveKit by default, with the classifier built in
+        let (kind, bytes, name) = wake_model(&paths, &config).unwrap();
         assert_eq!(
-            (bytes.as_slice(), name.as_str()),
-            (BUILTIN_MODEL, "builtin")
+            (kind, bytes.as_slice(), name.as_str()),
+            (
+                EngineKind::Livekit,
+                BUILTIN_LIVEKIT_MODEL,
+                "livekit builtin"
+            )
         );
+        config.wake.livekit_model = "data/models/mine.onnx".to_owned();
+        let (_, bytes, name) = wake_model(&paths, &config).unwrap();
+        assert_eq!(bytes, b"classifier");
+        assert!(name.ends_with("data/models/mine.onnx"), "{name}");
 
+        // Back to rustpotter: its own model key
+        config.wake.engine = "rustpotter".to_owned();
+        let (kind, bytes, name) = wake_model(&paths, &config).unwrap();
+        assert_eq!(
+            (kind, bytes.as_slice(), name.as_str()),
+            (EngineKind::Rustpotter, BUILTIN_MODEL, "rustpotter builtin")
+        );
+        config.wake.model = "data/models/alexsay.rpw".to_owned();
+        assert_eq!(wake_model(&paths, &config).unwrap().1, b"trained");
         config.wake.model = "data/models/missing.rpw".to_owned();
+        assert!(wake_model(&paths, &config).is_err());
+        config.wake.engine = "porcupine".to_owned();
         assert!(wake_model(&paths, &config).is_err());
     }
 }

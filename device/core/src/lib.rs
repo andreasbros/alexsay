@@ -14,5 +14,8 @@ pub mod report;
 pub mod session;
 pub mod sounds;
 pub mod state;
+pub mod trigger;
 pub mod update;
 pub mod wake;
+pub mod wake_engine;
+pub mod wake_livekit;

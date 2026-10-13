@@ -18,6 +18,7 @@ base64 = "0.23"
 sha2 = "0.11"
 semver = "1"
 ed25519-dalek = "3"
+tract-onnx = "0.22.4"
 rustpotter = "3"
 hound = "3.5"
 
@@ -34,3 +35,7 @@ must_use_candidate = "allow"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# rustpotter's candle-core, patched so it builds with the `half` that tract needs (see vendor/candle-core/PATCHED.md)
+[patch.crates-io]
+candle-core = { path = "vendor/candle-core" }

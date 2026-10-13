@@ -51,9 +51,13 @@ pub struct Audio {
 #[serde(default, deny_unknown_fields)]
 pub struct Wake {
     pub enabled: bool,
-    /// "builtin", or a path to a model trained with `alexsay wake train`.
+    /// Which engine listens: "livekit" (`LiveKit`'s models, the default) or "rustpotter".
+    pub engine: String,
+    /// The rustpotter model: "builtin", or a path to a model trained with `alexsay wake train`.
     pub model: String,
-    /// 0 to 1: lower fires more easily (more false wakes), higher needs a clearer "Alexsay".
+    /// The `LiveKit` classifier: "builtin", or a path to an `.onnx` made with `just wake-train`.
+    pub livekit_model: String,
+    /// 0 to 1: higher fires more easily (more false wakes), lower needs a clearer "Alexsay".
     pub sensitivity: f32,
     /// Seconds after a detection during which it cannot fire again.
     pub refractory_s: f32,
@@ -128,7 +132,9 @@ impl Default for Wake {
     fn default() -> Self {
         Self {
             enabled: true,
+            engine: "livekit".to_owned(),
             model: "builtin".to_owned(),
+            livekit_model: "builtin".to_owned(),
             sensitivity: 0.5,
             refractory_s: 2.0,
         }
@@ -210,6 +216,9 @@ impl Config {
         if !(0.25..=4.0).contains(&self.audio.gain) {
             return bad("audio.gain must be between 0.25 and 4");
         }
+        if crate::wake_engine::EngineKind::parse(&self.wake.engine).is_none() {
+            return bad("wake.engine must be livekit or rustpotter");
+        }
         if !(0.0..=1.0).contains(&self.wake.sensitivity) {
             return bad("wake.sensitivity must be between 0 and 1");
         }
@@ -286,7 +295,11 @@ echo = "auto"
 
 [wake]
 enabled = true
-# "builtin", or a model file made with `alexsay wake train`
+# livekit (LiveKit's models; `just wake-train` makes the classifier) or rustpotter (the earlier engine)
+engine = "livekit"
+# The LiveKit classifier: "builtin", or an .onnx file
+livekit_model = "builtin"
+# The rustpotter model: "builtin", or a model file made with `alexsay wake train`
 model = "builtin"
 sensitivity = 0.5
 refractory_s = 2.0
@@ -393,6 +406,10 @@ mod tests {
         assert!(Config::from_toml("[audio]\nvolume = 3\n").is_err());
         assert!(Config::from_toml("[server]\nurl = \"ftp://x\"\n").is_err());
         assert!(Config::from_toml("[wake]\nsensitivty = 0.5\n").is_err());
+        assert!(Config::from_toml("[wake]\nengine = \"porcupine\"\n").is_err());
+        let earlier = Config::from_toml("[wake]\nengine = \"rustpotter\"\n").unwrap();
+        assert_eq!(earlier.wake.engine, "rustpotter");
+        assert_eq!(Config::default().wake.engine, "livekit");
     }
 
     #[test]

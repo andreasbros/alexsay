@@ -208,23 +208,19 @@ pub async fn run(paths: &Paths, config: &Config, voice: bool, quiet: bool, audio
         model
             .as_ref()
             .map_err(|e| anyhow::anyhow!("{e:#}"))
-            .and_then(|(bytes, name)| {
-                alexsay_core::wake::WakeWord::new(
+            .and_then(|(kind, bytes, name)| {
+                alexsay_core::wake_engine::open(
+                    *kind,
                     bytes,
                     config.wake.sensitivity,
                     config.wake.refractory_s,
                 )
-                .map(|w| format!("{name}, {} samples per frame", w.frame_len()))
+                .map(|engine| format!("{name}, fires above {:.2}", engine.threshold()))
                 .map_err(anyhow::Error::msg)
             }),
     ));
     if voice && let (Ok(capture), Ok(player)) = (capture, player) {
-        checks.push(wake_check(
-            config,
-            model.ok().map(|(bytes, _)| bytes).as_deref(),
-            &capture,
-            &player,
-        ));
+        checks.push(wake_check(config, model.ok(), &capture, &player));
         if claimed {
             checks.push(conversation_check(paths, config, id.ok()).await);
         }
@@ -249,12 +245,21 @@ fn record_level(capture: &Capture, length: Duration) -> f32 {
     peak
 }
 
-fn wake_check(config: &Config, model: Option<&[u8]>, capture: &Capture, player: &Player) -> Check {
-    let engine = alexsay_core::wake::WakeWord::new(
-        model.unwrap_or_default(),
-        config.wake.sensitivity,
-        config.wake.refractory_s,
-    );
+fn wake_check(
+    config: &Config,
+    model: Option<(alexsay_core::wake_engine::EngineKind, Vec<u8>, String)>,
+    capture: &Capture,
+    player: &Player,
+) -> Check {
+    let engine = model.ok_or(()).and_then(|(kind, bytes, _)| {
+        alexsay_core::wake_engine::open(
+            kind,
+            &bytes,
+            config.wake.sensitivity,
+            config.wake.refractory_s,
+        )
+        .map_err(|_| ())
+    });
     let Ok(mut engine) = engine else {
         return check("wake word (you)", Err(anyhow::anyhow!("no model")));
     };

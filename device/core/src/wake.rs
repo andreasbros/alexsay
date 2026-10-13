@@ -28,6 +28,7 @@ pub struct Detection {
 
 pub struct WakeWord {
     detector: Rustpotter,
+    threshold: f32,
     frame: Vec<i16>,
     frame_len: usize,
     refractory_frames: usize,
@@ -92,6 +93,7 @@ impl WakeWord {
             ((refractory_s.max(0.0) * SAMPLE_RATE as f32) / frame_len as f32).ceil() as usize;
         Ok(Self {
             detector,
+            threshold,
             frame: Vec::with_capacity(frame_len),
             frame_len,
             refractory_frames,
@@ -101,6 +103,11 @@ impl WakeWord {
 
     pub fn frame_len(&self) -> usize {
         self.frame_len
+    }
+
+    /// The score a word has to reach.
+    pub fn threshold(&self) -> f32 {
+        self.threshold
     }
 
     /// Feeds any amount of 16 kHz mono audio; fires at most once per word, and not at all during the

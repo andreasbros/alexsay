@@ -8,6 +8,7 @@ use alexsay_core::config::{Config, Paths};
 use alexsay_core::endpoint::{Endpointer, Status};
 use alexsay_core::pcm::{self, LIVE_RATE};
 use alexsay_core::wake::{self, NEGATIVE_LABEL, POSITIVE_LABEL};
+use alexsay_core::wake_engine::{self, EngineKind};
 use anyhow::Context;
 
 use crate::audio::{Capture, Player};
@@ -272,21 +273,34 @@ fn bar(value: f32) -> String {
 
 /// Listens and prints the microphone level each second and every detection, in colour on a terminal.
 /// With `scores`, each second also shows how close the best moment came to the wake word.
-pub fn test(config: &Config, model: &[u8], scores: bool) -> anyhow::Result<()> {
+pub fn test(
+    config: &Config,
+    kind: EngineKind,
+    model: &[u8],
+    name: &str,
+    scores: bool,
+) -> anyhow::Result<()> {
     use std::io::IsTerminal;
     let paint = Paint(std::io::stdout().is_terminal());
-    let threshold = wake::threshold_for(config.wake.sensitivity);
-    let mut wake = wake::WakeWord::new(model, config.wake.sensitivity, config.wake.refractory_s)
-        .map_err(anyhow::Error::msg)?;
-    let mut probe = if scores {
+    let mut wake = wake_engine::open(
+        kind,
+        model,
+        config.wake.sensitivity,
+        config.wake.refractory_s,
+    )
+    .map_err(anyhow::Error::msg)?;
+    let threshold = wake.threshold();
+    // rustpotter reports a score only once it is over the threshold: a second, eager engine shows how
+    // close the rest come. `LiveKit` scores every 80 ms anyway.
+    let mut probe = if scores && kind == EngineKind::Rustpotter {
         Some(wake::WakeWord::probe(model).map_err(anyhow::Error::msg)?)
     } else {
         None
     };
     let capture = Capture::open(&config.audio).context("opening the microphone")?;
     println!(
-        "Listening on {} ({}) for \"Alexsay\". Detection needs {threshold:.2} (sensitivity {}). Ctrl-C to stop.",
-        capture.device, config.wake.model, config.wake.sensitivity
+        "Listening on {} ({name}) for \"Alexsay\". Detection needs {threshold:.2} (sensitivity {}). Ctrl-C to stop.",
+        capture.device, config.wake.sensitivity
     );
     if scores {
         println!(
@@ -306,10 +320,12 @@ pub fn test(config: &Config, model: &[u8], scores: bool) -> anyhow::Result<()> {
         peak = peak.max(level);
         quiet = quiet.min(level.max(0.001));
         since_print += chunk.len();
-        if let Some(probe) = probe.as_mut()
-            && let Some(partial) = probe.feed(&chunk)
-        {
-            best = best.max(partial.score);
+        if let Some(probe) = probe.as_mut() {
+            if let Some(partial) = probe.feed(&chunk) {
+                best = best.max(partial.score);
+            }
+        } else if scores {
+            best = best.max(wake.score().unwrap_or(0.0));
         }
         if since_print >= LIVE_RATE as usize {
             let speech = peak > quiet * 3.0 && peak > 0.02;
@@ -364,10 +380,8 @@ pub fn test(config: &Config, model: &[u8], scores: bool) -> anyhow::Result<()> {
     }
 }
 
-/// Runs the engine over a WAV file (16-bit, any rate) and prints what it would have fired on.
-pub fn test_file(config: &Config, model: &[u8], path: &std::path::Path) -> anyhow::Result<()> {
-    let mut wake = wake::WakeWord::new(model, config.wake.sensitivity, config.wake.refractory_s)
-        .map_err(anyhow::Error::msg)?;
+/// Reads a WAV (16-bit, any rate, any channels) as 16 kHz mono.
+fn wav_at_16k(path: &std::path::Path) -> anyhow::Result<Vec<i16>> {
     let mut reader =
         hound::WavReader::open(path).with_context(|| format!("opening {}", path.display()))?;
     let spec = reader.spec();
@@ -379,31 +393,101 @@ pub fn test_file(config: &Config, model: &[u8], path: &std::path::Path) -> anyho
         at16.extend(pcm::to_i16(&chunk, 1.0));
     }
     at16.extend(pcm::to_i16(&converter.flush(), 1.0));
-    // A second of quiet either side, as speech arrives from a live microphone: the detector needs a lead-in
-    let quiet = vec![0i16; LIVE_RATE as usize];
-    let at16: Vec<i16> = quiet
-        .iter()
-        .chain(at16.iter())
-        .chain(quiet.iter())
-        .copied()
+    Ok(at16)
+}
+
+/// Runs the engine over a WAV file (16-bit, any rate) and prints what it would have fired on. The take
+/// is heard as live: a quiet room before and after it (see `wake_engine::as_heard`).
+pub fn test_file(
+    config: &Config,
+    kind: EngineKind,
+    model: &[u8],
+    path: &std::path::Path,
+) -> anyhow::Result<()> {
+    let mut wake = wake_engine::open(
+        kind,
+        model,
+        config.wake.sensitivity,
+        config.wake.refractory_s,
+    )
+    .map_err(anyhow::Error::msg)?;
+    let take = wav_at_16k(path)?;
+    let fired: Vec<f32> = wake_engine::as_heard(&take)
+        .chunks(1_280)
+        .filter_map(|chunk| wake.feed(chunk).map(|d| d.score))
         .collect();
-    let mut fired = 0;
-    for chunk in at16.chunks(480) {
-        if let Some(detection) = wake.feed(chunk) {
-            fired += 1;
-            println!(
-                "{}: detected (score {:.2})",
-                path.display(),
-                detection.score
-            );
-        }
-    }
-    if fired == 0 {
-        println!(
+    match fired.first() {
+        Some(score) => println!("{}: detected (score {score:.2})", path.display()),
+        None => println!(
             "{}: no detection (level {:.1}%)",
             path.display(),
-            pcm::rms(&at16) * 100.0
+            pcm::rms(&take) * 100.0
+        ),
+    }
+    Ok(())
+}
+
+/// Every labelled take in `dir` (`[alexsay]...wav` and the rest) through each engine: what it caught,
+/// what it fired on by mistake, and what it cost. The numbers that decide which engine listens.
+pub fn eval(
+    paths: &Paths,
+    config: &Config,
+    dir: &std::path::Path,
+    engines: &[EngineKind],
+) -> anyhow::Result<()> {
+    let mut takes: Vec<(String, Vec<i16>)> = std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "wav"))
+        .filter_map(|path| {
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            wake::label_of(&name)?;
+            Some((name, wav_at_16k(&path).ok()?))
+        })
+        .collect();
+    takes.sort();
+    anyhow::ensure!(
+        !takes.is_empty(),
+        "no labelled takes in {} (record some with `alexsay wake record`)",
+        dir.display()
+    );
+    for &kind in engines {
+        let mut config = config.clone();
+        kind.name().clone_into(&mut config.wake.engine);
+        let (_, model, name) = crate::runtime::wake_model(paths, &config)?;
+        let mut engine = match wake_engine::open(
+            kind,
+            &model,
+            config.wake.sensitivity,
+            config.wake.refractory_s,
+        ) {
+            Ok(engine) => engine,
+            Err(err) => {
+                println!("{name}: {err}");
+                continue;
+            }
+        };
+        let card = wake_engine::evaluate(engine.as_mut(), &takes);
+        println!(
+            "{name} ({} KB), fires above {:.2}",
+            model.len() / 1_024,
+            engine.threshold()
         );
+        println!(
+            "  caught {}/{} \"Alexsay\", fired on {}/{} others, {:.1}% of one core",
+            card.detected,
+            card.positives,
+            card.false_fires,
+            card.negatives,
+            card.load() * 100.0
+        );
+        if !card.missed.is_empty() {
+            println!("  missed: {}", card.missed.join(", "));
+        }
+        if !card.fired_on.is_empty() {
+            println!("  fired on: {}", card.fired_on.join(", "));
+        }
     }
     Ok(())
 }

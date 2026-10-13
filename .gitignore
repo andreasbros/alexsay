@@ -16,10 +16,15 @@ coverage/
 
 # Seeed firmware repo is cloned here for flashing, never committed
 vendor/
+# except the patched crate the speaker builds with (device/vendor/candle-core/PATCHED.md)
+!device/vendor/
 
 # Wake word training data and recordings
 data/
 *.wav
+# except the takes and fixtures the wake word tests run on
+!device/testdata/**/*.wav
+!device/core/testdata/**/*.wav
 
 e2e/report/
 e2e/test-results/

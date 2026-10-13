@@ -144,6 +144,15 @@ enum WakeAction {
         #[arg(long, default_value = "small")]
         size: String,
     },
+    /// Run labelled takes ([alexsay]*.wav and the rest) through the engines: caught, false fires, CPU
+    Eval {
+        /// Directory of takes; the recordings from `alexsay wake record` by default
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// livekit, rustpotter or both
+        #[arg(long, default_value = "both")]
+        engine: String,
+    },
     /// Listen and print every detection and the microphone level; with --file, run over a WAV instead
     Test {
         #[arg(long)]
@@ -439,19 +448,31 @@ async fn dispatch(
                     wake_cli::train(&paths, &dir, epochs, previous.as_deref(), &size)?;
                     let mut config = config;
                     "data/models/alexsay.rpw".clone_into(&mut config.wake.model);
+                    "rustpotter".clone_into(&mut config.wake.engine);
                     paths::save_config(&paths, &config)?;
                     println!(
-                        "The config now uses it (wake.model = data/models/alexsay.rpw); restart `alexsay run`."
+                        "The config now uses it (wake.engine = rustpotter, wake.model = data/models/alexsay.rpw); restart `alexsay run`."
                     );
                     Ok(())
                 }
+                WakeAction::Eval { dir, engine } => {
+                    use alexsay_core::wake_engine::EngineKind;
+                    let engines = match engine.as_str() {
+                        "both" => vec![EngineKind::Livekit, EngineKind::Rustpotter],
+                        other => vec![EngineKind::parse(other).with_context(|| {
+                            format!("--engine {other}: livekit, rustpotter or both")
+                        })?],
+                    };
+                    let dir = dir.unwrap_or_else(|| paths.recordings_dir());
+                    wake_cli::eval(&paths, &config, &dir, &engines)
+                }
                 WakeAction::Test { file, scores } => {
-                    let (bytes, _) = runtime::wake_model(&paths, &config)?;
+                    let (kind, bytes, name) = runtime::wake_model(&paths, &config)?;
                     if file.is_empty() {
-                        wake_cli::test(&config, &bytes, scores)
+                        wake_cli::test(&config, kind, &bytes, &name, scores)
                     } else {
                         for path in &file {
-                            wake_cli::test_file(&config, &bytes, path)?;
+                            wake_cli::test_file(&config, kind, &bytes, path)?;
                         }
                         Ok(())
                     }

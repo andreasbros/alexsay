@@ -103,7 +103,8 @@ impl WakeWord {
         self.frame_len
     }
 
-    /// Feeds any amount of 16 kHz mono audio; fires at most once per refractory period.
+    /// Feeds any amount of 16 kHz mono audio; fires at most once per word, and not at all during the
+    /// refractory period after a detection.
     pub fn feed(&mut self, samples: &[i16]) -> Option<Detection> {
         let mut fired = None;
         for &sample in samples {
@@ -112,12 +113,14 @@ impl WakeWord {
                 continue;
             }
             let frame = std::mem::replace(&mut self.frame, Vec::with_capacity(self.frame_len));
-            let detection = self.detector.process_samples(frame);
+            // The refractory skips the audio itself: a word begun inside it never builds up to a detection
             if self.cooldown > 0 {
                 self.cooldown -= 1;
                 continue;
             }
-            if let Some(detection) = detection {
+            // rustpotter fires on the falling edge: once the score has stayed under the threshold for half
+            // its window after at least `min_scores` frames above it, then clears its window
+            if let Some(detection) = self.detector.process_samples(frame) {
                 self.cooldown = self.refractory_frames;
                 fired = Some(Detection {
                     name: detection.name,
@@ -293,6 +296,106 @@ mod tests {
         wake.reset();
         assert!(WakeWord::new(&[], 0.5, 1.0).is_err());
         assert!(WakeWord::new(b"garbage", 0.5, 1.0).is_err());
+    }
+
+    /// Samples of a WAV made by `tone`.
+    fn samples(wav: &[u8]) -> Vec<i16> {
+        hound::WavReader::new(std::io::Cursor::new(wav))
+            .unwrap()
+            .samples::<i16>()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    /// What a run over `audio` saw, frame by frame: where each detection fired, and the frames with a
+    /// detection in progress (from the first frame above the threshold until it fires).
+    struct Run {
+        fired: Vec<usize>,
+        pending: Vec<usize>,
+    }
+
+    fn run(wake: &mut WakeWord, audio: &[i16]) -> Run {
+        let mut seen = Run {
+            fired: Vec::new(),
+            pending: Vec::new(),
+        };
+        for (frame, chunk) in audio.chunks(wake.frame_len()).enumerate() {
+            if wake.feed(chunk).is_some() {
+                seen.fired.push(frame);
+            }
+            if wake.partial_score().is_some() {
+                seen.pending.push(frame);
+            }
+        }
+        seen
+    }
+
+    #[test]
+    #[ignore = "writes the fixture"]
+    fn write_tone_fixture() {
+        let mut takes = Vec::new();
+        for i in 0..8 {
+            takes.push((
+                sample_file_name(POSITIVE_LABEL, &i.to_string()),
+                tone(440.0, 0.8, i),
+            ));
+            takes.push((
+                sample_file_name(NEGATIVE_LABEL, &i.to_string()),
+                tone(1_800.0, 0.8, i + 100),
+            ));
+        }
+        let (train_set, test_set) = split_samples(takes);
+        let model = train(train_set, test_set, 20, None, "small").unwrap();
+        std::fs::write(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/tone.rpw"),
+            model,
+        )
+        .unwrap();
+    }
+
+    /// A model trained by `write_tone_fixture` (440 Hz is the word, 1800 Hz is not), fixed so the
+    /// detector's timing is tested on the same scores every run; training is random.
+    const TONE_MODEL: &[u8] = include_bytes!("../testdata/tone.rpw");
+
+    #[test]
+    fn fires_once_per_word_after_it_ends_and_not_again_within_the_refractory() {
+        let model = TONE_MODEL;
+        let word = samples(&tone(440.0, 1.2, 42));
+        // Between the words, sound the model was taught to ignore (digital silence is no test of anything)
+        let other = samples(&tone(1_800.0, 1.0, 7));
+        let audio: Vec<i16> = [&other[..], &word, &other, &word, &other, &other].concat();
+
+        let mut wake = WakeWord::new(model, 1.0, 2.0).unwrap();
+        let seen = run(&mut wake, &audio);
+        assert_eq!(
+            seen.fired.len(),
+            1,
+            "one detection, then the refractory: {:?}",
+            seen.fired
+        );
+        let fired = seen.fired[0];
+        let first_above = seen.pending.first().copied().unwrap_or(fired);
+        // A rising-edge trigger fires `min_scores` (3) frames after the score first crosses the threshold;
+        // the falling edge waits for the hill to pass and then half the model's window
+        assert!(
+            fired >= first_above + 15,
+            "fired at frame {fired}, only {} frames after the score crossed the threshold",
+            fired - first_above
+        );
+        assert!(
+            seen.pending.iter().all(|&f| f < fired),
+            "nothing builds up during the refractory: {:?}",
+            seen.pending
+        );
+
+        let mut no_refractory = WakeWord::new(model, 1.0, 0.0).unwrap();
+        let seen = run(&mut no_refractory, &audio);
+        assert_eq!(
+            seen.fired.len(),
+            2,
+            "each word once, never twice in a row: {:?}",
+            seen.fired
+        );
     }
 
     #[test]

@@ -31,6 +31,23 @@ const AUDIO_CHUNK: usize = 1_600;
 
 pub const BUILTIN_MODEL: &[u8] = include_bytes!("../../models/alexsay.rpw");
 
+/// The wake word model the config names (`wake.model`: "builtin", or a path under the home or absolute),
+/// and how to name it in a report. Every command loads it here, so they all use the same model.
+pub fn wake_model(paths: &Paths, config: &Config) -> anyhow::Result<(Vec<u8>, String)> {
+    if config.wake.model == "builtin" {
+        return Ok((BUILTIN_MODEL.to_vec(), "builtin".to_owned()));
+    }
+    let in_home = paths.home.join(&config.wake.model);
+    let path = if in_home.exists() {
+        in_home
+    } else {
+        std::path::PathBuf::from(&config.wake.model)
+    };
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("reading the wake word model {}", path.display()))?;
+    Ok((bytes, path.display().to_string()))
+}
+
 pub struct Runtime {
     pub paths: Paths,
     pub config: Config,
@@ -102,18 +119,7 @@ impl Runtime {
     }
 
     pub fn load_wake_word(&self) -> anyhow::Result<WakeWord> {
-        let bytes = if self.config.wake.model == "builtin" {
-            BUILTIN_MODEL.to_vec()
-        } else {
-            let path = self.paths.home.join(&self.config.wake.model);
-            let path = if path.exists() {
-                path
-            } else {
-                std::path::PathBuf::from(&self.config.wake.model)
-            };
-            std::fs::read(&path)
-                .with_context(|| format!("reading the wake word model {}", path.display()))?
-        };
+        let (bytes, _) = wake_model(&self.paths, &self.config)?;
         WakeWord::new(
             &bytes,
             self.config.wake.sensitivity,
@@ -812,4 +818,33 @@ pub fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_command_gets_the_model_the_config_names() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = Paths::new(home.path());
+        let mut config = Config::default();
+        config.wake.model = "data/models/alexsay.rpw".to_owned();
+        std::fs::create_dir_all(home.path().join("data/models")).unwrap();
+        std::fs::write(home.path().join("data/models/alexsay.rpw"), b"trained").unwrap();
+        let (bytes, name) = wake_model(&paths, &config).unwrap();
+        assert_eq!(bytes, b"trained");
+        assert!(name.ends_with("data/models/alexsay.rpw"), "{name}");
+
+        config.wake.model = "builtin".to_owned();
+        let (bytes, name) = wake_model(&paths, &config).unwrap();
+        assert_eq!(
+            (bytes.as_slice(), name.as_str()),
+            (BUILTIN_MODEL, "builtin")
+        );
+
+        config.wake.model = "data/models/missing.rpw".to_owned();
+        assert!(wake_model(&paths, &config).is_err());
+    }
 }

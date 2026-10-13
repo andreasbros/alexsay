@@ -446,11 +446,7 @@ async fn dispatch(
                     Ok(())
                 }
                 WakeAction::Test { file, scores } => {
-                    let bytes = if config.wake.model == "builtin" {
-                        runtime::BUILTIN_MODEL.to_vec()
-                    } else {
-                        std::fs::read(paths.home.join(&config.wake.model))?
-                    };
+                    let (bytes, _) = runtime::wake_model(&paths, &config)?;
                     if file.is_empty() {
                         wake_cli::test(&config, &bytes, scores)
                     } else {

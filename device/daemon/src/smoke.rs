@@ -8,7 +8,7 @@ use alexsay_core::sounds;
 use serde::Serialize;
 
 use crate::audio::{Capture, Player, list_devices};
-use crate::runtime::{BUILTIN_MODEL, Runtime};
+use crate::runtime::Runtime;
 use crate::server::Server;
 use crate::{paths, update};
 
@@ -202,18 +202,29 @@ pub async fn run(paths: &Paths, config: &Config, voice: bool, quiet: bool, audio
             },
         ));
     }
+    let model = crate::runtime::wake_model(paths, config);
     checks.push(check(
         "wake word model",
-        alexsay_core::wake::WakeWord::new(
-            BUILTIN_MODEL,
-            config.wake.sensitivity,
-            config.wake.refractory_s,
-        )
-        .map(|w| format!("builtin, {} samples per frame", w.frame_len()))
-        .map_err(anyhow::Error::msg),
+        model
+            .as_ref()
+            .map_err(|e| anyhow::anyhow!("{e:#}"))
+            .and_then(|(bytes, name)| {
+                alexsay_core::wake::WakeWord::new(
+                    bytes,
+                    config.wake.sensitivity,
+                    config.wake.refractory_s,
+                )
+                .map(|w| format!("{name}, {} samples per frame", w.frame_len()))
+                .map_err(anyhow::Error::msg)
+            }),
     ));
     if voice && let (Ok(capture), Ok(player)) = (capture, player) {
-        checks.push(wake_check(config, &capture, &player));
+        checks.push(wake_check(
+            config,
+            model.ok().map(|(bytes, _)| bytes).as_deref(),
+            &capture,
+            &player,
+        ));
         if claimed {
             checks.push(conversation_check(paths, config, id.ok()).await);
         }
@@ -238,9 +249,9 @@ fn record_level(capture: &Capture, length: Duration) -> f32 {
     peak
 }
 
-fn wake_check(config: &Config, capture: &Capture, player: &Player) -> Check {
+fn wake_check(config: &Config, model: Option<&[u8]>, capture: &Capture, player: &Player) -> Check {
     let engine = alexsay_core::wake::WakeWord::new(
-        BUILTIN_MODEL,
+        model.unwrap_or_default(),
         config.wake.sensitivity,
         config.wake.refractory_s,
     );

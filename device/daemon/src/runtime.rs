@@ -43,8 +43,6 @@ pub struct Runtime {
     /// Call reports: each opens a conversation of its own, read by the listening loop.
     notes: Mutex<Option<mpsc::UnboundedReceiver<String>>>,
     notes_tx: mpsc::UnboundedSender<String>,
-    /// What the player plays, for the microphone's echo canceller; taken once when the microphone opens.
-    echo_reference: Mutex<Option<std::sync::mpsc::Receiver<Vec<f32>>>>,
     /// A conversation is open: the microphone goes to GPT-Live (echo-cancelled), not to the wake word.
     in_session: Arc<AtomicBool>,
 }
@@ -54,13 +52,8 @@ impl Runtime {
         let server = Server::new(&config.server.url, id)?;
         let echo =
             alexsay_core::duplex::Echo::from_config(&config.audio.echo, cfg!(feature = "flex"));
-        let (reference, reference_rx) = if echo.needs_software() {
-            let (tx, rx) = crate::echo::link();
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
-        let player = Player::open_with(&config.audio, reference).context("opening the speaker")?;
+        let player = Player::open_with(&config.audio, echo.needs_software())
+            .context("opening the speaker")?;
         let (notes_tx, notes_rx) = mpsc::unbounded_channel();
         Ok(Self {
             paths,
@@ -73,7 +66,6 @@ impl Runtime {
             line: None,
             notes: Mutex::new(Some(notes_rx)),
             notes_tx,
-            echo_reference: Mutex::new(reference_rx),
             in_session: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -394,11 +386,7 @@ async fn update_loop(runtime: Arc<Runtime>) {
 }
 
 async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
-    let reference = runtime
-        .echo_reference
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
+    let reference = runtime.player.take_echo_reference();
     if reference.is_some() {
         info!("echo cancellation: software (AEC3)");
     }

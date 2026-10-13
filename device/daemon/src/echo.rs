@@ -2,9 +2,11 @@
 //! own sound is removed from the microphone before the wake word or the assistant hear it. The
 //! player hands over every block it plays, silence included, as the reference; AEC3 finds the delay.
 
-use std::sync::mpsc;
-
 use alexsay_core::pcm::LIVE_RATE;
+#[cfg(test)]
+use ringbuf::traits::Producer;
+use ringbuf::traits::{Consumer, Observer, Split};
+use ringbuf::{HeapCons, HeapProd, HeapRb};
 use sonora::config::EchoCanceller as Aec3;
 use sonora::{AudioProcessing, Config, StreamConfig};
 
@@ -13,22 +15,25 @@ pub const BLOCK: usize = LIVE_RATE as usize / 100;
 /// The playback and capture buffers between the canceller and the room, as a first guess AEC3 refines.
 const INITIAL_DELAY_MS: i32 = 100;
 
-/// The player's side: what it is about to play, at 16 kHz mono, after volume.
-pub type Reference = mpsc::Sender<Vec<f32>>;
+/// The player's side: what it is about to play, at 16 kHz mono, after volume. A lock-free ring, as
+/// the output callback writes it.
+pub type Reference = HeapProd<f32>;
+pub type ReferenceReader = HeapCons<f32>;
+/// Two seconds of played audio; the canceller reads it every few milliseconds.
+const REFERENCE_RING: usize = LIVE_RATE as usize * 2;
 
-pub fn link() -> (Reference, mpsc::Receiver<Vec<f32>>) {
-    mpsc::channel()
+pub fn link() -> (Reference, ReferenceReader) {
+    HeapRb::<f32>::new(REFERENCE_RING).split()
 }
 
 pub struct EchoCanceller {
     apm: AudioProcessing,
-    reference: mpsc::Receiver<Vec<f32>>,
-    render: Vec<f32>,
+    reference: ReferenceReader,
     capture: Vec<f32>,
 }
 
 impl EchoCanceller {
-    pub fn new(reference: mpsc::Receiver<Vec<f32>>) -> Self {
+    pub fn new(reference: ReferenceReader) -> Self {
         let config = Config {
             echo_canceller: Some(Aec3::default()),
             ..Default::default()
@@ -43,19 +48,16 @@ impl EchoCanceller {
         Self {
             apm,
             reference,
-            render: Vec::new(),
             capture: Vec::new(),
         }
     }
 
     /// Cleans 16 kHz mono microphone audio; whole 10 ms blocks come out, any remainder waits for the next call.
     pub fn process(&mut self, microphone: &[f32]) -> Vec<f32> {
-        while let Ok(played) = self.reference.try_recv() {
-            self.render.extend(played);
-        }
-        while self.render.len() >= BLOCK {
-            let block: Vec<f32> = self.render.drain(..BLOCK).collect();
-            let mut out = vec![0.0f32; BLOCK];
+        let mut block = [0.0f32; BLOCK];
+        let mut out = [0.0f32; BLOCK];
+        while self.reference.occupied_len() >= BLOCK {
+            self.reference.pop_slice(&mut block);
             let _ = self.apm.process_render_f32(&[&block], &mut [&mut out]);
         }
         self.capture.extend_from_slice(microphone);
@@ -113,13 +115,13 @@ mod tests {
 
     /// Plays `far` through a pretend room (40 ms late, at half level) into the canceller, plus `near` speech.
     fn run(far: &[f32], near: &[f32]) -> Vec<f32> {
-        let (reference, rx) = link();
+        let (mut reference, rx) = link();
         let mut aec = EchoCanceller::new(rx);
         let delay = 640;
         let mut out = Vec::new();
         for start in (0..far.len()).step_by(BLOCK) {
             let end = (start + BLOCK).min(far.len());
-            reference.send(far[start..end].to_vec()).unwrap();
+            assert_eq!(reference.push_slice(&far[start..end]), end - start);
             let mic: Vec<f32> = (start..end)
                 .map(|i| {
                     let echo = if i >= delay {

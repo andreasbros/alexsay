@@ -2,7 +2,7 @@
 //! the rest of the daemon sees 16 kHz mono PCM16 both ways.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -11,6 +11,8 @@ use alexsay_core::config::Audio;
 use alexsay_core::pcm::{self, LIVE_RATE};
 use anyhow::{Context, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
+use ringbuf::{HeapCons, HeapProd, HeapRb};
 use rubato::{FastFixedIn, PolynomialDegree, Resampler};
 
 const CHUNK_FRAMES: usize = 480;
@@ -199,6 +201,90 @@ impl Injection {
     }
 }
 
+/// Converts and copies on the stack: the audio callbacks never allocate, lock or log.
+const SCRATCH: usize = 256;
+/// Device audio the capture ring holds for the resampling thread.
+const CAPTURE_RING_S: usize = 2;
+/// 16 kHz chunks waiting for the async side; past this they are dropped rather than heard late.
+const CHUNKS_WAITING: usize = 32;
+/// 16 kHz samples the player can hold ahead of the speaker (an announcement, a long reply).
+const PLAYBACK_RING: usize = LIVE_RATE as usize * 120;
+/// How long the resampling thread sleeps when the ring is empty: well under one device buffer.
+const CAPTURE_POLL: Duration = Duration::from_millis(5);
+
+/// The real-time side of the microphone: convert to f32 and push into the ring, nothing else.
+fn capture_callback<T>(
+    mut ring: HeapProd<f32>,
+    dropped: Arc<AtomicU64>,
+) -> impl FnMut(&[T], &cpal::InputCallbackInfo) + Send + 'static
+where
+    T: cpal::SizedSample,
+    f32: cpal::FromSample<T>,
+{
+    move |data: &[T], _: &cpal::InputCallbackInfo| {
+        let mut scratch = [0.0f32; SCRATCH];
+        for block in data.chunks(SCRATCH) {
+            for (slot, &sample) in scratch.iter_mut().zip(block) {
+                *slot = <f32 as cpal::FromSample<T>>::from_sample_(sample);
+            }
+            let pushed = ring.push_slice(&scratch[..block.len()]);
+            if pushed < block.len() {
+                dropped.fetch_add((block.len() - pushed) as u64, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+/// Opens the input in the device's own sample format, with a fresh ring for this attempt.
+fn open_input(
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    format: cpal::SampleFormat,
+    dropped: &Arc<AtomicU64>,
+) -> Result<(cpal::Stream, HeapCons<f32>), cpal::Error> {
+    let capacity = config.sample_rate as usize * usize::from(config.channels) * CAPTURE_RING_S;
+    let (ring, consumer) = HeapRb::<f32>::new(capacity).split();
+    let dropped = Arc::clone(dropped);
+    let err = |err: cpal::Error| tracing::warn!("input stream: {err}");
+    let stream = match format {
+        cpal::SampleFormat::F32 => {
+            device.build_input_stream(config, capture_callback::<f32>(ring, dropped), err, None)
+        }
+        cpal::SampleFormat::I16 => {
+            device.build_input_stream(config, capture_callback::<i16>(ring, dropped), err, None)
+        }
+        cpal::SampleFormat::I32 => {
+            device.build_input_stream(config, capture_callback::<i32>(ring, dropped), err, None)
+        }
+        cpal::SampleFormat::U16 => {
+            device.build_input_stream(config, capture_callback::<u16>(ring, dropped), err, None)
+        }
+        _ => Err(cpal::Error::new(cpal::ErrorKind::UnsupportedConfig)),
+    }?;
+    Ok((stream, consumer))
+}
+
+/// Tries the generous buffer first, then the device's default.
+fn open_input_stream(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    format: cpal::SampleFormat,
+    dropped: &Arc<AtomicU64>,
+) -> Result<(cpal::Stream, HeapCons<f32>), cpal::Error> {
+    let generous = cpal::StreamConfig {
+        buffer_size: cpal::BufferSize::Fixed(PREFERRED_BUFFER_FRAMES),
+        ..*config
+    };
+    let (stream, ring) = open_input(device, generous, format, dropped)
+        .inspect(|_| tracing::debug!("input buffer: {PREFERRED_BUFFER_FRAMES} frames"))
+        .or_else(|e| {
+            tracing::debug!("input buffer: device default ({e})");
+            open_input(device, *config, format, dropped)
+        })?;
+    stream.play()?;
+    Ok((stream, ring))
+}
+
 impl Capture {
     /// Opens the microphone without echo cancellation (setup, recording, tests).
     pub fn open(settings: &Audio) -> anyhow::Result<Self> {
@@ -209,10 +295,12 @@ impl Capture {
     /// The canceller runs on every block to stay converged, but its output is delivered only while
     /// `wants_clean()` says so (a conversation or a call); otherwise the raw microphone goes out, as the
     /// wake word was trained on it.
-    #[allow(clippy::too_many_lines)]
+    ///
+    /// The device callback only converts and pushes into a lock-free ring; channel picking,
+    /// resampling and echo cancellation run on the resampling thread, which drains it.
     pub fn open_with(
         settings: &Audio,
-        reference: Option<std::sync::mpsc::Receiver<Vec<f32>>>,
+        reference: Option<crate::echo::ReferenceReader>,
         wants_clean: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> anyhow::Result<Self> {
         let host = cpal::default_host();
@@ -231,95 +319,53 @@ impl Capture {
         let supported = device
             .default_input_config()
             .context("reading the input device's format")?;
+        let format = supported.sample_format();
         let config = supported.config();
         let channels = usize::from(config.channels);
         let source_rate = config.sample_rate;
         let channel = settings.channel.or(DEFAULT_CHANNEL);
         let gain = settings.gain;
-        let (tx, rx) = mpsc::channel::<Vec<i16>>();
+        let (tx, rx) = mpsc::sync_channel::<Vec<i16>>(CHUNKS_WAITING);
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::channel::<anyhow::Result<()>>();
-        // The device callback only copies: channel picking and resampling run on their own thread,
-        // because this card's 21 ms buffer overruns if the callback does any real work
-        let (raw_tx, raw_rx) = mpsc::channel::<Vec<f32>>();
-        std::thread::Builder::new()
-            .name("alexsay-resample".into())
-            .spawn(move || {
-                let mut resampler = Downsampler::new(source_rate, LIVE_RATE);
-                let mut canceller = reference.map(crate::echo::EchoCanceller::new);
-                let mut since_report = std::time::Instant::now();
-                while let Ok(frames) = raw_rx.recv() {
-                    let mono = pcm::pick_channel(&frames, channels, channel);
-                    for chunk in resampler.push(&mono) {
-                        let chunk = match canceller.as_mut() {
-                            Some(canceller) => {
-                                if since_report.elapsed() >= std::time::Duration::from_secs(5) {
-                                    since_report = std::time::Instant::now();
-                                    if let Some(erle) = canceller.erle_db() {
-                                        tracing::debug!("echo cancellation removes {erle:.1} dB");
-                                    }
-                                }
-                                let clean = canceller.process(&chunk);
-                                if wants_clean() { clean } else { chunk }
-                            }
-                            None => chunk,
-                        };
-                        if chunk.is_empty() {
-                            continue;
-                        }
-                        if tx.send(pcm::to_i16(&chunk, gain)).is_err() {
-                            return;
-                        }
-                    }
-                }
-            })
-            .context("starting the resampling thread")?;
+        let stream_config = config;
         std::thread::Builder::new()
             .name("alexsay-capture".into())
             .spawn(move || {
-                let data = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let _ = raw_tx.send(data.to_vec());
+                let dropped = Arc::new(AtomicU64::new(0));
+                let (stream, ring) =
+                    match open_input_stream(&device, &stream_config, format, &dropped) {
+                        Ok(opened) => opened,
+                        Err(e) => {
+                            let _ = ready_tx.send(Err(anyhow!("opening the microphone: {e}")));
+                            return;
+                        }
+                    };
+                tracing::debug!(%format, "microphone sample format");
+                let running = Arc::new(AtomicBool::new(true));
+                let resampling = Resampling {
+                    ring,
+                    running: Arc::clone(&running),
+                    dropped,
+                    channels,
+                    channel,
+                    source_rate,
+                    gain,
+                    canceller: reference.map(crate::echo::EchoCanceller::new),
+                    wants_clean,
+                    chunks: tx,
                 };
-                let err = |err: cpal::Error| tracing::warn!("input stream: {err}");
-                if supported.sample_format() != cpal::SampleFormat::F32 {
-                    let _ = ready_tx.send(Err(anyhow!(
-                        "input sample format {} is not supported",
-                        supported.sample_format()
-                    )));
+                if let Err(e) = std::thread::Builder::new()
+                    .name("alexsay-resample".into())
+                    .spawn(move || resampling.run())
+                {
+                    let _ = ready_tx.send(Err(anyhow!("starting the resampling thread: {e}")));
                     return;
                 }
-                let data = std::sync::Arc::new(std::sync::Mutex::new(data));
-                let callback = {
-                    let data = std::sync::Arc::clone(&data);
-                    move |samples: &[f32], info: &cpal::InputCallbackInfo| {
-                        (data
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner))(
-                            samples, info
-                        );
-                    }
-                };
-                let generous = cpal::StreamConfig {
-                    buffer_size: cpal::BufferSize::Fixed(PREFERRED_BUFFER_FRAMES),
-                    ..config
-                };
-                let stream = device
-                    .build_input_stream(generous, callback.clone(), err, None)
-                    .inspect(|_| tracing::debug!("input buffer: {PREFERRED_BUFFER_FRAMES} frames"))
-                    .or_else(|e| {
-                        tracing::debug!("input buffer: device default ({e})");
-                        device.build_input_stream(config, callback, err, None)
-                    });
-                let stream = match stream.and_then(|s| s.play().map(|()| s)) {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        let _ = ready_tx.send(Err(anyhow!("opening the microphone: {e}")));
-                        return;
-                    }
-                };
                 let _ = ready_tx.send(Ok(()));
                 let _ = stop_rx.recv();
                 drop(stream);
+                running.store(false, Ordering::Relaxed);
             })
             .context("starting the capture thread")?;
         ready_rx
@@ -335,29 +381,270 @@ impl Capture {
     }
 }
 
-/// Speaker output fed from a queue of 16 kHz mono samples; silence when the queue is empty.
+/// The capture ring's consumer: device frames in, 16 kHz chunks out (picked, resampled, cleaned).
+struct Resampling {
+    ring: HeapCons<f32>,
+    running: Arc<AtomicBool>,
+    dropped: Arc<AtomicU64>,
+    channels: usize,
+    channel: Option<usize>,
+    source_rate: u32,
+    gain: f32,
+    canceller: Option<crate::echo::EchoCanceller>,
+    wants_clean: Arc<dyn Fn() -> bool + Send + Sync>,
+    chunks: mpsc::SyncSender<Vec<i16>>,
+}
+
+impl Resampling {
+    fn run(mut self) {
+        let mut resampler = Downsampler::new(self.source_rate, LIVE_RATE);
+        // Whole frames only, so a channel never shifts into the next one's place
+        let frame_len = self.channels.max(1);
+        let mut frames = vec![0.0f32; (self.source_rate as usize / 50).max(1) * frame_len];
+        let mut since_report = std::time::Instant::now();
+        let mut late_chunks = 0u64;
+        loop {
+            let whole = self.ring.occupied_len() / frame_len * frame_len;
+            if whole == 0 {
+                if !self.running.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(CAPTURE_POLL);
+                continue;
+            }
+            let take = whole.min(frames.len());
+            let read = self.ring.pop_slice(&mut frames[..take]);
+            let mono = pcm::pick_channel(&frames[..read], self.channels, self.channel);
+            for chunk in resampler.push(&mono) {
+                let chunk = match self.canceller.as_mut() {
+                    Some(canceller) => {
+                        let clean = canceller.process(&chunk);
+                        if (self.wants_clean)() { clean } else { chunk }
+                    }
+                    None => chunk,
+                };
+                if chunk.is_empty() {
+                    continue;
+                }
+                match self.chunks.try_send(pcm::to_i16(&chunk, self.gain)) {
+                    Ok(()) => {}
+                    Err(mpsc::TrySendError::Full(_)) => late_chunks += 1,
+                    Err(mpsc::TrySendError::Disconnected(_)) => return,
+                }
+            }
+            if since_report.elapsed() >= Duration::from_secs(5) {
+                since_report = std::time::Instant::now();
+                let overruns = self.dropped.swap(0, Ordering::Relaxed);
+                if overruns > 0 || late_chunks > 0 {
+                    tracing::debug!(
+                        ring_overrun_samples = overruns,
+                        dropped_chunks = late_chunks,
+                        "microphone audio dropped: nothing read it in time"
+                    );
+                    late_chunks = 0;
+                }
+                if let Some(erle) = self
+                    .canceller
+                    .as_ref()
+                    .and_then(crate::echo::EchoCanceller::erle_db)
+                {
+                    tracing::debug!("echo cancellation removes {erle:.1} dB");
+                }
+            }
+        }
+    }
+}
+
+/// Speaker output fed from a lock-free ring of 16 kHz mono samples; silence when it is empty.
 #[derive(Clone)]
 pub struct Player {
     pub device: String,
     pub sink_rate: u32,
-    queue: Arc<Mutex<VecDeque<i16>>>,
-    /// Output callbacks that ran out of queued audio partway through: heard as a break in the sound.
-    underruns: Arc<AtomicU64>,
+    /// The ring's producer. Only this side locks (several tasks queue sound); the callback never does.
+    queue: Arc<Mutex<Queue>>,
+    shared: Arc<PlaybackShared>,
+    /// What was played, for the echo canceller; taken once by the microphone.
+    reference: Arc<Mutex<Option<crate::echo::ReferenceReader>>>,
     _stop: Arc<mpsc::Sender<()>>,
 }
 
-impl Player {
-    #[allow(clippy::too_many_lines)]
-    pub fn open(settings: &Audio) -> anyhow::Result<Self> {
-        Self::open_with(settings, None)
+struct Queue {
+    ring: HeapProd<i16>,
+    pushed: u64,
+}
+
+/// Counters the callback and the producer both see.
+#[derive(Default)]
+struct PlaybackShared {
+    /// Everything pushed before this count is to be skipped (`clear`): the producer cannot pop.
+    clear_mark: AtomicU64,
+    /// Samples the callback has taken (played or skipped).
+    popped: AtomicU64,
+    /// Output callbacks that ran out of queued audio partway through: heard as a break in the sound.
+    underruns: AtomicU64,
+}
+
+/// The real-time side of the speaker: pop, upsample, copy to the echo reference. No locks, no allocation.
+struct PlaybackCallback {
+    ring: HeapCons<i16>,
+    shared: Arc<PlaybackShared>,
+    popped: u64,
+    reference: Option<HeapProd<f32>>,
+    upsampler: Upsampler,
+    volume: f32,
+    channels: usize,
+}
+
+impl PlaybackCallback {
+    fn fill<T>(&mut self, data: &mut [T])
+    where
+        T: cpal::SizedSample + cpal::FromSample<f32>,
+    {
+        let mark = self.shared.clear_mark.load(Ordering::Acquire);
+        if self.popped < mark {
+            let wanted = usize::try_from(mark - self.popped).unwrap_or(usize::MAX);
+            self.popped += self.ring.skip(wanted) as u64;
+        }
+        let had = !self.ring.is_empty();
+        let mut ran_dry = false;
+        let mut played = [0.0f32; SCRATCH];
+        let mut count = 0;
+        for frame in data.chunks_mut(self.channels.max(1)) {
+            while self.upsampler.needs_sample() {
+                let sample = if let Some(s) = self.ring.try_pop() {
+                    self.popped += 1;
+                    f32::from(s) / 32768.0 * self.volume
+                } else {
+                    ran_dry = true;
+                    0.0
+                };
+                self.upsampler.feed(sample);
+                played[count] = sample;
+                count += 1;
+                if count == SCRATCH {
+                    self.send_reference(&played);
+                    count = 0;
+                }
+            }
+            let value = T::from_sample_(self.upsampler.output());
+            for slot in frame {
+                *slot = value;
+            }
+        }
+        self.send_reference(&played[..count]);
+        self.shared.popped.store(self.popped, Ordering::Release);
+        if had && ran_dry {
+            self.shared.underruns.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
-    /// With `reference`, every block played (silence included) is copied to the echo canceller.
-    #[allow(clippy::too_many_lines)]
-    pub fn open_with(
-        settings: &Audio,
-        reference: Option<crate::echo::Reference>,
-    ) -> anyhow::Result<Self> {
+    fn send_reference(&mut self, played: &[f32]) {
+        if let Some(reference) = &mut self.reference {
+            reference.push_slice(played);
+        }
+    }
+}
+
+/// What the output callback needs, made fresh for each attempt to open the stream.
+struct PlaybackSetup {
+    shared: Arc<PlaybackShared>,
+    volume: f32,
+    channels: usize,
+    sink_rate: u32,
+    echo: bool,
+}
+
+type Opened = (
+    cpal::Stream,
+    HeapProd<i16>,
+    Option<crate::echo::ReferenceReader>,
+);
+
+impl PlaybackSetup {
+    fn open(
+        &self,
+        device: &cpal::Device,
+        config: cpal::StreamConfig,
+        format: cpal::SampleFormat,
+    ) -> Result<Opened, cpal::Error> {
+        let (producer, ring) = HeapRb::<i16>::new(PLAYBACK_RING).split();
+        let (reference, reader) = if self.echo {
+            let (reference, reader) = crate::echo::link();
+            (Some(reference), Some(reader))
+        } else {
+            (None, None)
+        };
+        let mut callback = PlaybackCallback {
+            ring,
+            shared: Arc::clone(&self.shared),
+            popped: self.shared.popped.load(Ordering::Acquire),
+            reference,
+            upsampler: Upsampler::new(LIVE_RATE, self.sink_rate),
+            volume: self.volume,
+            channels: self.channels,
+        };
+        let err = |err: cpal::Error| tracing::warn!("output stream: {err}");
+        let stream = match format {
+            cpal::SampleFormat::F32 => device.build_output_stream(
+                config,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| callback.fill(data),
+                err,
+                None,
+            ),
+            cpal::SampleFormat::I16 => device.build_output_stream(
+                config,
+                move |data: &mut [i16], _: &cpal::OutputCallbackInfo| callback.fill(data),
+                err,
+                None,
+            ),
+            cpal::SampleFormat::I32 => device.build_output_stream(
+                config,
+                move |data: &mut [i32], _: &cpal::OutputCallbackInfo| callback.fill(data),
+                err,
+                None,
+            ),
+            cpal::SampleFormat::U16 => device.build_output_stream(
+                config,
+                move |data: &mut [u16], _: &cpal::OutputCallbackInfo| callback.fill(data),
+                err,
+                None,
+            ),
+            _ => Err(cpal::Error::new(cpal::ErrorKind::UnsupportedConfig)),
+        }?;
+        Ok((stream, producer, reader))
+    }
+
+    /// Tries the generous buffer first, then the device's default.
+    fn open_stream(
+        &self,
+        device: &cpal::Device,
+        config: &cpal::StreamConfig,
+        format: cpal::SampleFormat,
+    ) -> Result<Opened, cpal::Error> {
+        let generous = cpal::StreamConfig {
+            buffer_size: cpal::BufferSize::Fixed(PREFERRED_BUFFER_FRAMES),
+            ..*config
+        };
+        let opened = self
+            .open(device, generous, format)
+            .inspect(|_| tracing::debug!("output buffer: {PREFERRED_BUFFER_FRAMES} frames"))
+            .or_else(|e| {
+                tracing::debug!("output buffer: device default ({e})");
+                self.open(device, *config, format)
+            })?;
+        opened.0.play()?;
+        Ok(opened)
+    }
+}
+
+impl Player {
+    pub fn open(settings: &Audio) -> anyhow::Result<Self> {
+        Self::open_with(settings, false)
+    }
+
+    /// With `echo`, every block played (silence included) is kept for the echo canceller
+    /// (`take_echo_reference`).
+    pub fn open_with(settings: &Audio, echo: bool) -> anyhow::Result<Self> {
         let host = cpal::default_host();
         let devices: Vec<cpal::Device> = host
             .output_devices()
@@ -374,125 +661,99 @@ impl Player {
         let supported = device
             .default_output_config()
             .context("reading the output device's format")?;
+        let format = supported.sample_format();
         let config = supported.config();
-        let channels = usize::from(config.channels);
         let sink_rate = config.sample_rate;
-        let queue = Arc::new(Mutex::new(VecDeque::<i16>::new()));
-        let volume = settings.volume;
+        let shared = Arc::new(PlaybackShared::default());
+        let setup = PlaybackSetup {
+            shared: Arc::clone(&shared),
+            volume: settings.volume,
+            channels: usize::from(config.channels),
+            sink_rate,
+            echo,
+        };
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
-        let (ready_tx, ready_rx) = mpsc::channel::<anyhow::Result<()>>();
-        let shared = Arc::clone(&queue);
-        let underruns = Arc::new(AtomicU64::new(0));
-        let counted = Arc::clone(&underruns);
+        let (ready_tx, ready_rx) = mpsc::channel::<
+            anyhow::Result<(HeapProd<i16>, Option<crate::echo::ReferenceReader>)>,
+        >();
         std::thread::Builder::new()
             .name("alexsay-playback".into())
             .spawn(move || {
-                let mut upsampler = Upsampler::new(LIVE_RATE, sink_rate);
-                let data = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let frames = data.len() / channels.max(1);
-                    let needed = upsampler.source_frames_for(frames);
-                    let mut source = Vec::with_capacity(needed);
-                    {
-                        let mut q = shared
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        let had = q.len();
-                        for _ in 0..needed {
-                            source.push(
-                                q.pop_front()
-                                    .map_or(0.0, |s| f32::from(s) / 32768.0 * volume),
-                            );
-                        }
-                        if had > 0 && had < needed {
-                            counted.fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                    if let Some(reference) = &reference {
-                        let _ = reference.send(source.clone());
-                    }
-                    let out = upsampler.render(&source, frames);
-                    for (frame, sample) in data
-                        .chunks_mut(channels.max(1))
-                        .zip(out.iter().chain(std::iter::repeat(&0.0)))
-                    {
-                        for slot in frame {
-                            *slot = *sample;
-                        }
-                    }
-                };
-                let err = |err: cpal::Error| tracing::warn!("output stream: {err}");
-                if supported.sample_format() != cpal::SampleFormat::F32 {
-                    let _ = ready_tx.send(Err(anyhow!(
-                        "output sample format {} is not supported",
-                        supported.sample_format()
-                    )));
-                    return;
-                }
-                let data = std::sync::Arc::new(std::sync::Mutex::new(data));
-                let callback = {
-                    let data = std::sync::Arc::clone(&data);
-                    move |samples: &mut [f32], info: &cpal::OutputCallbackInfo| {
-                        (data
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner))(
-                            samples, info
-                        );
-                    }
-                };
-                let generous = cpal::StreamConfig {
-                    buffer_size: cpal::BufferSize::Fixed(PREFERRED_BUFFER_FRAMES),
-                    ..config
-                };
-                let stream = device
-                    .build_output_stream(generous, callback.clone(), err, None)
-                    .inspect(|_| tracing::debug!("output buffer: {PREFERRED_BUFFER_FRAMES} frames"))
-                    .or_else(|e| {
-                        tracing::debug!("output buffer: device default ({e})");
-                        device.build_output_stream(config, callback, err, None)
-                    });
-                let stream = match stream.and_then(|s| s.play().map(|()| s)) {
-                    Ok(stream) => stream,
+                let (stream, producer, reader) = match setup.open_stream(&device, &config, format) {
+                    Ok(opened) => opened,
                     Err(e) => {
                         let _ = ready_tx.send(Err(anyhow!("opening the speaker: {e}")));
                         return;
                     }
                 };
-                let _ = ready_tx.send(Ok(()));
+                tracing::debug!(%format, "speaker sample format");
+                let _ = ready_tx.send(Ok((producer, reader)));
                 let _ = stop_rx.recv();
                 drop(stream);
             })
             .context("starting the playback thread")?;
-        ready_rx
+        let (producer, reader) = ready_rx
             .recv_timeout(Duration::from_secs(10))
             .context("the speaker did not open in time")??;
         Ok(Self {
             device: name,
             sink_rate,
-            queue,
-            underruns,
+            queue: Arc::new(Mutex::new(Queue {
+                ring: producer,
+                pushed: 0,
+            })),
+            shared,
+            reference: Arc::new(Mutex::new(reader)),
             _stop: Arc::new(stop_tx),
         })
     }
 
+    /// The played audio for the microphone's echo canceller; `None` without echo or once taken.
+    pub fn take_echo_reference(&self) -> Option<crate::echo::ReferenceReader> {
+        self.reference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Queue> {
+        self.queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn push(queue: &mut Queue, samples: &[i16]) {
+        let pushed = queue.ring.push_slice(samples);
+        queue.pushed += pushed as u64;
+        if pushed < samples.len() {
+            tracing::debug!(dropped = samples.len() - pushed, "playback queue full");
+        }
+    }
+
+    fn queued_samples(&self, queue: &Queue) -> usize {
+        let pending_skip = self
+            .shared
+            .clear_mark
+            .load(Ordering::Acquire)
+            .saturating_sub(self.shared.popped.load(Ordering::Acquire));
+        queue
+            .ring
+            .occupied_len()
+            .saturating_sub(usize::try_from(pending_skip).unwrap_or(usize::MAX))
+    }
+
     /// Queues 16 kHz mono samples behind whatever is already playing.
     pub fn play(&self, samples: &[i16]) {
-        let mut q = self
-            .queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        q.extend(samples.iter().copied());
+        Self::push(&mut self.lock(), samples);
     }
 
     /// Queues live audio (a GPT-Live reply, a phone call), dropping silence once playback is behind
     /// (see `playout`), so the delay stays near the target however the stream arrives.
     pub fn play_live(&self, samples: &[i16]) {
-        let mut q = self
-            .queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let queued_ms = (q.len() as u64) * 1_000 / u64::from(LIVE_RATE);
+        let mut queue = self.lock();
+        let queued_ms = (self.queued_samples(&queue) as u64) * 1_000 / u64::from(LIVE_RATE);
         if alexsay_core::playout::keep(queued_ms, samples) {
-            q.extend(samples.iter().copied());
+            Self::push(&mut queue, samples);
         }
     }
 
@@ -510,29 +771,26 @@ impl Player {
         self.play(&out);
     }
 
-    /// Drops everything not yet played: a barge-in or the end of a session.
+    /// Drops everything not yet played: the callback skips it on its next run.
     pub fn clear(&self) {
-        self.queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
+        let queue = self.lock();
+        self.shared
+            .clear_mark
+            .fetch_max(queue.pushed, Ordering::AcqRel);
     }
 
     /// Underruns since the last call: each one is a gap the listener hears.
     pub fn take_underruns(&self) -> u64 {
-        self.underruns.swap(0, Ordering::Relaxed)
+        self.shared.underruns.swap(0, Ordering::Relaxed)
     }
 
     pub fn queued_ms(&self) -> u64 {
-        let len = self
-            .queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .len();
-        (len as u64) * 1_000 / u64::from(LIVE_RATE)
+        let queue = self.lock();
+        (self.queued_samples(&queue) as u64) * 1_000 / u64::from(LIVE_RATE)
     }
 
     /// Blocks until the queue has drained (or the timeout passed), for clips that must finish.
+    /// Command-line tools only: the daemon's async tasks never wait on playback.
     pub fn wait_until_quiet(&self, timeout: Duration) {
         let started = std::time::Instant::now();
         while self.queued_ms() > 0 && started.elapsed() < timeout {
@@ -599,53 +857,40 @@ impl Downsampler {
     }
 }
 
-/// Playback resampling driven by the output callback: it asks for as many source frames as it needs.
+/// Playback resampling inside the output callback, one sample at a time: linear interpolation is
+/// enough for speech going up to the device rate, and it needs no buffer.
 struct Upsampler {
-    ratio: f64,
-    carry: Vec<f32>,
+    step: f64,
     position: f64,
+    previous: f32,
+    next: f32,
 }
 
 impl Upsampler {
     fn new(from: u32, to: u32) -> Self {
         Self {
-            ratio: f64::from(from) / f64::from(to),
-            carry: Vec::new(),
-            position: 0.0,
+            step: f64::from(from) / f64::from(to),
+            position: 1.0,
+            previous: 0.0,
+            next: 0.0,
         }
     }
 
-    fn source_frames_for(&self, out_frames: usize) -> usize {
-        #[allow(
-            clippy::cast_precision_loss,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss
-        )]
-        let needed = ((out_frames as f64) * self.ratio + self.position).ceil() as usize + 2;
-        needed.saturating_sub(self.carry.len())
+    fn needs_sample(&self) -> bool {
+        self.position >= 1.0
     }
 
-    /// Linear interpolation is enough for speech going up to the device rate.
-    fn render(&mut self, source: &[f32], out_frames: usize) -> Vec<f32> {
-        self.carry.extend_from_slice(source);
-        let mut out = Vec::with_capacity(out_frames);
-        for _ in 0..out_frames {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let index = self.position.floor() as usize;
-            #[allow(clippy::cast_possible_truncation)]
-            let fraction = (self.position - self.position.floor()) as f32;
-            let a = self.carry.get(index).copied().unwrap_or(0.0);
-            let b = self.carry.get(index + 1).copied().unwrap_or(a);
-            out.push(a + (b - a) * fraction);
-            self.position += self.ratio;
-        }
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let consumed = (self.position.floor() as usize).min(self.carry.len());
-        self.carry.drain(..consumed);
-        #[allow(clippy::cast_precision_loss)]
-        let consumed_f = consumed as f64;
-        self.position -= consumed_f;
-        out
+    fn feed(&mut self, sample: f32) {
+        self.previous = self.next;
+        self.next = sample;
+        self.position -= 1.0;
+    }
+
+    fn output(&mut self) -> f32 {
+        #[allow(clippy::cast_possible_truncation)]
+        let fraction = self.position as f32;
+        self.position += self.step;
+        self.previous + (self.next - self.previous) * fraction
     }
 }
 
@@ -691,16 +936,83 @@ mod tests {
         assert_eq!(same.push(&[0.1, 0.2]), vec![vec![0.1, 0.2]]);
     }
 
+    /// Runs the upsampler as the output callback does, over a whole source signal.
+    fn upsample(source: &[f32], from: u32, to: u32) -> Vec<f32> {
+        let mut up = Upsampler::new(from, to);
+        let mut input = source.iter().copied();
+        let mut out = Vec::new();
+        loop {
+            while up.needs_sample() {
+                let Some(sample) = input.next() else {
+                    return out;
+                };
+                up.feed(sample);
+            }
+            out.push(up.output());
+        }
+    }
+
     #[test]
     #[allow(clippy::cast_precision_loss)]
-    fn upsampler_produces_the_frames_asked_for() {
-        let mut up = Upsampler::new(16_000, 48_000);
-        let needed = up.source_frames_for(480);
-        assert!((160..=170).contains(&needed), "{needed}");
-        let source: Vec<f32> = (0..needed).map(|i| i as f32 / needed as f32).collect();
-        let out = up.render(&source, 480);
-        assert_eq!(out.len(), 480);
-        assert!(out[1] > out[0] && out[479] > out[400]);
-        assert!(up.source_frames_for(480) <= needed);
+    fn upsampler_keeps_the_ratio_and_the_shape() {
+        let source: Vec<f32> = (0..1_600).map(|i| i as f32 / 1_600.0).collect();
+        let out = upsample(&source, 16_000, 48_000);
+        assert!((4_790..=4_800).contains(&out.len()), "{}", out.len());
+        assert!(
+            out.windows(2).skip(3).all(|w| w[1] >= w[0]),
+            "a ramp stays a ramp"
+        );
+        assert_eq!(upsample(&source, 16_000, 16_000).len(), 1_600);
+    }
+
+    #[test]
+    fn capture_callback_converts_any_format_and_counts_what_did_not_fit() {
+        let (ring, mut consumer) = HeapRb::<f32>::new(4).split();
+        let dropped = Arc::new(AtomicU64::new(0));
+        let mut callback = capture_callback::<i16>(ring, Arc::clone(&dropped));
+        let info = cpal::InputCallbackInfo::new(cpal::InputStreamTimestamp {
+            callback: cpal::StreamInstant::new(0, 0),
+            capture: cpal::StreamInstant::new(0, 0),
+        });
+        callback(&[16_384, -16_384, 0, 32_767, 1, 2], &info);
+        let mut got = [0.0f32; 4];
+        assert_eq!(consumer.pop_slice(&mut got), 4);
+        assert!((got[0] - 0.5).abs() < 1e-3 && (got[1] + 0.5).abs() < 1e-3);
+        assert_eq!(dropped.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn playback_callback_skips_what_was_cleared_and_copies_what_it_played() {
+        let shared = Arc::new(PlaybackShared::default());
+        let (mut producer, ring) = HeapRb::<i16>::new(64).split();
+        let (reference, played) = crate::echo::link();
+        let mut callback = PlaybackCallback {
+            ring,
+            shared: Arc::clone(&shared),
+            popped: 0,
+            reference: Some(reference),
+            upsampler: Upsampler::new(LIVE_RATE, LIVE_RATE),
+            volume: 1.0,
+            channels: 2,
+        };
+        // Four samples queued, then cleared, then two new ones: only the new ones play
+        assert_eq!(producer.push_slice(&[100; 4]), 4);
+        shared.clear_mark.store(4, Ordering::Release);
+        assert_eq!(producer.push_slice(&[16_384, 16_384]), 2);
+        let mut out = [0.0f32; 8];
+        callback.fill(&mut out);
+        let heard: Vec<f32> = out.iter().copied().filter(|s| *s != 0.0).collect();
+        assert!(heard.iter().all(|s| (s - 0.5).abs() < 1e-3), "{out:?}");
+        assert_eq!(shared.popped.load(Ordering::Acquire), 6);
+        assert_eq!(
+            played.occupied_len(),
+            4,
+            "every frame's source sample goes to the canceller"
+        );
+        assert_eq!(
+            shared.underruns.load(Ordering::Relaxed),
+            1,
+            "it ran dry partway through"
+        );
     }
 }

@@ -2,7 +2,7 @@
 //! runs and reopened when it drops. Audio goes out as 8 kHz mu-law and comes back the same way.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use alexsay_core::heartbeat::DEVICE_ID_HEADER;
@@ -24,6 +24,9 @@ const RETRY_MAX: Duration = Duration::from_secs(30);
 pub struct LineSender {
     tx: mpsc::UnboundedSender<LineCommand>,
     connected: Arc<AtomicBool>,
+    /// The loudest microphone chunk sent since the last report (f32 bits), so a call the far side
+    /// cannot hear shows whether the microphone was silent or the audio never left.
+    loudest_out: Arc<AtomicU32>,
 }
 
 impl LineSender {
@@ -33,6 +36,9 @@ impl LineSender {
 
     /// 16 kHz mono PCM from the microphone, converted to what Twilio's stream carries.
     pub fn send_audio(&self, pcm16: &[i16]) {
+        // Non-negative floats order the same as their bits
+        self.loudest_out
+            .fetch_max(pcm::rms(pcm16).to_bits(), Ordering::Relaxed);
         let payload = pcm::encode_bytes(&mulaw::encode(&mulaw::halve(pcm16)));
         let _ = self.tx.send(LineCommand::Audio { payload });
     }
@@ -63,13 +69,15 @@ pub fn start(server_base: &str, id: DeviceId) -> (LineSender, mpsc::UnboundedRec
     let (tx, rx) = mpsc::unbounded_channel::<LineCommand>();
     let (signal_tx, signal_rx) = mpsc::unbounded_channel::<LineSignal>();
     let connected = Arc::new(AtomicBool::new(false));
+    let loudest_out = Arc::new(AtomicU32::new(0));
     let url = line_url(server_base);
     let flag = Arc::clone(&connected);
+    let loudest = Arc::clone(&loudest_out);
     tokio::spawn(async move {
         let mut commands = rx;
         let mut wait = RETRY_MIN;
         loop {
-            match connect_once(&url, id, &mut commands, &signal_tx, &flag).await {
+            match connect_once(&url, id, &mut commands, &signal_tx, &flag, &loudest).await {
                 Ok(()) => wait = RETRY_MIN,
                 Err(err) => {
                     tracing::debug!("line: {err:#}; retrying in {}s", wait.as_secs());
@@ -80,7 +88,14 @@ pub fn start(server_base: &str, id: DeviceId) -> (LineSender, mpsc::UnboundedRec
             tokio::time::sleep(wait).await;
         }
     });
-    (LineSender { tx, connected }, signal_rx)
+    (
+        LineSender {
+            tx,
+            connected,
+            loudest_out,
+        },
+        signal_rx,
+    )
 }
 
 async fn connect_once(
@@ -89,6 +104,7 @@ async fn connect_once(
     commands: &mut mpsc::UnboundedReceiver<LineCommand>,
     signals: &mpsc::UnboundedSender<LineSignal>,
     connected: &AtomicBool,
+    loudest_out: &AtomicU32,
 ) -> anyhow::Result<()> {
     let mut request = url.into_client_request()?;
     request
@@ -107,7 +123,8 @@ async fn connect_once(
         tokio::select! {
             _ = report.tick() => {
                 if frames_in > 0 || frames_out > 0 {
-                    tracing::debug!(frames_in, frames_out, "line audio per second (Twilio sends 50)");
+                    let mic = f32::from_bits(loudest_out.swap(0, Ordering::Relaxed));
+                    tracing::debug!(frames_in, frames_out, mic = format!("{:.1}%", mic * 100.0), "line audio per second (Twilio sends 50)");
                     (frames_in, frames_out) = (0, 0);
                 }
             }

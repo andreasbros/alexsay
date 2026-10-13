@@ -1,5 +1,6 @@
-import { env, SELF } from "cloudflare:test";
+import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DEVICE_SILENCE_MS, type LineBridge } from "../src/line_bridge";
 import {
   APP,
   addUser,
@@ -218,6 +219,88 @@ describe("speaker phone line", () => {
     const stray = await twilioWebhook("/v1/twilio/voice", { To: TWILIO_NUMBER, From: TWILIO_NUMBER, CallSid: "CA-x" });
     expect(await stray.text()).toContain("No speaker is waiting");
     line.close();
+  });
+
+  it("hangs up the call when the speaker's line drops in the middle of it", async () => {
+    await json(`${APP}/api/devices`, "POST", { id: DEVICE_ID, name: "Kitchen" }, maria);
+    await connectTwilio(maria);
+    const line = await openLine();
+    let completed: Record<string, string> | null = null;
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Calls.json`]: () => reply(201, { sid: "CA-host", status: "queued" }),
+      [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: "CA-mum", status: "queued" }),
+      [`POST ${TWILIO}/Calls/CA-host.json`]: (_req, body) => {
+        completed = formOf(body);
+        return reply(200, {});
+      },
+    });
+    const placed = await deviceTool("place_call", { name: "Mum" });
+    await twilioWebhook("/v1/twilio/voice", { To: TWILIO_NUMBER, From: TWILIO_NUMBER, CallSid: "CA-inbound" });
+    const bridge = await env.DB.prepare("SELECT token FROM bridges").first<{ token: string }>();
+    const twilio = (await openStream(bridge?.token ?? "")).webSocket;
+    if (!twilio) {
+      throw new Error("no stream socket");
+    }
+    twilio.accept();
+    twilio.send(JSON.stringify({ event: "start", start: { streamSid: "MZ3" } }));
+    expect(await nextMessage(line)).toMatchObject({ type: "call.start" });
+    const streamClosed = new Promise<void>((resolve) =>
+      twilio.addEventListener("close", () => resolve(), { once: true }),
+    );
+
+    // The speaker stops (Ctrl-C, a crash, the network): nobody is left on the user's side of the call
+    line.close();
+    await streamClosed;
+    await vi.waitFor(() => expect(completed).toEqual({ Status: "completed" }));
+    const report = await call(`${APP}/v1/device/conferences/${placed.output.conference}/report`, { headers: device });
+    expect(await report.json()).toMatchObject({ ended_by: "user" });
+    const logged = await env.DB.prepare("SELECT message FROM server_log WHERE message LIKE '%line dropped%'").first();
+    expect(logged).not.toBeNull();
+    upstream.done();
+  });
+
+  it("hangs up the call when the speaker goes silent without closing its line", async () => {
+    await json(`${APP}/api/devices`, "POST", { id: DEVICE_ID, name: "Kitchen" }, maria);
+    await connectTwilio(maria);
+    const line = await openLine();
+    let completed = 0;
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Calls.json`]: () => reply(201, { sid: "CA-host", status: "queued" }),
+      [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: "CA-mum", status: "queued" }),
+      [`POST ${TWILIO}/Calls/CA-host.json`]: () => {
+        completed += 1;
+        return reply(200, {});
+      },
+    });
+    await deviceTool("place_call", { name: "Mum" });
+    await twilioWebhook("/v1/twilio/voice", { To: TWILIO_NUMBER, From: TWILIO_NUMBER, CallSid: "CA-inbound" });
+    const bridge = await env.DB.prepare("SELECT token FROM bridges").first<{ token: string }>();
+    const twilio = (await openStream(bridge?.token ?? "")).webSocket;
+    if (!twilio) {
+      throw new Error("no stream socket");
+    }
+    twilio.accept();
+    twilio.send(JSON.stringify({ event: "start", start: { streamSid: "MZ4" } }));
+    expect(await nextMessage(line)).toMatchObject({ type: "call.start" });
+    const stub = env.LINE_BRIDGE.get(env.LINE_BRIDGE.idFromName(DEVICE_ID));
+
+    // Still talking: the check passes and comes round again
+    line.send(JSON.stringify({ type: "ping" }));
+    expect(await nextMessage(line)).toEqual({ type: "pong" });
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(completed).toBe(0);
+
+    // Then nothing from the speaker for longer than it ever stays quiet
+    await runInDurableObject(stub, (bridge: LineBridge) => {
+      bridge.deviceSeenAt = Date.now() - DEVICE_SILENCE_MS - 1;
+    });
+    const streamClosed = new Promise<void>((resolve) =>
+      twilio.addEventListener("close", () => resolve(), { once: true }),
+    );
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    await streamClosed;
+    await vi.waitFor(() => expect(completed).toBe(1));
+    upstream.done();
   });
 
   it("hangs up a speaker call through the host leg and reports who was on it", async () => {

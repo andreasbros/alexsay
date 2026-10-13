@@ -1,4 +1,18 @@
 import { DurableObject } from "cloudflare:workers";
+import { logFor } from "./log";
+import { endCall, TelephonyError } from "./telephony";
+
+/** The speaker pings every 25 s and sends audio 50 times a second while unmuted; silence past this is a dead line. */
+export const DEVICE_SILENCE_MS = 40_000;
+const CHECK_EVERY_MS = 5_000;
+
+/** What the line keeps on Twilio's stream socket. */
+interface StreamAttachment {
+  conference?: string;
+  who?: string;
+  username?: string;
+  streamSid?: string;
+}
 
 /**
  * A speaker's phone line. One object per speaker holds two WebSockets: the speaker's own, kept open
@@ -7,8 +21,12 @@ import { DurableObject } from "cloudflare:workers";
  *
  * Speaker messages: {type: "audio", payload}, {type: "hangup"}, {type: "mute", muted}, {type: "ping"}.
  * To the speaker: {type: "call.start", conference, who}, {type: "audio", payload}, {type: "call.end"}, {type: "pong"}.
+ * If the speaker's socket drops during a call, the call is hung up: nobody is left to carry it.
  */
 export class LineBridge extends DurableObject<Env> {
+  /** When the speaker last sent anything: a socket that dies without closing still goes quiet. */
+  deviceSeenAt = Date.now();
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/status") {
@@ -37,7 +55,8 @@ export class LineBridge extends DurableObject<Env> {
       pair[1].serializeAttachment({
         conference: url.searchParams.get("conference") ?? "",
         who: url.searchParams.get("who") ?? "",
-      });
+        username: url.searchParams.get("username") ?? "",
+      } satisfies StreamAttachment);
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
     return new Response("not found", { status: 404 });
@@ -45,7 +64,7 @@ export class LineBridge extends DurableObject<Env> {
 
   status(): { device: boolean; call: { conference: string; streamSid: string } | null } {
     const twilio = this.ctx.getWebSockets("twilio")[0];
-    const attachment = twilio?.deserializeAttachment() as { conference?: string; streamSid?: string } | null;
+    const attachment = twilio?.deserializeAttachment() as StreamAttachment | null;
     return {
       device: this.ctx.getWebSockets("device").length > 0,
       call: attachment?.streamSid ? { conference: attachment.conference ?? "", streamSid: attachment.streamSid } : null,
@@ -65,6 +84,7 @@ export class LineBridge extends DurableObject<Env> {
     if (this.ctx.getTags(ws).includes("twilio")) {
       this.fromTwilio(ws, message);
     } else {
+      this.deviceSeenAt = Date.now();
       this.fromDevice(ws, message);
     }
   }
@@ -74,11 +94,12 @@ export class LineBridge extends DurableObject<Env> {
     switch (message.event) {
       case "start": {
         const start = message.start as { streamSid?: string; customParameters?: Record<string, string> } | undefined;
-        const attachment = (ws.deserializeAttachment() as { conference?: string; who?: string } | null) ?? {};
+        const attachment = (ws.deserializeAttachment() as StreamAttachment | null) ?? {};
         const conference = start?.customParameters?.conference ?? attachment.conference ?? "";
         const who = start?.customParameters?.who ?? attachment.who ?? "";
         ws.serializeAttachment({ ...attachment, conference, who, streamSid: start?.streamSid ?? "" });
         send(device, { type: "call.start", conference, who });
+        this.ctx.waitUntil(this.ctx.storage.setAlarm(Date.now() + CHECK_EVERY_MS));
         break;
       }
       case "media": {
@@ -99,7 +120,7 @@ export class LineBridge extends DurableObject<Env> {
 
   private fromDevice(ws: WebSocket, message: Record<string, unknown>): void {
     const twilio = this.ctx.getWebSockets("twilio")[0];
-    const streamSid = (twilio?.deserializeAttachment() as { streamSid?: string } | null)?.streamSid;
+    const streamSid = (twilio?.deserializeAttachment() as StreamAttachment | null)?.streamSid;
     switch (message.type) {
       case "audio":
         if (twilio && streamSid && typeof message.payload === "string") {
@@ -123,10 +144,53 @@ export class LineBridge extends DurableObject<Env> {
   webSocketClose(ws: WebSocket): void {
     if (this.ctx.getTags(ws).includes("twilio")) {
       send(this.ctx.getWebSockets("device")[0], { type: "call.end" });
-    } else if (this.ctx.getWebSockets("device").length === 0) {
-      // The speaker went away: nobody is left to carry the call
-      for (const twilio of this.ctx.getWebSockets("twilio")) {
-        twilio.close(1000, "the speaker went offline");
+      return;
+    }
+    // The closing socket is still listed while its close handler runs
+    if (!this.ctx.getWebSockets("device").some((other) => other !== ws)) {
+      this.lineDropped();
+    }
+  }
+
+  /** While a call is on: a speaker gone quiet for too long has dropped its line, closed or not. */
+  async alarm(): Promise<void> {
+    if (this.ctx.getWebSockets("twilio").length === 0) {
+      return;
+    }
+    if (Date.now() - this.deviceSeenAt > DEVICE_SILENCE_MS) {
+      this.lineDropped();
+      for (const device of this.ctx.getWebSockets("device")) {
+        device.close(1001, "no word from the speaker");
+      }
+      return;
+    }
+    await this.ctx.storage.setAlarm(Date.now() + CHECK_EVERY_MS);
+  }
+
+  /** Nobody is left on the user's side: the stream closes and the call is hung up. */
+  private lineDropped(): void {
+    for (const twilio of this.ctx.getWebSockets("twilio")) {
+      // Both the alarm and the close handler can get here; the first one hangs up
+      if (twilio.readyState !== WebSocket.READY_STATE_OPEN) {
+        continue;
+      }
+      const attachment = (twilio.deserializeAttachment() as StreamAttachment | null) ?? {};
+      twilio.close(1000, "the speaker went offline");
+      if (attachment.username) {
+        this.ctx.waitUntil(this.hangUp(attachment.username, attachment.conference ?? ""));
+      }
+    }
+  }
+
+  /** The stream closing alone can leave the conference up; ending the host leg takes it down. */
+  private async hangUp(username: string, conference: string): Promise<void> {
+    const scope = { env: this.env };
+    await logFor(scope, username, "warn", `call ${conference}: the speaker's line dropped, hanging up`);
+    try {
+      await endCall(scope, username, "user");
+    } catch (err) {
+      if (!(err instanceof TelephonyError)) {
+        await logFor(scope, username, "error", `call ${conference}: hanging up failed: ${String(err)}`);
       }
     }
   }

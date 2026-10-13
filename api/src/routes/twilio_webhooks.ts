@@ -185,6 +185,7 @@ export const twilioStreamRoute = new Hono<AppEnv>().get("/stream/:token", async 
   const url = new URL("https://line/twilio");
   url.searchParams.set("conference", bridge.conference);
   url.searchParams.set("who", "speaker");
+  url.searchParams.set("username", bridge.username);
   return line.fetch(url.toString(), { headers: { upgrade: "websocket" } });
 });
 

@@ -1,12 +1,13 @@
 # The "Alexsay" classifier for LiveKit's wake word toolkit (livekit-wakeword, see scripts/wake-train.sh).
+# 10,000 clips per class: the first model, trained on a laptop CPU (13 Oct 2026); 20,000+ for a later one.
 # `just wake-train` runs it; `just wake-train small` runs a quick end-to-end check with ./alexsay-small.yaml.
 model_name: alexsay
 
 # Said like Aleksei (a-LEK-say): espeak-ng renders both spellings as ɐlˈɛkseɪ
 target_phrases: ["alexsay", "aleksay"]
 
-n_samples: 20000
-n_samples_val: 4000
+n_samples: 10000
+n_samples_val: 2000
 n_background_samples: 2000
 n_background_samples_val: 500
 tts_batch_size: 50

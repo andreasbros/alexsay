@@ -12,6 +12,7 @@ import { callReportNote } from "../lib/call_report";
 import { debugLog, isDebug, subscribeDebug } from "../lib/debug";
 import { startDemo } from "../lib/demo";
 import { type LiveSession, type LiveStatus, startLive } from "../lib/live";
+import { routeThroughHeadset } from "../lib/microphone";
 import { applyMuteState } from "../lib/mute";
 import { type LineStatus, openPhoneLine, type PhoneLine } from "../lib/phone_line";
 import { callSink, playEnd, preloadSounds, primeCallAudio, primeSounds, startConnecting } from "../lib/sounds";
@@ -118,6 +119,8 @@ export function Assistant() {
   }, [log]);
 
   const start = async (resume = false) => {
+    // Before any sound plays: the headset's microphone and speaker as one route on iPhones
+    routeThroughHeadset();
     primeSounds();
     primeCallAudio();
     // Rings from the tap until the line is ready; stopped by the first listening status or a failure

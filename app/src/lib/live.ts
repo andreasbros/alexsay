@@ -1,5 +1,6 @@
 import { api, type VoiceClient } from "../api";
 import { brief, debugLog } from "./debug";
+import { openMicrophone } from "./microphone";
 import { functionCallOf, runTool } from "./tools";
 
 export type LiveStatus = "connecting" | "listening" | "thinking" | "speaking" | "lost" | "closed" | "error";
@@ -68,9 +69,7 @@ export async function startLive(handlers: LiveHandlers, resumeFrom?: string): Pr
     .then((r) => r.id)
     .catch(() => null);
   const recorder = new Recorder(conversationId);
-  const mic = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-  });
+  const mic = await openMicrophone();
   const pc = new RTCPeerConnection();
   // In the document, so the browser never garbage-collects a playing element it cannot see
   const speaker = document.createElement("audio");

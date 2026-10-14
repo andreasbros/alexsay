@@ -1,5 +1,6 @@
 //! No I/O lives here: everything is deterministic and tested on the host.
 
+pub mod alarm;
 pub mod config;
 pub mod duplex;
 pub mod endpoint;

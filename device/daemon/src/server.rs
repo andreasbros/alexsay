@@ -210,6 +210,38 @@ impl Server {
         Ok(())
     }
 
+    /// What this speaker rings: each alarm with its next few occurrences.
+    pub async fn alarms(&self) -> anyhow::Result<Vec<alexsay_core::alarm::Alarm>> {
+        #[derive(Deserialize)]
+        struct Reply {
+            alarms: Vec<alexsay_core::alarm::Alarm>,
+        }
+        let url = format!("{}/v1/device/alarms", self.base);
+        let res = self
+            .http
+            .get(&url)
+            .header(DEVICE_ID_HEADER, self.id.to_string())
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+        Ok(Self::decode::<Reply>(res).await?.alarms)
+    }
+
+    /// What happened when alarms rang; the server ignores repeats, so a retry is safe.
+    pub async fn alarm_events(&self, events: &[alexsay_core::alarm::Event]) -> anyhow::Result<()> {
+        let url = format!("{}/v1/device/alarms/events", self.base);
+        let res = self
+            .http
+            .post(&url)
+            .header(DEVICE_ID_HEADER, self.id.to_string())
+            .json(&serde_json::json!({ "events": events }))
+            .send()
+            .await
+            .with_context(|| format!("POST {url}"))?;
+        let _: Value = Self::decode(res).await?;
+        Ok(())
+    }
+
     async fn decode<T: serde::de::DeserializeOwned>(res: reqwest::Response) -> anyhow::Result<T> {
         let status = res.status();
         if !status.is_success() {

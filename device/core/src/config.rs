@@ -17,6 +17,7 @@ pub struct Config {
     pub wake: Wake,
     pub session: SessionPolicy,
     pub sounds: Sounds,
+    pub alarms: Alarms,
     pub update: Update,
     pub log: Log,
 }
@@ -99,6 +100,13 @@ pub struct Update {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct Alarms {
+    /// How loud alarms and timers ring at the top of their rise, 0 to 1; separate from the voice.
+    pub volume: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Log {
     /// error, warn, info, debug or trace; or a tracing filter such as `info,alexsay::audio=debug`.
     pub level: String,
@@ -172,6 +180,12 @@ impl Default for Update {
     }
 }
 
+impl Default for Alarms {
+    fn default() -> Self {
+        Self { volume: 1.0 }
+    }
+}
+
 impl Default for Log {
     fn default() -> Self {
         Self {
@@ -206,6 +220,9 @@ impl Config {
         }
         if !(0.0..=1.0).contains(&self.audio.volume) {
             return bad("audio.volume must be between 0 and 1");
+        }
+        if !(0.0..=1.0).contains(&self.alarms.volume) {
+            return bad("alarms.volume must be between 0 and 1");
         }
         if !matches!(
             self.audio.echo.as_str(),
@@ -317,6 +334,10 @@ preroll_s = 1.5
 [sounds]
 enabled = true
 startup = true
+
+[alarms]
+# How loud alarms and timers ring once they have risen (they start at a fifth), 0 to 1
+volume = 1.0
 
 [update]
 auto = true

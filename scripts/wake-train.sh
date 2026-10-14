@@ -7,7 +7,9 @@
 #
 #   scripts/wake-train.sh setup [small]   the toolkit, Piper's voice, noise, room impulses and, unless small,
 #                                         16 GB of ACAV100M speech features (about 18 GB in all)
-#   scripts/wake-train.sh train [small]   the whole pipeline; the full run installs device/models/alexsay.onnx
+#   scripts/wake-train.sh train [model]   the whole pipeline for device/wake/<model>.yaml (default alexsay;
+#                                         stop and snooze are the alarm commands; small is a quick check);
+#                                         every model but small is installed as device/models/<model>.onnx
 #
 # Reproducible and all from the Nix shell (`nix develop`, then `just wake-setup` / `just wake-train`): the
 # shell's Python 3.12 and uv, every package from device/wake/requirements.lock (hashes, `uv pip sync`), each
@@ -34,9 +36,11 @@ esac
 venv="$work/.venv"
 lock="$root/device/wake/requirements.lock"
 step="${1:-}"
-config=alexsay.yaml
+name="${2:-alexsay}"
+[ "$name" = small ] && name=alexsay-small
+config="$name.yaml"
+[ -f "$root/device/wake/$config" ] || { echo "no device/wake/$config"; exit 2; }
 takes="${ALEXSAY_WAKE_TAKES:-$root/device/wake/takes}"
-[ "${2:-}" = "small" ] && config=alexsay-small.yaml
 
 # Hugging Face datasets at the commits the first model was trained from (13 Oct 2026)
 features_repo=binhpham/livekit_wakeword_features
@@ -115,7 +119,7 @@ case "$step" in
     piper_get en-us-libritts-high.config.json en-us-libritts-high.json "$piper_json_sha"
     echo "validation features (176 MB)"
     hf_get "$features_repo" "$features_rev" data/features "" '^validation_set_features\.npy$'
-    if [ "$config" = alexsay.yaml ]; then
+    if [ "$name" != alexsay-small ]; then
       echo "ACAV100M speech features (16 GB)"
       hf_get "$features_repo" "$features_rev" data/features "" '^openwakeword_features_ACAV100M_2000_hrs_16bit\.npy$'
     fi
@@ -134,23 +138,29 @@ case "$step" in
     # its own ordering never reaches the config's custom negative phrases (device/wake/hard_negatives.py)
     "$lkw" generate "$config"
     "$venv/bin/python" "$root/device/wake/hard_negatives.py" "$config"
-    "$venv/bin/python" "$root/device/wake/own_takes.py" add "$config" "$takes"
+    # The owner's takes are of "Alexsay"; the command words have none yet
+    if [ "$name" = alexsay ]; then
+      "$venv/bin/python" "$root/device/wake/own_takes.py" add "$config" "$takes"
+    fi
     "$lkw" augment "$config"
     "$lkw" train "$config"
     "$lkw" export "$config"
     "$lkw" eval "$config"
-    model=$(find "$work/output" -name alexsay.onnx -newermt "@$started" | head -1)
-    [ -n "$model" ] || { echo "the pipeline finished without output/**/alexsay.onnx"; exit 1; }
+    model_name=$(sed -n 's/^model_name: *//p' "$config")
+    model=$(find "$work/output" -name "$model_name.onnx" -newermt "@$started" | head -1)
+    [ -n "$model" ] || { echo "the pipeline finished without output/**/$model_name.onnx"; exit 1; }
     echo "trained: $model ($(du -h "$model" | cut -f1)) in $(( ($(date +%s) - started) / 60 )) minutes"
-    if [ "$config" = alexsay.yaml ]; then
-      cp "$model" "$root/device/models/alexsay.onnx"
-      echo "installed as device/models/alexsay.onnx"
+    if [ "$name" != alexsay-small ]; then
+      cp "$model" "$root/device/models/$model_name.onnx"
+      echo "installed as device/models/$model_name.onnx"
     fi
-    # How it does on the owner's own takes, next to rustpotter
-    cd "$root/device"
-    cargo run --quiet --release -p alexsay-daemon -- wake eval --dir testdata/takes --livekit-model "$model"
+    if [ "$model_name" = alexsay ]; then
+      # How it does on the owner's own takes, next to rustpotter
+      cd "$root/device"
+      cargo run --quiet --release -p alexsay-daemon -- wake eval --dir testdata/takes --livekit-model "$model"
+    fi
     ;;
   *)
-    echo "usage: scripts/wake-train.sh setup|train [small]"; exit 2
+    echo "usage: scripts/wake-train.sh setup [small] | train [alexsay|stop|snooze|small]"; exit 2
     ;;
 esac

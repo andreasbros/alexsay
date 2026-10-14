@@ -1,5 +1,6 @@
 //! `alexsay`: the speaker. One static binary: wake word, GPT-Live, the server's tools, updates.
 
+mod alarms;
 mod alsa_config;
 mod audio;
 mod control;
@@ -95,6 +96,11 @@ enum Command {
         #[command(subcommand)]
         action: CallAction,
     },
+    /// Alarms on the running speaker: what rings next, stop or snooze what rings now
+    Alarm {
+        #[command(subcommand)]
+        action: AlarmAction,
+    },
     /// Release tooling (used by the build pipeline)
     #[command(hide = true)]
     Release {
@@ -176,6 +182,16 @@ enum CallAction {
     /// Feed a WAV recording into the running speaker's microphone, for tests
     Inject {
         file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum AlarmAction {
+    List,
+    Stop,
+    /// Ring again in this many minutes (9 when left out)
+    Snooze {
+        minutes: Option<u32>,
     },
 }
 
@@ -491,6 +507,20 @@ async fn dispatch(
                     }
                 }
             }
+        }
+        Command::Alarm { action } => {
+            let command = match action {
+                AlarmAction::List => "alarm list".to_owned(),
+                AlarmAction::Stop => "alarm stop".to_owned(),
+                AlarmAction::Snooze { minutes } => {
+                    format!(
+                        "alarm snooze {}",
+                        minutes.unwrap_or(alexsay_core::alarm::DEFAULT_SNOOZE_MINUTES)
+                    )
+                }
+            };
+            println!("{}", control::send(&paths, &command).await?);
+            Ok(())
         }
         Command::Call { action } => {
             let command = match action {

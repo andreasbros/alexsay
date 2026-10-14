@@ -177,10 +177,11 @@ wait-live:
 wake-setup size="":
     scripts/wake-train.sh setup {{size}}
 
-# Train the "Alexsay" classifier (device/wake/alexsay.yaml) and install it as device/models/alexsay.onnx;
-# `just wake-train small` checks the pipeline end to end in minutes, with a model not worth shipping
-wake-train size="":
-    scripts/wake-train.sh train {{size}}
+# Train a LiveKit classifier from device/wake/<model>.yaml and install it as device/models/<model>.onnx:
+# alexsay (the wake word, default), stop and snooze (the alarm commands); `just wake-train small` checks the
+# pipeline end to end in minutes, with a model not worth shipping
+wake-train model="alexsay":
+    scripts/wake-train.sh train {{model}}
 
 # Copy the takes recorded on a speaker (`alexsay wake record`, as `[alexsay]` or `[none]`) into the training
 # takes, device/wake/takes: `just wake-takes-pull user@host`

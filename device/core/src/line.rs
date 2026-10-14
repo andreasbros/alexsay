@@ -20,6 +20,21 @@ pub enum LineEvent {
     CallEnd,
     #[serde(rename = "pong")]
     Pong,
+    /// The owner's alarms changed: fetch them again.
+    #[serde(rename = "alarms.changed")]
+    AlarmsChanged,
+    /// Stop what is ringing (one alarm, or all).
+    #[serde(rename = "alarm.stop")]
+    AlarmStop {
+        #[serde(default)]
+        id: Option<String>,
+    },
+    #[serde(rename = "alarm.snooze")]
+    AlarmSnooze {
+        #[serde(default)]
+        id: Option<String>,
+        minutes: u32,
+    },
 }
 
 /// Speaker to server.
@@ -67,6 +82,21 @@ mod tests {
             Some(LineEvent::CallEnd)
         );
         assert_eq!(LineEvent::parse(r#"{"type":"weird"}"#), None);
+        assert_eq!(
+            LineEvent::parse(r#"{"type":"alarms.changed"}"#),
+            Some(LineEvent::AlarmsChanged)
+        );
+        assert_eq!(
+            LineEvent::parse(r#"{"type":"alarm.stop"}"#),
+            Some(LineEvent::AlarmStop { id: None })
+        );
+        assert_eq!(
+            LineEvent::parse(r#"{"type":"alarm.snooze","id":"a1","minutes":9}"#),
+            Some(LineEvent::AlarmSnooze {
+                id: Some("a1".to_owned()),
+                minutes: 9
+            })
+        );
         assert_eq!(
             serde_json::to_string(&LineCommand::Hangup).unwrap(),
             r#"{"type":"hangup"}"#

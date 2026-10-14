@@ -19,6 +19,8 @@ pub struct CallState {
     pub on_call: Arc<AtomicBool>,
     pub muted: Arc<AtomicBool>,
     pub conference: Arc<std::sync::Mutex<Option<String>>>,
+    /// `alexsay alarm list|stop|snooze` (and the future hardware button) reach the alarms through it.
+    pub alarms: crate::alarms::AlarmHandle,
 }
 
 impl CallState {
@@ -82,6 +84,9 @@ pub fn reply(state: &CallState, line: Option<&LineSender>, command: &str) -> Str
             Err(err) => serde_json::json!({ "ok": false, "error": format!("{err:#}") }).to_string(),
         };
     }
+    if let Some(rest) = command.trim().strip_prefix("alarm") {
+        return alarm_reply(state, rest.trim());
+    }
     match command.trim() {
         "mute" | "unmute" => {
             let muted = command.trim() == "mute";
@@ -107,6 +112,33 @@ pub fn reply(state: &CallState, line: Option<&LineSender>, command: &str) -> Str
         })
         .to_string(),
         other => serde_json::json!({ "ok": false, "error": format!("unknown command {other}") }).to_string(),
+    }
+}
+
+fn alarm_reply(state: &CallState, command: &str) -> String {
+    use crate::alarms::AlarmSignal;
+    let mut words = command.split_whitespace();
+    match (words.next(), words.next()) {
+        (Some("list") | None, _) => state.alarms.list(crate::alarms::now_ms()).to_string(),
+        (Some("stop"), _) => {
+            let ringing = state.alarms.ringing();
+            state.alarms.send(AlarmSignal::Stop(None));
+            serde_json::json!({ "ok": true, "was_ringing": ringing }).to_string()
+        }
+        (Some("snooze"), minutes) => {
+            let minutes = minutes
+                .and_then(|m| m.parse::<u32>().ok())
+                .unwrap_or(alexsay_core::alarm::DEFAULT_SNOOZE_MINUTES)
+                .clamp(1, 120);
+            let ringing = state.alarms.ringing();
+            state.alarms.send(AlarmSignal::Snooze(None, minutes));
+            serde_json::json!({ "ok": true, "was_ringing": ringing, "minutes": minutes })
+                .to_string()
+        }
+        (Some(other), _) => {
+            serde_json::json!({ "ok": false, "error": format!("unknown alarm command {other}") })
+                .to_string()
+        }
     }
 }
 

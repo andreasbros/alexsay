@@ -42,6 +42,25 @@ pub const END: (&[Note], f32) = (
     ],
     0.7,
 );
+/// One cycle of an alarm or timer ringing: two bright pairs, looped (with its words between) until stopped.
+pub const ALARM: (&[Note], f32) = (
+    &[
+        note(880.0, 0.0, 0.14, 1.0),
+        note(1174.66, 0.16, 0.14, 1.0),
+        note(880.0, 0.48, 0.14, 1.0),
+        note(1174.66, 0.64, 0.14, 1.0),
+    ],
+    1.2,
+);
+/// A reminder's chime before its message.
+pub const REMINDER: (&[Note], f32) = (
+    &[
+        note(659.25, 0.0, 0.3, 0.9),
+        note(783.99, 0.25, 0.3, 0.9),
+        note(1046.5, 0.5, 0.5, 1.0),
+    ],
+    1.4,
+);
 /// Something failed: a low double buzz.
 pub const ERROR: (&[Note], f32) = (
     &[note(220.0, 0.0, 0.12, 0.8), note(220.0, 0.18, 0.12, 0.8)],

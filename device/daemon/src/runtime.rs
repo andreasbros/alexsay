@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use alexsay_core::alarm::Command as RingCommand;
 use alexsay_core::config::{Config, Paths};
 use alexsay_core::heartbeat::HeartbeatReply;
 use alexsay_core::identity::DeviceId;
@@ -18,6 +19,7 @@ use anyhow::Context;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
+use crate::alarms::{self, AlarmHandle, AlarmSignal, RingEnd};
 use crate::audio::{Capture, Player};
 use crate::control::{self, CallState};
 use crate::line::{self, LineSender, LineSignal};
@@ -82,6 +84,11 @@ pub struct Runtime {
     notes_tx: mpsc::UnboundedSender<String>,
     /// A conversation is open: the microphone goes to GPT-Live (echo-cancelled), not to the wake word.
     in_session: Arc<AtomicBool>,
+    /// The alarms: their schedule (on disk too), whether one rings, and signals for them.
+    pub alarms: AlarmHandle,
+    alarm_signals: Mutex<Option<mpsc::UnboundedReceiver<AlarmSignal>>>,
+    /// What the snooze conversation settled, for the ring it came from.
+    ring_command: Mutex<Option<RingCommand>>,
 }
 
 impl Runtime {
@@ -92,6 +99,15 @@ impl Runtime {
         let player = Player::open_with(&config.audio, echo.needs_software())
             .context("opening the speaker")?;
         let (notes_tx, notes_rx) = mpsc::unbounded_channel();
+        let (alarms, alarm_signals) = AlarmHandle::new();
+        *alarms
+            .schedule
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = alarms::load(&paths);
+        let call = CallState {
+            alarms: alarms.clone(),
+            ..CallState::default()
+        };
         Ok(Self {
             paths,
             config,
@@ -99,11 +115,14 @@ impl Runtime {
             server,
             player,
             latest: Arc::new(Mutex::new(None)),
-            call: CallState::default(),
+            call,
             line: None,
             notes: Mutex::new(Some(notes_rx)),
             notes_tx,
             in_session: Arc::new(AtomicBool::new(false)),
+            alarms,
+            alarm_signals: Mutex::new(Some(alarm_signals)),
+            ring_command: Mutex::new(None),
         })
     }
 
@@ -143,7 +162,7 @@ impl Runtime {
     }
 
     /// The microphone during a phone call goes to the line (unless muted) and nowhere else.
-    fn route_to_call(&self, chunk: &[i16]) -> bool {
+    pub(crate) fn route_to_call(&self, chunk: &[i16]) -> bool {
         if !self.call.on_call() {
             return false;
         }
@@ -185,6 +204,7 @@ impl Runtime {
             });
         }
         let heartbeat = tokio::spawn(heartbeat_loop(Arc::clone(&runtime)));
+        let alarm_sync = tokio::spawn(alarms::sync_loop(Arc::clone(&runtime)));
         let updates = tokio::spawn(update_loop(Arc::clone(&runtime)));
         let listening = tokio::spawn(listen_loop(Arc::clone(&runtime)));
         let monitor = tokio::spawn(playback_monitor(Arc::clone(&runtime)));
@@ -199,6 +219,7 @@ impl Runtime {
             }
         }
         heartbeat.abort();
+        alarm_sync.abort();
         updates.abort();
         monitor.abort();
         control.abort();
@@ -241,6 +262,11 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
                 runtime.play_clip(sounds::END);
                 let handed = Arc::clone(&runtime);
                 tokio::spawn(async move { hand_back(&handed, &conference).await });
+            }
+            LineSignal::AlarmsChanged => runtime.alarms.send(AlarmSignal::Changed),
+            LineSignal::AlarmStop { id } => runtime.alarms.send(AlarmSignal::Stop(id)),
+            LineSignal::AlarmSnooze { id, minutes } => {
+                runtime.alarms.send(AlarmSignal::Snooze(id, minutes));
             }
         }
     }
@@ -405,6 +431,7 @@ async fn update_loop(runtime: Arc<Runtime>) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
     let reference = runtime.player.take_echo_reference();
     if reference.is_some() {
@@ -450,6 +477,16 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take()
         .context("the listening loop runs once")?;
+    let mut alarm_signals = runtime
+        .alarm_signals
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+        .context("the listening loop runs once")?;
+    let mut commands = alarms::Commands::load();
+    let mut alarm_clock = tokio::time::interval(Duration::from_millis(250));
+    // The ring a snooze conversation is about, settled once it ends
+    let mut snoozing: Option<Vec<alexsay_core::alarm::Due>> = None;
     // Sound cards start with a burst of garbage; the wake word does not get to hear it
     let warm_up_until = Instant::now() + Duration::from_millis(1_500);
     loop {
@@ -491,12 +528,57 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
                 }
                 Opening::Report(report)
             }
+            _ = alarm_clock.tick() => {
+                // A call is not interrupted: the alarm waits for it (within its three minutes)
+                if runtime.call.on_call() {
+                    continue;
+                }
+                let due = runtime.alarms.due(alarms::now_ms());
+                if due.is_empty() {
+                    continue;
+                }
+                runtime.in_session.store(true, Ordering::Relaxed);
+                let end = alarms::ring(&runtime, &mut mic, &mut wake, &mut commands, &mut alarm_signals, due).await;
+                runtime.in_session.store(false, Ordering::Relaxed);
+                preroll.clear();
+                match end? {
+                    RingEnd::Done => continue,
+                    RingEnd::Converse { due, opening } => {
+                        *runtime.ring_command.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                        snoozing = Some(due);
+                        opening
+                    }
+                }
+            }
+            signal = alarm_signals.recv() => {
+                match signal {
+                    Some(AlarmSignal::Changed) => {
+                        let synced = Arc::clone(&runtime);
+                        tokio::spawn(async move { alarms::sync(&synced).await });
+                    }
+                    Some(other) => tracing::debug!(?other, "nothing is ringing"),
+                    None => {}
+                }
+                continue;
+            }
         };
         runtime.in_session.store(true, Ordering::Relaxed);
         let outcome = converse(&runtime, &mut mic, start).await;
         runtime.in_session.store(false, Ordering::Relaxed);
         if let Some(engine) = wake.as_mut() {
             engine.reset();
+        }
+        if let Some(due) = snoozing.take() {
+            if let Err(err) = &outcome {
+                warn!("the snooze conversation failed: {err:#}");
+            }
+            let decided = runtime
+                .ring_command
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            alarms::after_snooze_session(&runtime, due, decided);
+            continue;
         }
         after_conversation(&runtime, outcome, &mut last_refusal);
     }
@@ -534,10 +616,12 @@ fn after_conversation(
     }
 }
 
-/// What opens a conversation: the wake word (with the audio just before it), or a call's report.
+/// What opens a conversation: the wake word (with the audio just before it), a call's report, or
+/// "Alexsay, snooze" while an alarm rang (with what was said and a note on what rang).
 pub enum Opening {
     Wake(Vec<i16>),
     Report(String),
+    Snooze { preroll: Vec<i16>, note: String },
 }
 
 /// What the wake word heard over the last second, logged at debug: the level, the gain the detector
@@ -590,9 +674,11 @@ pub async fn converse(
     mic: &mut mpsc::Receiver<Vec<i16>>,
     opening: Opening,
 ) -> anyhow::Result<Outcome> {
+    let ring_session = matches!(opening, Opening::Snooze { .. });
     let (preroll, mut report) = match opening {
         Opening::Wake(preroll) => (preroll, None),
         Opening::Report(report) => (Vec::new(), Some(report)),
+        Opening::Snooze { preroll, note } => (preroll, Some(note)),
     };
     let Some(device_session) = runtime
         .server
@@ -715,6 +801,15 @@ pub async fn converse(
                         }
                         Action::RunTool(call) => {
                             tracing::debug!(tool = %call.name, arguments = %call.arguments, "tool call from the assistant");
+                            if ring_session && let Some(command) = ring_command(&call.name, &call.arguments) {
+                                info!(?command, "the alarm is settled");
+                                *runtime.ring_command.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(command);
+                                session.close_after_reply(now_ms());
+                                live.send(ClientEvent::ResponseItemCreate { item: Item::FunctionCallOutput { call_id: call.call_id, output: r#"{"ok":true}"#.to_owned() } });
+                                live.send(ClientEvent::ResponseCreate);
+                                session.tool_finished();
+                                continue;
+                            }
                             if call.name == END_TOOL {
                                 info!("the assistant ends the conversation");
                                 session.close_after_reply(now_ms());
@@ -751,6 +846,12 @@ pub async fn converse(
                 session.tool_finished();
             }
             _ = ticker.tick() => {
+                // An alarm going off ends the conversation, so the listening loop can ring it
+                if !ring_session && !runtime.alarms.due(alarms::now_ms()).is_empty() {
+                    info!("an alarm is due: closing the conversation");
+                    live.send(ClientEvent::SessionClose);
+                    break;
+                }
                 // The mute button changes what the session may hear
                 if runtime.call.muted() != muted {
                     muted = !muted;
@@ -828,6 +929,24 @@ async fn finish_playing(
     Ok(())
 }
 
+/// `snooze_alarm` or `stop_alarm` from the snooze conversation, as the ring understands them.
+fn ring_command(name: &str, arguments: &str) -> Option<RingCommand> {
+    match name {
+        "stop_alarm" => Some(RingCommand::Stop),
+        "snooze_alarm" => {
+            let minutes = serde_json::from_str::<serde_json::Value>(arguments)
+                .ok()
+                .and_then(|v| v.get("minutes").and_then(serde_json::Value::as_u64))
+                .map_or(alexsay_core::alarm::DEFAULT_SNOOZE_MINUTES, |m| {
+                    u32::try_from(m.clamp(1, 120))
+                        .unwrap_or(alexsay_core::alarm::DEFAULT_SNOOZE_MINUTES)
+                });
+            Some(RingCommand::Snooze(minutes))
+        }
+        _ => None,
+    }
+}
+
 pub fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -838,6 +957,26 @@ pub fn unix_now() -> u64 {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_snooze_conversation_settles_the_ring_with_the_minutes_asked_for() {
+        assert_eq!(
+            ring_command("snooze_alarm", r#"{"minutes":10}"#),
+            Some(RingCommand::Snooze(10))
+        );
+        assert_eq!(
+            ring_command("snooze_alarm", "{}"),
+            Some(RingCommand::Snooze(
+                alexsay_core::alarm::DEFAULT_SNOOZE_MINUTES
+            ))
+        );
+        assert_eq!(
+            ring_command("snooze_alarm", r#"{"minutes":999}"#),
+            Some(RingCommand::Snooze(120))
+        );
+        assert_eq!(ring_command("stop_alarm", "{}"), Some(RingCommand::Stop));
+        assert_eq!(ring_command("set_alarm", "{}"), None);
+    }
 
     #[test]
     fn every_command_gets_the_engine_and_model_the_config_names() {

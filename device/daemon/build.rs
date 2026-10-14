@@ -1,9 +1,9 @@
 use std::path::Path;
 
-/// The wake word models ship inside the binary. A missing file still builds, with that engine off,
+/// The wake word and alarm command models ship inside the binary. A missing file still builds, with that engine off,
 /// so a fresh checkout compiles before `alexsay wake train` or `just wake-train` has produced one.
 fn main() {
-    for name in ["alexsay.rpw", "alexsay.onnx"] {
+    for name in ["alexsay.rpw", "alexsay.onnx", "stop.onnx", "snooze.onnx"] {
         let model = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../models")
             .join(name);

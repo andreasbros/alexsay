@@ -1,0 +1,62 @@
+# "Stop": an alarm command, heard only in the 3 s after "Alexsay" while an alarm or timer rings
+# (docs/skills.md). Short windows make false fires cheap, so a smaller run than the wake word's.
+model_name: stop
+
+# "Stop", "stop alarm", "stop the timer" all start with it; the score peaks as "stop" ends
+target_phrases: ["stop", "stop it", "stop alarm", "stop the alarm", "stop the timer"]
+
+n_samples: 6000
+n_samples_val: 1200
+n_background_samples: 2000
+n_background_samples_val: 500
+tts_batch_size: 50
+
+# Said around a ringing alarm, or sounding like "stop", that must not end it
+custom_negative_phrases:
+  - "snooze"
+  - "snooze it"
+  - "top"
+  - "shop"
+  - "spot"
+  - "stock"
+  - "start"
+  - "step"
+  - "stuff"
+  - "what"
+  - "not now"
+  - "five more minutes"
+  - "alexsay"
+  - "good morning"
+  - "what time is it"
+
+noise_scales: [0.98]
+noise_scale_ws: [0.98]
+length_scales: [0.75, 1.0, 1.25]
+slerp_weights: [0.2, 0.35, 0.5, 0.65, 0.8]
+
+data_dir: ./data
+output_dir: ./output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 2
+  background_paths: [./data/backgrounds]
+  rir_paths: [./data/rirs]
+
+model:
+  model_type: conv_attention
+  model_size: small
+
+steps: 30000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 3000
+target_fp_per_hour: 0.5
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 50
+  ACAV100M_sample: 1024
+  background_noise: 50

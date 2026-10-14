@@ -58,9 +58,21 @@ impl LineSender {
 /// What the bridge tells the speaker, decoded: call audio arrives as 16 kHz PCM ready to play.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LineSignal {
-    CallStart { conference: String, who: String },
+    CallStart {
+        conference: String,
+        who: String,
+    },
     Audio(Vec<i16>),
     CallEnd,
+    /// The device channel: the alarms changed (or the line just came up), or one should stop or snooze.
+    AlarmsChanged,
+    AlarmStop {
+        id: Option<String>,
+    },
+    AlarmSnooze {
+        id: Option<String>,
+        minutes: u32,
+    },
 }
 
 pub fn line_url(server_base: &str) -> String {
@@ -135,6 +147,8 @@ async fn connect_once(
     let (socket, _) = tokio_tungstenite::connect_async(request).await?;
     connected.store(true, Ordering::Relaxed);
     tracing::info!("phone line up");
+    // Whatever changed while the line was down
+    let _ = signals.send(LineSignal::AlarmsChanged);
     let (mut sink, mut stream) = socket.split();
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
@@ -178,7 +192,7 @@ async fn connect_once(
                                     call_ping.reset();
                                 }
                                 LineSignal::CallEnd => on_call = false,
-                                LineSignal::Audio(_) => {}
+                                _ => {}
                             }
                             let _ = signals.send(signal);
                         }
@@ -207,6 +221,9 @@ pub fn decode(text: &str) -> Option<LineSignal> {
         )))),
         LineEvent::CallEnd => Some(LineSignal::CallEnd),
         LineEvent::Pong => None,
+        LineEvent::AlarmsChanged => Some(LineSignal::AlarmsChanged),
+        LineEvent::AlarmStop { id } => Some(LineSignal::AlarmStop { id }),
+        LineEvent::AlarmSnooze { id, minutes } => Some(LineSignal::AlarmSnooze { id, minutes }),
     }
 }
 
@@ -232,6 +249,13 @@ mod tests {
         assert!(samples[2] > 800 && samples[2] < 1100);
         assert_eq!(decode(r#"{"type":"pong"}"#), None);
         assert_eq!(decode(r#"{"type":"call.end"}"#), Some(LineSignal::CallEnd));
+        assert_eq!(
+            decode(r#"{"type":"alarm.snooze","minutes":5}"#),
+            Some(LineSignal::AlarmSnooze {
+                id: None,
+                minutes: 5
+            })
+        );
         assert_eq!(
             line_url("https://app.alexsay.com"),
             "wss://app.alexsay.com/v1/device/line"
@@ -281,6 +305,8 @@ mod tests {
             (seen_id, incoming)
         });
         let (sender, mut signals) = start(&format!("http://127.0.0.1:{port}"), id);
+        // Every time the line comes up the alarms are fetched again: anything may have changed meanwhile
+        assert_eq!(signals.recv().await, Some(LineSignal::AlarmsChanged));
         assert_eq!(
             signals.recv().await,
             Some(LineSignal::CallStart {
@@ -331,6 +357,7 @@ mod tests {
             DeviceId::generate(),
             every,
         );
+        assert_eq!(signals.recv().await, Some(LineSignal::AlarmsChanged));
         assert!(matches!(
             signals.recv().await,
             Some(LineSignal::CallStart { .. })

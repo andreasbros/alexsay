@@ -49,8 +49,11 @@ async fn the_binary_is_claimed_and_every_server_check_passes() {
     );
 
     let http = reqwest::Client::new();
+    // The server's Turnstile check lets its own test suite through on this header
+    let bypass = std::env::var("TURNSTILE_BYPASS").unwrap_or_default();
     let login = http
         .post(format!("{app}/api/session/login"))
+        .header("x-turnstile-bypass", bypass)
         .json(&serde_json::json!({ "username": env("E2E_USER_USERNAME"), "password": env("E2E_USER_PASSWORD") }))
         .send()
         .await

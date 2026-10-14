@@ -1,5 +1,6 @@
 import { createExecutionContext, env, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { users } from "../src/db";
 import api from "../src/index";
 import { type Mail, transport } from "../src/mail";
 import type { Scheduler } from "../src/scheduler";
@@ -81,6 +82,49 @@ describe("homes", () => {
       registration: true,
       captcha: null,
     });
+  });
+
+  it("asks Turnstile for the password sign-in and registration too, unless the suite's bypass header is sent", async () => {
+    const guarded = {
+      ...env,
+      TURNSTILE_SITE_KEY: "0x4AAAsite",
+      TURNSTILE_SECRET: "turnstile-secret",
+      TURNSTILE_BYPASS: "suite-secret-0123456789",
+    };
+    const post = (path: string, body: object, headers: Record<string, string> = {}) =>
+      api.fetch(
+        new Request(`${APP}/api/session/${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...headers },
+          body: JSON.stringify(body),
+        }),
+        guarded,
+        createExecutionContext(),
+      );
+    const bypass = { "x-turnstile-bypass": "suite-secret-0123456789" };
+    const wrong = { "x-turnstile-bypass": "suite-secret-0123456780" };
+
+    expect((await post("login", { username: "maria", password: "maria-pass" })).status).toBe(403);
+    expect((await post("login", { username: "maria", password: "maria-pass" }, wrong)).status).toBe(403);
+    expect((await post("register", { username: "sam", password: "sam-pass-123" })).status).toBe(403);
+    expect(await users.get(env.DB, "sam")).toBeNull();
+
+    const upstream = mockUpstream({
+      "POST https://challenges.cloudflare.com/turnstile/v0/siteverify": () => reply(200, { success: true }),
+    });
+    expect((await post("login", { username: "maria", password: "maria-pass", captcha: "human" })).status).toBe(200);
+    upstream.done();
+
+    expect((await post("login", { username: "maria", password: "maria-pass" }, bypass)).status).toBe(200);
+    expect((await post("register", { username: "sam", password: "sam-pass-123" }, bypass)).status).toBe(201);
+    const config = await api.fetch(
+      new Request(`${APP}/api/session/config`, { headers: bypass }),
+      guarded,
+      createExecutionContext(),
+    );
+    expect(await config.json()).toMatchObject({ captcha: null });
+    const plain = await api.fetch(new Request(`${APP}/api/session/config`), guarded, createExecutionContext());
+    expect(await plain.json()).toMatchObject({ captcha: "0x4AAAsite" });
   });
 
   it("asks Turnstile before sending a sign-in email when a site key and secret are set", async () => {

@@ -15,6 +15,8 @@ interface Env {
   /** Optional, both needed: Cloudflare Turnstile before any sign-in email (the site key is public). */
   TURNSTILE_SITE_KEY?: string;
   TURNSTILE_SECRET?: string;
+  /** Lets the e2e suite past Turnstile: the same value goes in the suite's environment. */
+  TURNSTILE_BYPASS?: string;
   /** `Alexsay <hello@alexsay.com>`: the sender every email goes out as. */
   EMAIL_FROM?: string;
 }

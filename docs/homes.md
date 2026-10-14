@@ -32,10 +32,10 @@
 
 ## Email login
 
-- A separate **Email** tab on the sign-in page, shown when email login is on. One email carries a 6-digit code and a link; either signs in.
+- A separate **Email** tab on the sign-in page, shown when email login is on. One email carries a 6-digit code and a link; either signs in. Create account (`/register`) then offers only the email form, since an unknown address gets its account with the code; with email login off it asks for a username and password.
 - Codes and link tokens are stored only as HMAC-SHA256 under a key derived from `SECRETS_KEY` (a leaked table cannot be brute-forced offline), compared in constant time, single use.
 - A code lives 10 minutes and allows 5 wrong guesses; a new code does not reset the guesses. At most 5 emails an hour per address and 30 per IP address.
-- Bots: with `TURNSTILE_SITE_KEY` (var, public) and `TURNSTILE_SECRET` (secret) set, the Email tab shows Cloudflare Turnstile and `/email/start` refuses (403 `captcha_failed`) unless Cloudflare's siteverify passes the widget's token (`api/src/turnstile.ts`). Unset, the check is off: a self-hosted server sets neither. Invitations and adding an email in Settings come from signed-in admins and need no check.
+- Bots: with `TURNSTILE_SITE_KEY` (var, public) and `TURNSTILE_SECRET` (secret) set, every way in shows Cloudflare Turnstile (Email tab, password sign-in, registration) and `/email/start`, `/login` and `/register` refuse (403 `captcha_failed`) unless Cloudflare's siteverify passes the widget's token (`api/src/turnstile.ts`). Unset, the check is off: a self-hosted server sets neither. Invitations and adding an email in Settings come from signed-in admins and need no check. The e2e suite cannot pass a managed widget: a request whose `x-turnstile-bypass` header equals the Worker secret `TURNSTILE_BYPASS` (random, in `.env`, GitHub's production environment, sent by Playwright and the speaker e2e) sees `captcha: null` and no check.
 - The start request always answers the same, whether the address has an account or not.
 - An address with no account: with registration open, signing in creates one (username from the address, made unique) with its own home; with registration closed, nothing is sent.
 - Links carry their token after `#` (`/sign-in/email#token=...`, `/invite#token=...`): it never reaches a server log or a Referer, and the page posts it, so mail scanners that fetch links cannot use it up.

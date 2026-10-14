@@ -14,8 +14,9 @@ export const provider = z.enum(["openai", "lightwave", "twilio"]);
 export const deviceId = z.string().trim().toLowerCase().uuid();
 const deviceName = z.string().trim().max(64);
 
-export const register = z.object({ username, password });
-export const login = z.object({ username: z.string().min(1).max(64), password: z.string().min(1).max(256) });
+const captcha = z.string().max(2048).optional();
+export const register = z.object({ username, password, captcha });
+export const login = z.object({ username: z.string().min(1).max(64), password: z.string().min(1).max(256), captcha });
 
 export const claimDevice = z.object({ id: deviceId, name: deviceName.default("") });
 export const updateDevice = z.object({ name: deviceName, owner: username.nullable() }).partial();
@@ -259,7 +260,7 @@ export const emailCode = z
   .regex(/^\d{6}$/, "six digits");
 /** A 32-byte random token, base64url without padding. */
 export const linkToken = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-export const emailStart = z.object({ email, captcha: z.string().max(2048).optional() });
+export const emailStart = z.object({ email, captcha });
 export const emailVerify = z.object({ email, code: emailCode });
 export const emailLink = z.object({ token: linkToken });
 export const emailConfirm = z.object({ code: emailCode });

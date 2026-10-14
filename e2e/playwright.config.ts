@@ -1,6 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.E2E_APP_URL ?? "https://app.alexsay.com";
+// A managed Turnstile widget never passes for an automated browser: the server lets this header through instead
+export const bypassHeaders: Record<string, string> = process.env.TURNSTILE_BYPASS
+  ? { "x-turnstile-bypass": process.env.TURNSTILE_BYPASS }
+  : {};
 
 export default defineConfig({
   testDir: "tests",
@@ -10,6 +14,7 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never", outputFolder: "report" }]],
   use: {
     baseURL,
+    extraHTTPHeaders: bypassHeaders,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     permissions: ["microphone"],

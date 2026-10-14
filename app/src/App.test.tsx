@@ -308,6 +308,33 @@ describe("App", () => {
     expect((screen.getByRole("button", { name: "Email me a code" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("waits for the human check on the password form and on registration too", async () => {
+    mockApi({
+      "/api/session/me": json({ error: "unauthenticated" }, 401),
+      "/api/session/config": json({ email_login: false, registration: true, captcha: "0x4AAAsite" }),
+    });
+    renderApp();
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "maria" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "maria-pass" } });
+    expect((screen.getByRole("button", { name: "Sign in" }) as HTMLButtonElement).disabled).toBe(true);
+    cleanup();
+    renderApp("/register");
+    await screen.findByLabelText("Repeat password");
+    expect((screen.getByRole("button", { name: "Create account" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("offers only the email way of creating an account when email sign-in is on", async () => {
+    mockApi({
+      "/api/session/me": json({ error: "unauthenticated" }, 401),
+      "/api/session/config": json({ email_login: true, registration: true, captcha: null }),
+    });
+    renderApp("/register");
+    expect(await screen.findByLabelText("Email")).toBeDefined();
+    expect(screen.queryByLabelText("Username")).toBeNull();
+    expect(screen.queryByLabelText("Repeat password")).toBeNull();
+    expect(screen.getByText(/the code we send makes your account/)).toBeDefined();
+  });
+
   it("sends an expired sign-in link back to the Email tab", async () => {
     mockApi({
       "/api/session/me": json({ error: "unauthenticated" }, 401),

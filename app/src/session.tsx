@@ -20,7 +20,8 @@ type Credentials = { username: string; password: string };
 export function useLogin() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ username, password }: Credentials) => api.login(username, password),
+    mutationFn: ({ username, password, captcha }: Credentials & { captcha?: string }) =>
+      api.login(username, password, captcha),
     onSuccess: (user) => client.setQueryData(["session"], user),
   });
 }
@@ -28,7 +29,8 @@ export function useLogin() {
 export function useRegister() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ username, password }: Credentials) => api.register(username, password),
+    mutationFn: ({ username, password, captcha }: Credentials & { captcha?: string }) =>
+      api.register(username, password, captcha),
     onSuccess: (user) => client.setQueryData(["session"], user),
   });
 }

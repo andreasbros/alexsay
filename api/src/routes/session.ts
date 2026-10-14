@@ -9,7 +9,7 @@ import { confirmEmail, loginEmail } from "../mail_templates";
 import { serverOrigin } from "../origin";
 import * as schemas from "../schemas";
 import { emailEnabled } from "../server_settings";
-import { captchaSiteKey, isHuman } from "../turnstile";
+import { captchaFor, passedCaptcha } from "../turnstile";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
 
@@ -19,7 +19,7 @@ export const sessionRoutes = new Hono<AppEnv>()
     c.json({
       email_login: await emailEnabled(c),
       registration: c.env.REGISTRATION !== "closed",
-      captcha: captchaSiteKey(c.env),
+      captcha: captchaFor(c),
     }),
   )
   /**
@@ -31,7 +31,7 @@ export const sessionRoutes = new Hono<AppEnv>()
     if (!(await emailEnabled(c))) {
       return c.json({ error: "email_login_off" }, 404);
     }
-    if (captchaSiteKey(c.env) && !(await isHuman(c.env, captcha ?? "", c.req.header("cf-connecting-ip") ?? ""))) {
+    if (!(await passedCaptcha(c, captcha))) {
       return c.json({ error: "captcha_failed" }, 403);
     }
     const known = (await users.byEmail(c.env.DB, email)) !== null;
@@ -112,9 +112,12 @@ export const sessionRoutes = new Hono<AppEnv>()
     return c.body(null, 204);
   })
   .post("/register", async (c) => {
-    const { username, password } = await jsonBody(c, schemas.register);
+    const { username, password, captcha } = await jsonBody(c, schemas.register);
     if (c.env.REGISTRATION === "closed") {
       return c.json({ error: "registration_closed" }, 403);
+    }
+    if (!(await passedCaptcha(c, captcha))) {
+      return c.json({ error: "captcha_failed" }, 403);
     }
     if (!(await registrationAllowed(c))) {
       return c.json({ error: "too_many" }, 429);
@@ -127,7 +130,10 @@ export const sessionRoutes = new Hono<AppEnv>()
     return c.json(await users.session(c.env.DB, username), 201);
   })
   .post("/login", async (c) => {
-    const { username, password } = await jsonBody(c, schemas.login);
+    const { username, password, captcha } = await jsonBody(c, schemas.login);
+    if (!(await passedCaptcha(c, captcha))) {
+      return c.json({ error: "captcha_failed" }, 403);
+    }
     const result = await login(c, username.trim().toLowerCase(), password);
     if (!result.ok) {
       return c.json({ error: result.reason }, result.reason === "locked" ? 429 : 401);

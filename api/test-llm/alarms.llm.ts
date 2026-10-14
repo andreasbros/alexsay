@@ -130,16 +130,17 @@ describe.skipIf(!KEY)("the model sets alarms through our tools", () => {
     await json(`${APP}/api/session/settings`, "PATCH", { locale: "en-GB", timezone: TZ }, maria);
   });
 
-  const only = async () => {
+  /** The one alarm the conversation set; on failure, what the model said and called. */
+  const only = async (turn?: Turn) => {
     const alarms = await listAlarms(maria);
-    expect(alarms, JSON.stringify(alarms)).toHaveLength(1);
+    expect(alarms, JSON.stringify({ alarms, reply: turn?.reply, calls: turn?.calls })).toHaveLength(1);
     return alarms[0] as AlarmView;
   };
 
   const oneOff: [string, () => number, string][] = [
     ["Set an alarm for 9pm", () => nextLocal("21:00"), "alarm"],
     ["Wake me up at 6:45 in the morning", () => nextLocal("06:45"), "alarm"],
-    ["Set an alarm for ten past seven on Friday", () => nextLocal("07:10", [5]), "alarm"],
+    ["Set an alarm for ten past seven this Friday", () => nextLocal("07:10", [5]), "alarm"],
     [
       "Alarm for half past eight tomorrow morning",
       () => nextLocal("08:30") + (localClock(Date.now()) < "08:30" ? 86_400_000 : 0),
@@ -150,7 +151,7 @@ describe.skipIf(!KEY)("the model sets alarms through our tools", () => {
 
   it.each(oneOff)("one-off: %s", async (utterance, expected, kind) => {
     const turn = await (await fromSpeaker()).say(utterance);
-    const alarm = await only();
+    const alarm = await only(turn);
     expect(alarm, JSON.stringify(turn.calls)).toMatchObject({
       kind,
       next_at: expected(),
@@ -160,19 +161,22 @@ describe.skipIf(!KEY)("the model sets alarms through our tools", () => {
     expect(turn.reply.length).toBeGreaterThan(0);
   });
 
-  const relative: [string, number, string, RegExp][] = [
+  // A timer always gets a label (its length by default); a plain alarm may have none
+  const relative: [string, number, string, RegExp | null][] = [
     ["Set a timer for 10 minutes", 10 * MINUTE, "timer", /./],
     ["Set a pasta timer for an hour and a half", 90 * MINUTE, "timer", /pasta/i],
     ["Timer, 45 seconds", 45_000, "timer", /./],
-    ["Wake me up in 20 minutes", 20 * MINUTE, "alarm|timer", /./],
+    ["Wake me up in 20 minutes", 20 * MINUTE, "alarm|timer", null],
   ];
 
   it.each(relative)("relative: %s", async (utterance, after, kind, label) => {
     const start = Date.now();
     const turn = await (await fromSpeaker()).say(utterance);
-    const alarm = await only();
+    const alarm = await only(turn);
     expect(alarm.kind, JSON.stringify(turn.calls)).toMatch(new RegExp(`^(${kind})$`));
-    expect(alarm.label).toMatch(label);
+    if (label) {
+      expect(alarm.label).toMatch(label);
+    }
     expect(alarm.next_at ?? 0).toBeGreaterThanOrEqual(start + after - 2_000);
     expect(alarm.next_at ?? 0).toBeLessThanOrEqual(Date.now() + after + 2_000);
   });
@@ -180,7 +184,7 @@ describe.skipIf(!KEY)("the model sets alarms through our tools", () => {
   it("a reminder with its message", async () => {
     const start = Date.now();
     const turn = await (await fromSpeaker()).say("Remind me in 2 hours to take the bins out");
-    const alarm = await only();
+    const alarm = await only(turn);
     expect(alarm.kind, JSON.stringify(turn.calls)).toBe("reminder");
     expect(`${alarm.message} ${alarm.label}`).toMatch(/bin/i);
     expect(alarm.next_at ?? 0).toBeGreaterThanOrEqual(start + 120 * MINUTE - 2_000);
@@ -190,7 +194,7 @@ describe.skipIf(!KEY)("the model sets alarms through our tools", () => {
 
   it("a reminder at a clock time is an alarm, not a memory", async () => {
     const turn = await (await fromSpeaker()).say("Remind me to call Mum tomorrow at 10am");
-    const alarm = await only();
+    const alarm = await only(turn);
     expect(alarm, JSON.stringify(turn.calls)).toMatchObject({ kind: "reminder", next_at: tomorrowAt("10:00") });
     expect(`${alarm.message} ${alarm.label}`).toMatch(/mum/i);
     expect(turn.calls.map((c) => c.name)).not.toContain("remember");
@@ -214,7 +218,7 @@ describe.skipIf(!KEY)("the model sets alarms through our tools", () => {
 
   it.each(repeating)("repeating: %s", async (utterance, _time, repeat) => {
     const turn = await (await fromSpeaker()).say(utterance);
-    const alarm = await only();
+    const alarm = await only(turn);
     expect(alarm, JSON.stringify(turn.calls)).toMatchObject({ repeat, speaker: "Kitchen" });
   });
 

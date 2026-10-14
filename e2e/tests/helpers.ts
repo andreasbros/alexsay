@@ -1,4 +1,5 @@
 import { type APIRequestContext, test as base, expect, type Page, request } from "@playwright/test";
+import { bypassHeaders } from "../playwright.config";
 
 export type Account = { username: string; password: string };
 
@@ -54,7 +55,7 @@ export async function login(page: Page, account: Account): Promise<void> {
 
 /** Signs in through the API only, for cleanup and setup calls that need no browser; dispose it when done. */
 export async function apiSession(account: Account): Promise<APIRequestContext> {
-  const context = await request.newContext({ baseURL: env.appUrl() });
+  const context = await request.newContext({ baseURL: env.appUrl(), extraHTTPHeaders: bypassHeaders });
   const res = await context.post("/api/session/login", { data: account });
   if (!res.ok()) {
     await context.dispose();

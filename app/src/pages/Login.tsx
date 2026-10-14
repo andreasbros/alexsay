@@ -43,12 +43,12 @@ export function Login() {
               <EmailSignIn captcha={config.data.captcha} />
             </Tabs.Content>
             <Tabs.Content value="password">
-              <PasswordSignIn />
+              <PasswordSignIn captcha={config.data.captcha} />
             </Tabs.Content>
           </Flex>
         </Tabs.Root>
       ) : (
-        <PasswordSignIn />
+        <PasswordSignIn captcha={config.data?.captcha ?? null} />
       )}
       {config.data?.registration !== false && (
         <Text size="2" color="gray" align="center">
@@ -59,14 +59,19 @@ export function Login() {
   );
 }
 
-function PasswordSignIn() {
+function PasswordSignIn({ captcha }: { captcha: string | null }) {
   const login = useLogin();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [human, setHuman] = useState("");
+  const [captchaRound, setCaptchaRound] = useState(0);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    login.mutate({ username, password });
+    login.mutate(
+      { username, password, captcha: captcha ? human : undefined },
+      { onSettled: () => setCaptchaRound((round) => round + 1) },
+    );
   };
   const error = errorText(login.error);
 
@@ -90,12 +95,13 @@ function PasswordSignIn() {
           onChange={(e) => setPassword(e.target.value)}
           required
         />
+        {captcha && <Captcha siteKey={captcha} resetKey={captchaRound} onToken={setHuman} />}
         {error && (
           <Callout.Root color="red" size="1">
             <Callout.Text>{error}</Callout.Text>
           </Callout.Root>
         )}
-        <Button size="3" type="submit" loading={login.isPending}>
+        <Button size="3" type="submit" loading={login.isPending} disabled={Boolean(captcha) && !human}>
           Sign in
         </Button>
       </Flex>
@@ -104,7 +110,7 @@ function PasswordSignIn() {
 }
 
 /** Two steps: the address, then the six digits from the email (or its link, which signs in by itself). */
-function EmailSignIn({ captcha }: { captcha: string | null }) {
+export function EmailSignIn({ captcha }: { captcha: string | null }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [sentTo, setSentTo] = useState<string | null>(null);

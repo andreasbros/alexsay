@@ -38,7 +38,8 @@
     "LIGHTWAVE_AUTH_URL": "https://auth.lightwaverf.com/token",
     "LIGHTWAVE_BASE_URL": "https://publicapi.lightwaverf.com/v1",
     "TWILIO_BASE_URL": "https://api.twilio.com",
-    "EMAIL_FROM": "Alexsay <hello@alexsay.com>"
+    "EMAIL_FROM": "Alexsay <hello@alexsay.com>",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFW-4i24ggywm_uP"
   },
   "observability": { "enabled": true }
 }

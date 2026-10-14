@@ -363,9 +363,10 @@ export interface ServerSettings {
 
 export const api = {
   me: () => request<User>("GET", "/api/session/me"),
-  login: (username: string, password: string) => request<User>("POST", "/api/session/login", { username, password }),
-  register: (username: string, password: string) =>
-    request<User>("POST", "/api/session/register", { username, password }),
+  login: (username: string, password: string, captcha?: string) =>
+    request<User>("POST", "/api/session/login", { username, password, captcha }),
+  register: (username: string, password: string, captcha?: string) =>
+    request<User>("POST", "/api/session/register", { username, password, captcha }),
   logout: () => request<void>("POST", "/api/session/logout"),
   authConfig: () => request<AuthConfig>("GET", "/api/session/config"),
   emailStart: (email: string, captcha?: string) =>

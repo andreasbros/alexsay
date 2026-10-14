@@ -314,6 +314,8 @@ export interface AlarmsPage {
 export interface AuthConfig {
   email_login: boolean;
   registration: boolean;
+  /** Turnstile site key when sign-in email needs a human check first. */
+  captcha: string | null;
 }
 
 export type InviteStatus = "pending" | "accepted" | "revoked" | "expired";
@@ -366,7 +368,8 @@ export const api = {
     request<User>("POST", "/api/session/register", { username, password }),
   logout: () => request<void>("POST", "/api/session/logout"),
   authConfig: () => request<AuthConfig>("GET", "/api/session/config"),
-  emailStart: (email: string) => request<{ sent: boolean }>("POST", "/api/session/email/start", { email }),
+  emailStart: (email: string, captcha?: string) =>
+    request<{ sent: boolean }>("POST", "/api/session/email/start", { email, captcha }),
   emailVerify: (email: string, code: string) => request<User>("POST", "/api/session/email/verify", { email, code }),
   emailLink: (token: string) => request<User>("POST", "/api/session/email/link", { token }),
   addEmail: (email: string) => request<{ sent: boolean }>("POST", "/api/session/email/add", { email }),

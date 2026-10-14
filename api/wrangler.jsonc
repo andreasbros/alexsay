@@ -37,7 +37,8 @@
     "OPENAI_BASE_URL": "https://api.openai.com/v1",
     "LIGHTWAVE_AUTH_URL": "https://auth.lightwaverf.com/token",
     "LIGHTWAVE_BASE_URL": "https://publicapi.lightwaverf.com/v1",
-    "TWILIO_BASE_URL": "https://api.twilio.com"
+    "TWILIO_BASE_URL": "https://api.twilio.com",
+    "EMAIL_FROM": "Alexsay <hello@alexsay.com>"
   },
   "observability": { "enabled": true }
 }

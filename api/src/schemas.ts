@@ -259,7 +259,7 @@ export const emailCode = z
   .regex(/^\d{6}$/, "six digits");
 /** A 32-byte random token, base64url without padding. */
 export const linkToken = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-export const emailStart = z.object({ email });
+export const emailStart = z.object({ email, captcha: z.string().max(2048).optional() });
 export const emailVerify = z.object({ email, code: emailCode });
 export const emailLink = z.object({ token: linkToken });
 export const emailConfirm = z.object({ code: emailCode });

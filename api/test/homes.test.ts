@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import api from "../src/index";
 import { type Mail, transport } from "../src/mail";
 import type { Scheduler } from "../src/scheduler";
-import { APP, addUser, call, json, resetDb, signIn } from "./helpers";
+import { APP, addUser, call, json, mockUpstream, reply, resetDb, signIn } from "./helpers";
 
 let sent: Mail[] = [];
 const originalSend = transport.send;
@@ -56,7 +56,11 @@ describe("homes", () => {
   });
 
   it("keeps email sign-in off until a server admin switches it on, and only with a way to send mail", async () => {
-    expect(await (await call(`${APP}/api/session/config`)).json()).toEqual({ email_login: false, registration: true });
+    expect(await (await call(`${APP}/api/session/config`)).json()).toEqual({
+      email_login: false,
+      registration: true,
+      captcha: null,
+    });
     expect((await json(`${APP}/api/session/email/start`, "POST", { email: "maria@example.com" })).status).toBe(404);
     const maria = await signIn("maria", "maria-pass");
     expect((await json(`${APP}/api/server`, "PATCH", { email_login: true }, maria)).status).toBe(403);
@@ -72,7 +76,43 @@ describe("homes", () => {
     );
     expect(noMail.status).toBe(409);
     await enableEmail();
-    expect(await (await call(`${APP}/api/session/config`)).json()).toEqual({ email_login: true, registration: true });
+    expect(await (await call(`${APP}/api/session/config`)).json()).toEqual({
+      email_login: true,
+      registration: true,
+      captcha: null,
+    });
+  });
+
+  it("asks Turnstile before sending a sign-in email when a site key and secret are set", async () => {
+    await enableEmail();
+    const guarded = { ...env, TURNSTILE_SITE_KEY: "0x4AAAsite", TURNSTILE_SECRET: "turnstile-secret" };
+    const send = (body: object) =>
+      api.fetch(
+        new Request(`${APP}/api/session/email/start`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.9" },
+          body: JSON.stringify(body),
+        }),
+        guarded,
+        createExecutionContext(),
+      );
+    const config = await api.fetch(new Request(`${APP}/api/session/config`), guarded, createExecutionContext());
+    expect(await config.json()).toMatchObject({ captcha: "0x4AAAsite" });
+
+    expect((await send({ email: "sam@example.com" })).status).toBe(403);
+    const verdicts: unknown[] = [];
+    const upstream = mockUpstream({
+      "POST https://challenges.cloudflare.com/turnstile/v0/siteverify": (_req, body) => {
+        verdicts.push(JSON.parse(body));
+        return reply(200, { success: verdicts.length > 1 });
+      },
+    });
+    expect((await send({ email: "sam@example.com", captcha: "bot" })).status).toBe(403);
+    expect(sent).toHaveLength(0);
+    expect((await send({ email: "sam@example.com", captcha: "human" })).status).toBe(200);
+    upstream.done();
+    expect(verdicts.at(-1)).toEqual({ secret: "turnstile-secret", response: "human", remoteip: "203.0.113.9" });
+    expect(lastMail("sam@example.com").subject).toMatch(/^alexsay\.com: sign-in code \d{6}$/);
   });
 
   it("signs in with an emailed code, making the account and its home for a new address", async () => {
@@ -172,7 +212,7 @@ describe("homes", () => {
     expect(invited.status).toBe(201);
     expect(await invited.json()).toMatchObject({ email: "dad@example.com", role: "user", status: "pending" });
     const mail = lastMail("dad@example.com");
-    expect(mail.subject).toBe("maria invited you to Home on alexsay");
+    expect(mail.subject).toBe("alexsay.com: maria invited you to Home");
     const token = tokenIn(mail);
     expect(await (await json(`${APP}/api/invites/lookup`, "POST", { token })).json()).toEqual({
       home: "Home",

@@ -12,6 +12,9 @@ interface Env {
   SMTP_PORT?: string;
   SMTP_USER?: string;
   SMTP_PASSWORD?: string;
-  /** `alexsay <hello@alexsay.com>`: the sender every email goes out as. */
+  /** Optional, both needed: Cloudflare Turnstile before any sign-in email (the site key is public). */
+  TURNSTILE_SITE_KEY?: string;
+  TURNSTILE_SECRET?: string;
+  /** `Alexsay <hello@alexsay.com>`: the sender every email goes out as. */
   EMAIL_FROM?: string;
 }

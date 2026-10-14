@@ -9,22 +9,30 @@ import { confirmEmail, loginEmail } from "../mail_templates";
 import { serverOrigin } from "../origin";
 import * as schemas from "../schemas";
 import { emailEnabled } from "../server_settings";
+import { captchaSiteKey, isHuman } from "../turnstile";
 import type { AppEnv } from "../types";
 import { jsonBody } from "../validate";
 
 export const sessionRoutes = new Hono<AppEnv>()
   /** What the sign-in page offers. */
   .get("/config", async (c) =>
-    c.json({ email_login: await emailEnabled(c), registration: c.env.REGISTRATION !== "closed" }),
+    c.json({
+      email_login: await emailEnabled(c),
+      registration: c.env.REGISTRATION !== "closed",
+      captcha: captchaSiteKey(c.env),
+    }),
   )
   /**
    * Sends a code and a link. The answer is the same whether or not the address has an account; with
    * registration closed, an unknown address gets nothing (an invitation makes its account instead).
    */
   .post("/email/start", async (c) => {
-    const { email } = await jsonBody(c, schemas.emailStart);
+    const { email, captcha } = await jsonBody(c, schemas.emailStart);
     if (!(await emailEnabled(c))) {
       return c.json({ error: "email_login_off" }, 404);
+    }
+    if (captchaSiteKey(c.env) && !(await isHuman(c.env, captcha ?? "", c.req.header("cf-connecting-ip") ?? ""))) {
+      return c.json({ error: "captcha_failed" }, 403);
     }
     const known = (await users.byEmail(c.env.DB, email)) !== null;
     if (!known && c.env.REGISTRATION === "closed") {

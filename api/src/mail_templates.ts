@@ -14,23 +14,27 @@ export function escapeHtml(text: string): string {
     .replaceAll("'", "&#39;");
 }
 
+/** The website's font, where the mail client loads web fonts; the system's sans otherwise. */
+const FONT = "Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+
 /**
  * Table layout with bgcolor attributes: Gmail's light theme repaints CSS-only backgrounds and
  * inverts the text, but leaves bgcolor alone. Everything passed in is already escaped.
  */
 function shell(body: string, footer: string): string {
   return `<!doctype html>
-<html><body style="margin:0;padding:0;background:#0b0b12;color:#e8e8f0">
+<html><head><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&amp;display=swap" rel="stylesheet"></head>
+<body style="margin:0;padding:0;background:#0b0b12;color:#e8e8f0">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#0b0b12" style="background:#0b0b12">
 <tr><td align="center" style="padding:28px 12px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#14141f" style="max-width:460px;background:#14141f;border:1px solid #26263a;border-radius:18px;overflow:hidden">
   <tr><td bgcolor="${ACCENT}" style="background:${ACCENT};background:linear-gradient(135deg,${ACCENT},${ACCENT_END});padding:20px 28px" align="center">
-    <span style="font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:700;letter-spacing:1px;color:#ffffff">alexsay</span>
+    <span style="font-family:${FONT};font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#ffffff">Alexsay.com</span>
   </td></tr>
-  <tr><td bgcolor="#14141f" style="background:#14141f;padding:30px 28px;font-family:Arial,Helvetica,sans-serif;color:#e8e8f0">
+  <tr><td bgcolor="#14141f" style="background:#14141f;padding:30px 28px;font-family:${FONT};color:#e8e8f0">
     ${body}
   </td></tr>
-  <tr><td bgcolor="#14141f" style="background:#14141f;padding:18px 28px;border-top:1px solid #23233a;font-family:Arial,Helvetica,sans-serif" align="center">
+  <tr><td bgcolor="#14141f" style="background:#14141f;padding:18px 28px;border-top:1px solid #23233a;font-family:${FONT}" align="center">
     <p style="margin:0;font-size:11px;line-height:1.6;color:#7a7a90">${footer}</p>
   </td></tr>
 </table>
@@ -74,7 +78,7 @@ export function loginEmail({ code, link, minutes }: { code: string; link: string
     "",
     `Someone asked to sign in to alexsay with this address. ${IGNORE}`,
   ].join("\n");
-  return { subject: `alexsay sign-in code: ${code}`, html, text };
+  return { subject: `alexsay.com: sign-in code ${code}`, html, text };
 }
 
 export function confirmEmail({
@@ -105,7 +109,7 @@ export function confirmEmail({
     "",
     `Someone asked to add this address to an alexsay account. ${IGNORE}`,
   ].join("\n");
-  return { subject: "Confirm your email for alexsay", html, text };
+  return { subject: "alexsay.com: confirm your email", html, text };
 }
 
 export function inviteEmail({
@@ -137,5 +141,5 @@ export function inviteEmail({
     "",
     "You got this because someone typed your address into alexsay. Not expecting it? Ignore this email.",
   ].join("\n");
-  return { subject: `${inviter} invited you to ${home} on alexsay`, html, text };
+  return { subject: `alexsay.com: ${inviter} invited you to ${home}`, html, text };
 }

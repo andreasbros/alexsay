@@ -13,7 +13,7 @@ export interface SmtpConfig {
   port: number;
   user: string;
   password: string;
-  /** `alexsay <hello@alexsay.com>` or a bare address. */
+  /** `Alexsay <hello@alexsay.com>` or a bare address. */
   from: string;
 }
 

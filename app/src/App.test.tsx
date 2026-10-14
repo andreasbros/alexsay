@@ -212,7 +212,7 @@ describe("App", () => {
   it("signs in with an emailed code from the Email tab when the server offers it", async () => {
     mockApi({
       "/api/session/me": json({ error: "unauthenticated" }, 401),
-      "/api/session/config": json({ email_login: true, registration: true }),
+      "/api/session/config": json({ email_login: true, registration: true, captcha: null }),
       "/api/session/email/start": json({ sent: true }),
       "/api/session/email/verify": json({ username: "sam", role: "user", home: "sam", homeRole: "admin" }),
       "/api/devices": json([]),
@@ -221,10 +221,35 @@ describe("App", () => {
     expect(await screen.findByRole("tab", { name: /Password/ })).toBeDefined();
     fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "sam@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Email me a code" }));
+    expect(await screen.findByText("Check your inbox.")).toBeDefined();
     fireEvent.change(await screen.findByLabelText("Code"), { target: { value: "12a3456" } });
     expect((screen.getByLabelText("Code") as HTMLInputElement).value).toBe("123456");
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByText(/No speakers yet/)).toBeDefined();
+  });
+
+  it("waits for the human check before sending a code when the server asks for one", async () => {
+    mockApi({
+      "/api/session/me": json({ error: "unauthenticated" }, 401),
+      "/api/session/config": json({ email_login: true, registration: true, captcha: "0x4AAAsite" }),
+    });
+    renderApp();
+    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "sam@example.com" } });
+    expect((screen.getByRole("button", { name: "Email me a code" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("sends an expired sign-in link back to the Email tab", async () => {
+    mockApi({
+      "/api/session/me": json({ error: "unauthenticated" }, 401),
+      "/api/session/config": json({ email_login: true, registration: true, captcha: null }),
+      "/api/session/email/link": json({ error: "expired" }, 401),
+    });
+    window.location.hash = `token=${"A".repeat(43)}`;
+    renderApp("/sign-in/email");
+    expect(await screen.findByText(/This link has expired/)).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByRole("button", { name: "Email me a code" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: /Email/, selected: true })).toBeDefined();
   });
 
   it("shows a home admin the people and the invitations with their status", async () => {

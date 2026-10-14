@@ -1,9 +1,10 @@
-import { Button, Callout, Flex, Tabs, Text } from "@radix-ui/themes";
+import { Button, Callout, Flex, Spinner, Tabs, Text } from "@radix-ui/themes";
 import { useMutation } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Link } from "react-router";
 import { ApiError, api } from "../api";
 import { AuthCard } from "../components/AuthCard";
+import { Captcha } from "../components/Captcha";
 import { Field } from "../components/Field";
 import { useAuthConfig, useLogin, useSignIn } from "../session";
 
@@ -15,6 +16,7 @@ const MESSAGES: Record<string, string> = {
   too_many_attempts: "Too many wrong codes. Send a new one.",
   too_many: "Too many emails to this address. Try again in an hour.",
   email_login_off: "Email sign-in is switched off on this server.",
+  captcha_failed: "Please complete the check above and try again.",
   bad_request: "Check the address and the six-digit code.",
 };
 
@@ -26,7 +28,11 @@ export function Login() {
   const config = useAuthConfig();
   return (
     <AuthCard title="Alexsay" lead="Sign in to your speakers.">
-      {config.data?.email_login ? (
+      {config.isPending ? (
+        <Flex justify="center" py="4">
+          <Spinner />
+        </Flex>
+      ) : config.data?.email_login ? (
         <Tabs.Root defaultValue="email">
           <Tabs.List>
             <Tabs.Trigger value="email">Email</Tabs.Trigger>
@@ -34,7 +40,7 @@ export function Login() {
           </Tabs.List>
           <Flex direction="column" pt="4">
             <Tabs.Content value="email">
-              <EmailSignIn />
+              <EmailSignIn captcha={config.data.captcha} />
             </Tabs.Content>
             <Tabs.Content value="password">
               <PasswordSignIn />
@@ -98,13 +104,16 @@ function PasswordSignIn() {
 }
 
 /** Two steps: the address, then the six digits from the email (or its link, which signs in by itself). */
-function EmailSignIn() {
+function EmailSignIn({ captcha }: { captcha: string | null }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const [human, setHuman] = useState("");
+  const [captchaRound, setCaptchaRound] = useState(0);
   const send = useMutation({
-    mutationFn: (address: string) => api.emailStart(address).then(() => address),
+    mutationFn: (address: string) => api.emailStart(address, captcha ? human : undefined).then(() => address),
     onSuccess: setSentTo,
+    onSettled: () => setCaptchaRound((round) => round + 1),
   });
   const verify = useSignIn(({ address, digits }: { address: string; digits: string }) =>
     api.emailVerify(address, digits),
@@ -129,12 +138,13 @@ function EmailSignIn() {
             onChange={(e) => setEmail(e.target.value)}
             required
           />
+          {captcha && <Captcha siteKey={captcha} resetKey={captchaRound} onToken={setHuman} />}
           {error && (
             <Callout.Root color="red" size="1">
               <Callout.Text>{error}</Callout.Text>
             </Callout.Root>
           )}
-          <Button size="3" type="submit" loading={send.isPending}>
+          <Button size="3" type="submit" loading={send.isPending} disabled={Boolean(captcha) && !human}>
             Email me a code
           </Button>
         </Flex>
@@ -151,7 +161,7 @@ function EmailSignIn() {
     >
       <Flex direction="column" gap="4">
         <Text size="2" color="gray">
-          If {sentTo} can sign in here, a code is on its way. Type it below, or open the link in the email.
+          Check your inbox.
         </Text>
         <Field
           id="code"

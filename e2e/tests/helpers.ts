@@ -24,16 +24,30 @@ export function mask(value: string): void {
   }
 }
 
-export async function login(page: Page, account: Account): Promise<void> {
-  await page.goto("/");
-  // With email sign-in on, the password form is the second tab
+/** The sign-in screen, with or without email sign-in on the server. */
+export const signInScreen = (page: Page) =>
+  page
+    .getByLabel("Username")
+    .or(page.getByRole("tab", { name: /Password/ }))
+    .first();
+
+/** Opens the username and password form: with email sign-in on, it is the second tab. */
+export async function openPasswordForm(page: Page): Promise<void> {
+  await expect(signInScreen(page)).toBeVisible();
   const passwordTab = page.getByRole("tab", { name: /Password/ });
-  await expect(page.getByLabel("Username").or(passwordTab).first()).toBeVisible();
   if (await passwordTab.isVisible()) {
     await passwordTab.click();
   }
+}
+
+/** The password field only: the Password tab panel carries the same label. */
+export const passwordField = (page: Page) => page.getByRole("textbox", { name: "Password" });
+
+export async function login(page: Page, account: Account): Promise<void> {
+  await page.goto("/");
+  await openPasswordForm(page);
   await page.getByLabel("Username").fill(account.username);
-  await page.getByLabel("Password").fill(account.password);
+  await passwordField(page).fill(account.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Devices" })).toBeVisible();
 }

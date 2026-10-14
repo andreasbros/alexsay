@@ -1,4 +1,4 @@
-import { smtpConfig } from "./mail";
+import { mailRoute } from "./mail";
 import type { Scope } from "./types";
 
 export interface ServerSettings {
@@ -25,5 +25,5 @@ export const serverSettings = {
 
 /** Email sign-in and invitations need both: an admin switched it on and the server can send mail. */
 export async function emailEnabled(scope: Scope): Promise<boolean> {
-  return smtpConfig(scope.env) !== null && (await serverSettings.get(scope.env.DB)).email_login;
+  return mailRoute(scope.env) !== null && (await serverSettings.get(scope.env.DB)).email_login;
 }

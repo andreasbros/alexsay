@@ -30,12 +30,35 @@ export type SocketOpener = (host: string, port: number, implicitTls: boolean) =>
 const openSocket: SocketOpener = (host, port, implicitTls) =>
   connect({ hostname: host, port }, { secureTransport: implicitTls ? "on" : "starttls", allowHalfOpen: false });
 
-/** How mail leaves the server; tests swap `send` for a recorder. */
+/**
+ * How mail leaves this server: Cloudflare's Email Service binding on Cloudflare (Workers cannot open
+ * sockets to Cloudflare's own addresses, its SMTP relay included), an SMTP relay anywhere else.
+ */
+export type MailRoute = { via: "binding"; binding: SendEmail; from: string } | { via: "smtp"; smtp: SmtpConfig };
+
+/** Tests swap `send` for a recorder. */
 export const transport = {
-  send: (config: SmtpConfig, mail: Mail) => sendSmtp(config, mail, openSocket),
+  send: (route: MailRoute, mail: Mail) =>
+    route.via === "binding" ? sendViaBinding(route.binding, route.from, mail) : sendSmtp(route.smtp, mail, openSocket),
 };
 
-/** The SMTP settings, or null when this server has no way to send email. */
+/** The route mail takes, or null when this server has no way to send email. */
+export function mailRoute(env: Env): MailRoute | null {
+  const from = env.EMAIL_FROM?.trim();
+  if (env.EMAIL && from) {
+    return { via: "binding", binding: env.EMAIL, from };
+  }
+  const smtp = smtpConfig(env);
+  return smtp ? { via: "smtp", smtp } : null;
+}
+
+/** Where the server settings say mail goes, for admins. */
+export function mailDescription(route: MailRoute): { through: string; from: string } {
+  return route.via === "binding"
+    ? { through: "Cloudflare Email Service", from: route.from }
+    : { through: route.smtp.host, from: route.smtp.from };
+}
+
 export function smtpConfig(env: Env): SmtpConfig | null {
   const host = env.SMTP_HOST?.trim();
   const user = env.SMTP_USER?.trim();
@@ -50,11 +73,28 @@ export function smtpConfig(env: Env): SmtpConfig | null {
 export class MailError extends Error {}
 
 export async function sendMail(env: Env, mail: Mail): Promise<void> {
-  const config = smtpConfig(env);
-  if (!config) {
+  const route = mailRoute(env);
+  if (!route) {
     throw new MailError("email is not configured on this server");
   }
-  await transport.send(config, mail);
+  await transport.send(route, mail);
+}
+
+export async function sendViaBinding(binding: SendEmail, from: string, mail: Mail): Promise<void> {
+  const name = /^\s*"?([^"<]*?)"?\s*</.exec(from)?.[1]?.trim();
+  const email = addressOf(from).trim();
+  try {
+    await binding.send({
+      from: name ? { name, email } : email,
+      to: mail.to,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    });
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    throw new MailError(`Email Service: ${typeof code === "string" ? `${code} ` : ""}${String(error)}`);
+  }
 }
 
 const encoder = new TextEncoder();

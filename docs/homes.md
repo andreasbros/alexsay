@@ -22,12 +22,12 @@
 ## Email
 
 - Optional per account (`users.email`, unique, lower-case, verified before it is stored). Settings adds or changes it with a code sent to the new address.
-- Sending: one SMTP client (`api/src/mail.ts`, `cloudflare:sockets`, implicit TLS on 465 or STARTTLS on 587), configured by `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` (secret) and `EMAIL_FROM`.
-  - Cloudflare: Cloudflare Email Service's relay `smtp.mx.cloudflare.net:465`, user `api_token`, password an API token with Email Sending: Edit; sends as `alexsay <hello@alexsay.com>` (the domain is onboarded in Email Service, DKIM and SPF automatic). Included in Workers Paid: 3,000 a month per account, then $0.35 per 1,000.
-  - Self-hosted: any relay, from `config.toml` (`smtp_host`, `smtp_port`, `smtp_user`, `smtp_password`, `email_from`).
+- Sending (`api/src/mail.ts`, `mailRoute`): the sender is `EMAIL_FROM` (`alexsay <hello@alexsay.com>`).
+  - Cloudflare: the Email Service binding `EMAIL` (`send_email` in `api/wrangler.jsonc`), used whenever it is bound. Workers cannot open sockets to Cloudflare's own addresses, so its SMTP relay `smtp.mx.cloudflare.net` fails from a Worker ("Stream was cancelled", 14 Oct 2026). The domain is onboarded in Email Service, DKIM and SPF automatic. Included in Workers Paid: 3,000 a month per account, then $0.35 per 1,000.
+  - Self-hosted: an SMTP client over `cloudflare:sockets` (implicit TLS on 465 or STARTTLS on 587) to any relay, from `config.toml` (`smtp_host`, `smtp_port`, `smtp_user`, `smtp_password`, `email_from`).
 - Templates (`api/src/mail_templates.ts`): one table-layout shell (works in Gmail light and dark), each email HTML plus plain text, every interpolated value HTML-escaped: login code, confirm email, home invitation.
 - Server settings (server admins, Users page): **Email login** on or off. It can only be switched on when SMTP is configured; invitations need it on.
-- Cloudflare setup (once): onboard `alexsay.com` under Email Service, Email Sending (DNS records added automatically); create an API token with Email Sending: Edit; then `wrangler secret put SMTP_PASSWORD` with the token, and `SMTP_HOST=smtp.mx.cloudflare.net`, `SMTP_USER=api_token`, `EMAIL_FROM="alexsay <hello@alexsay.com>"` as secrets or vars.
+- Cloudflare setup (once): onboard `alexsay.com` under Email Service, Email Sending (DNS records added automatically); `wrangler secret put EMAIL_FROM` (`alexsay <hello@alexsay.com>`). No API token or SMTP secrets.
 
 ## Email login
 

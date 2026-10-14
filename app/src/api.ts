@@ -356,7 +356,7 @@ export interface InviteInfo {
 
 export interface ServerSettings {
   email_login: boolean;
-  smtp: { host: string; from: string } | null;
+  mail: { through: string; from: string } | null;
 }
 
 export const api = {

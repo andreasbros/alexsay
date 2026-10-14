@@ -110,7 +110,7 @@ function ServerCard() {
       void client.invalidateQueries({ queryKey: ["auth-config"] });
     },
   });
-  const smtp = settings.data?.smtp ?? null;
+  const mail = settings.data?.mail ?? null;
   return (
     <Card size="3">
       <Flex direction="column" gap="3">
@@ -122,16 +122,16 @@ function ServerCard() {
                 update.isPending ? (update.variables?.email_login ?? false) : (settings.data?.email_login ?? false)
               }
               onCheckedChange={(on) => update.mutate({ email_login: on })}
-              disabled={!smtp}
+              disabled={!mail}
               aria-label="Email sign-in"
             />
             Email sign-in and invitations
           </Flex>
         </Text>
         <Text size="2" color="gray">
-          {smtp
-            ? `Sign-in codes and home invitations go out as ${smtp.from} through ${smtp.host}.`
-            : "This server has no SMTP relay configured, so it cannot send email."}
+          {mail
+            ? `Sign-in codes and home invitations go out as ${mail.from} through ${mail.through}.`
+            : "This server has no way to send email configured (SMTP relay or Cloudflare Email Service)."}
         </Text>
       </Flex>
     </Card>

@@ -1,5 +1,6 @@
+import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { MailError, type SmtpConfig, type SmtpSocket, sendSmtp } from "../src/mail";
+import { MailError, mailRoute, type SmtpConfig, type SmtpSocket, sendSmtp, sendViaBinding } from "../src/mail";
 import { escapeHtml, inviteEmail, loginEmail } from "../src/mail_templates";
 
 const config: SmtpConfig = {
@@ -120,6 +121,50 @@ describe("SMTP client", () => {
     await expect(sendSmtp(config, mail, server({ RCPT: "550 no such user\r\n" }).open)).rejects.toThrow(MailError);
     await expect(sendSmtp(config, { ...mail, subject: "hi\r\nBcc: x@y.z" }, server().open)).rejects.toThrow(
       /line break/,
+    );
+  });
+});
+
+/** Records what reaches Cloudflare's Email Service binding, or throws like it does. */
+function emailBinding(failure?: Error) {
+  const sent: unknown[] = [];
+  const binding = {
+    send: async (message: unknown) => {
+      if (failure) {
+        throw failure;
+      }
+      sent.push(message);
+      return { messageId: "m1" };
+    },
+  } as unknown as SendEmail;
+  return { binding, sent };
+}
+
+describe("Cloudflare Email Service", () => {
+  it("is preferred over SMTP when bound, since Workers cannot reach Cloudflare's own relay", () => {
+    const { binding } = emailBinding();
+    expect(mailRoute({ ...env, EMAIL: binding })).toMatchObject({ via: "binding", from: config.from });
+    expect(mailRoute({ ...env, EMAIL: undefined })).toMatchObject({ via: "smtp", smtp: { host: "smtp.example.test" } });
+    expect(mailRoute({ ...env, EMAIL: binding, EMAIL_FROM: undefined, SMTP_HOST: undefined })).toBeNull();
+  });
+
+  it("sends the sender's name apart from its address and reports the binding's error code", async () => {
+    const { binding, sent } = emailBinding();
+    await sendViaBinding(binding, "alexsay <hello@alexsay.test>", mail);
+    expect(sent).toEqual([
+      {
+        from: { name: "alexsay", email: "hello@alexsay.test" },
+        to: mail.to,
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
+      },
+    ]);
+    await sendViaBinding(binding, "hello@alexsay.test", mail);
+    expect(sent.at(-1)).toMatchObject({ from: "hello@alexsay.test" });
+    const refused = Object.assign(new Error("sender not verified"), { code: "E_SENDER_NOT_VERIFIED" });
+    await expect(sendViaBinding(emailBinding(refused).binding, config.from, mail)).rejects.toThrow(
+      /Email Service: E_SENDER_NOT_VERIFIED/,
     );
   });
 });

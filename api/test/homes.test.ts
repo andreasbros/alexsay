@@ -55,22 +55,22 @@ describe("homes", () => {
     expect(await (await call(`${APP}/api/home`, {}, tom)).json()).toMatchObject({ name: "Flat 4" });
   });
 
-  it("keeps email sign-in off until a server admin switches it on, and only with SMTP configured", async () => {
+  it("keeps email sign-in off until a server admin switches it on, and only with a way to send mail", async () => {
     expect(await (await call(`${APP}/api/session/config`)).json()).toEqual({ email_login: false, registration: true });
     expect((await json(`${APP}/api/session/email/start`, "POST", { email: "maria@example.com" })).status).toBe(404);
     const maria = await signIn("maria", "maria-pass");
     expect((await json(`${APP}/api/server`, "PATCH", { email_login: true }, maria)).status).toBe(403);
     const admin = await signIn("andreas", "correct horse");
-    const noSmtp = await api.fetch(
+    const noMail = await api.fetch(
       new Request(`${APP}/api/server`, {
         method: "PATCH",
         headers: { "content-type": "application/json", cookie: admin },
         body: JSON.stringify({ email_login: true }),
       }),
-      { ...env, SMTP_HOST: undefined },
+      { ...env, EMAIL: undefined, SMTP_HOST: undefined },
       createExecutionContext(),
     );
-    expect(noSmtp.status).toBe(409);
+    expect(noMail.status).toBe(409);
     await enableEmail();
     expect(await (await call(`${APP}/api/session/config`)).json()).toEqual({ email_login: true, registration: true });
   });

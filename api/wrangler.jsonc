@@ -19,6 +19,7 @@
       "migrations_dir": "migrations"
     }
   ],
+  "send_email": [{ "name": "EMAIL" }],
   "triggers": { "crons": ["23 3 * * *"] },
   "durable_objects": {
     "bindings": [

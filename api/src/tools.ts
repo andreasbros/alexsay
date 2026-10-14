@@ -165,7 +165,7 @@ export const TOOLS: Tool[] = [
       name: "remember",
       description:
         "Stores something worth keeping across conversations: a preference, a person, how the home is set up, a " +
-        "routine, a reminder, an important fact. One short sentence per memory.",
+        'routine, a note, an important fact. One short sentence per memory. Never for "remind me": that is set_alarm.',
       parameters: {
         type: "object",
         properties: {

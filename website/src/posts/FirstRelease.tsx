@@ -40,7 +40,7 @@ export function FirstRelease() {
         </li>
         <li>
           <strong>Memory.</strong> After each conversation, the assistant keeps the facts that matter: your people,
-          home, routines and reminders. You can read and edit all of it in the app.
+          home, routines and notes. You can read and edit all of it in the app.
         </li>
         <li>
           <strong>Phone calls.</strong> With Twilio connected, it calls, texts and WhatsApps your contacts. It joins the

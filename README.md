@@ -86,7 +86,7 @@ Everything lives under `~/.local/alexsay`: `config.toml` and `data/` (identity, 
 ### How the assistant builds its memory
 
 1. Every conversation, from the speaker or the browser, is recorded turn by turn.
-2. When it ends, a backend model reads the transcript with your stored memories and writes a two-sentence summary, then adds, updates or removes memory records: preferences, people, home, routines, reminders and facts.
+2. When it ends, a backend model reads the transcript with your stored memories and writes a two-sentence summary, then adds, updates or removes memory records: preferences, people, home, routines, notes and facts.
 3. Every new session opens with those memories, the recent summaries, your locale and the time where you are.
 4. During a conversation the assistant can `remember`, `forget`, search past conversations and read a transcript back, and you can edit everything under **Memory** in the app.
 

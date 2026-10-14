@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { ruleFrom } from "../src/alarm_tools";
 import { runDue } from "../src/scheduler";
 import { toolDefinitions } from "../src/tools";
+import { MEMORY_CATEGORIES } from "../src/types";
 import { APP, addUser, call, DEVICE_ID, json, resetDb, signIn } from "./helpers";
 
 const SECOND_DEVICE = "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d";
@@ -241,6 +242,17 @@ describe("alarms skill", () => {
     const out = await tool(maria, "set_alarm", { in_seconds: 60 });
     const res = await json(`${APP}/api/alarms/${out.id}`, "PATCH", { device_id: SECOND_DEVICE }, maria);
     expect(res.status).toBe(400);
+  });
+
+  it("sends every 'remind me' to set_alarm, and no memory tool or category speaks of reminders", () => {
+    const tools = toolDefinitions(true, true, true, true, new Set(["alarms"]));
+    const set = tools.find((t) => t.name === "set_alarm");
+    expect(set?.description).toContain("Every 'remind me to X' is this tool with kind reminder");
+    const remember = tools.find((t) => t.name === "remember");
+    expect(JSON.stringify(remember)).not.toMatch(/reminders/i);
+    expect(remember?.description).toContain('Never for "remind me": that is set_alarm');
+    expect(MEMORY_CATEGORIES).toContain("notes");
+    expect(MEMORY_CATEGORIES).not.toContain("reminders" as never);
   });
 
   it("takes the skill's tools away when the user switches it off", async () => {

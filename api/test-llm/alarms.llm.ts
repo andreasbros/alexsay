@@ -101,6 +101,14 @@ const fromWeb = async (cookie: string) =>
 const listAlarms = async (cookie: string) =>
   ((await (await call(`${APP}/api/alarms`, {}, cookie)).json()) as { alarms: AlarmView[] }).alarms;
 
+const memories = async (cookie: string) => (await (await call(`${APP}/api/memories`, {}, cookie)).json()) as unknown[];
+
+/** Tomorrow at hh:mm on the London clock. */
+const tomorrowAt = (time: string) => {
+  const next = nextLocal(time);
+  return localClock(Date.now()) < time ? next + 86_400_000 : next;
+};
+
 /** The next time the London clock shows hh:mm on one of these days (all days by default). */
 const nextLocal = (time: string, days = [0, 1, 2, 3, 4, 5, 6]) =>
   nextOccurrence({ kind: "repeat", time, days, tz: TZ } satisfies Rule, Date.now()) ?? 0;
@@ -177,6 +185,23 @@ describe.skipIf(!KEY)("the model sets alarms through our tools", () => {
     expect(`${alarm.message} ${alarm.label}`).toMatch(/bin/i);
     expect(alarm.next_at ?? 0).toBeGreaterThanOrEqual(start + 120 * MINUTE - 2_000);
     expect(alarm.next_at ?? 0).toBeLessThanOrEqual(Date.now() + 120 * MINUTE + 2_000);
+    expect(await memories(maria)).toEqual([]);
+  });
+
+  it("a reminder at a clock time is an alarm, not a memory", async () => {
+    const turn = await (await fromSpeaker()).say("Remind me to call Mum tomorrow at 10am");
+    const alarm = await only();
+    expect(alarm, JSON.stringify(turn.calls)).toMatchObject({ kind: "reminder", next_at: tomorrowAt("10:00") });
+    expect(`${alarm.message} ${alarm.label}`).toMatch(/mum/i);
+    expect(turn.calls.map((c) => c.name)).not.toContain("remember");
+    expect(await memories(maria)).toEqual([]);
+  });
+
+  it("asks when for a reminder without a time, and sets nothing yet", async () => {
+    const turn = await (await fromSpeaker()).say("Remind me to buy milk");
+    expect(await listAlarms(maria)).toEqual([]);
+    expect(await memories(maria)).toEqual([]);
+    expect(turn.reply).toMatch(/when|what time/i);
   });
 
   const repeating: [string, string, string][] = [

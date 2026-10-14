@@ -177,4 +177,24 @@ describe("conversations and memory", () => {
     );
     expect(await res.json()).toEqual({ output: { error: "Lightwave is not connected" } });
   });
+
+  it("keeps notes, and leaves reminders to alarms", async () => {
+    const note = await json(
+      `${APP}/api/memories`,
+      "POST",
+      { category: "notes", content: "Spare key is in the shed" },
+      maria,
+    );
+    expect(note.status).toBe(201);
+    const old = await json(`${APP}/api/memories`, "POST", { category: "reminders", content: "Bins on Monday" }, maria);
+    expect(old.status).toBe(400);
+    await expect(
+      env.DB.prepare(
+        "INSERT INTO memories (id, home_id, category, content, created_at, updated_at) VALUES ('m', 'maria', 'reminders', 'x', 0, 0)",
+      ).run(),
+    ).rejects.toThrow(/CHECK/);
+    const text = contextInstructions(await loadContext(env.DB, "maria"), new Date("2026-10-14T10:00:00Z"));
+    expect(text).toContain("routines, notes, facts; anything to be told at a time is an alarm, never a memory");
+    expect(text).not.toMatch(/reminders/i);
+  });
 });

@@ -100,15 +100,7 @@ export interface BridgeRow {
 
 export type ConversationSource = "app" | "device";
 export type TurnRole = "user" | "assistant" | "tool";
-export const MEMORY_CATEGORIES = [
-  "important",
-  "preferences",
-  "people",
-  "home",
-  "routines",
-  "reminders",
-  "facts",
-] as const;
+export const MEMORY_CATEGORIES = ["important", "preferences", "people", "home", "routines", "notes", "facts"] as const;
 export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
 
 export interface ConversationRow {

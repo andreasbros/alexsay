@@ -27,6 +27,8 @@ Skills are optional abilities the assistant gains: their own tools, settings and
 | timer | a duration ("for 1 minute") | ring tone, rising | "Your N minute timer" or its label |
 | reminder | a time and a message | a chime, then | the message, repeated |
 
+- "Remind me" always means an alarm of kind `reminder` (14 Oct 2026: the model confused it with the memory category `reminders`, now `notes`, migration 0013). `set_alarm` says so; `remember` says "never for remind me"; without a time the assistant asks when.
+
 - Data (D1): `alarms` (kind, optional label and message, rule, device, enabled, `next_at`, `snoozed_until`) and `alarm_events` (rang, stopped, snoozed, missed per occurrence; the app shows the last 5). Each alarm owns one scheduler job, topic `alarm.verify`.
 - Tools: `set_alarm`, `list_alarms`, `update_alarm`, `delete_alarm`, `stop_alarm`, `snooze_alarm`.
   - "In 1 minute" is `in_seconds`: the server adds it to its own clock; the model never does clock arithmetic.

@@ -123,14 +123,14 @@ export interface ProviderTest {
   detail?: string;
 }
 
-export type MemoryCategory = "important" | "preferences" | "people" | "home" | "routines" | "reminders" | "facts";
+export type MemoryCategory = "important" | "preferences" | "people" | "home" | "routines" | "notes" | "facts";
 export const MEMORY_CATEGORIES: MemoryCategory[] = [
   "important",
   "preferences",
   "people",
   "home",
   "routines",
-  "reminders",
+  "notes",
   "facts",
 ];
 

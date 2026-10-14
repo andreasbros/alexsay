@@ -188,7 +188,8 @@ export const ALARM_TOOLS: Tool[] = [
       description:
         "Set an alarm, timer or reminder that rings on a speaker at the exact time, Alexa style. A timer is " +
         "'for N minutes' (in_seconds); an alarm is a clock time (at, or time + repeat); a reminder speaks its " +
-        "message at the time. Pass only the fields you need. It rings on the speaker the user is talking from, " +
+        "message at the time. Every 'remind me to X' is this tool with kind reminder and message X, never a " +
+        "memory; if the user gave no time, ask when first. Pass only the fields you need. It rings on the speaker the user is talking from, " +
         "or the home's only speaker; otherwise the result asks which: ask them, then call again with speaker. " +
         "Confirm in a few words with the result's `say`, such as 'Alarm set for today at 21:00'.",
       parameters: {

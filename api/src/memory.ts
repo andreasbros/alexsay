@@ -48,8 +48,8 @@ export function contextInstructions(context: Context, today = new Date()): strin
     parts.push(`How the last conversation ended:\n${context.lastTurns.map((t) => `${t.role}: ${t.text}`).join("\n")}`);
   }
   parts.push(
-    "Memory tools: remember stores a new fact (categories: important, preferences, people, home, routines, reminders, " +
-      "facts), list_memories shows them with ids, forget deletes one. History tools: recall_conversations lists past " +
+    "Memory tools: remember stores a new fact (categories: important, preferences, people, home, routines, notes, " +
+      "facts; anything to be told at a time is an alarm, never a memory), list_memories shows them with ids, forget deletes one. History tools: recall_conversations lists past " +
       "conversations by date with summaries and can search a topic, read_conversation reads one transcript. Use them " +
       "when the user refers to earlier talks or asks you to remember or forget something; do not announce them otherwise. " +
       "Phone book tools: find_contact looks someone up by name or digits, list_contacts pages through everyone " +
@@ -114,7 +114,7 @@ export async function digestConversation(
       instructions:
         "You maintain the long-term memory of a home assistant speaker. Summarise the conversation in at most two " +
         "sentences, in the past tense, naming what was asked and done. Then update the memory records: add durable " +
-        "facts about the user, their preferences, people, home, routines and reminders; update a record when the " +
+        "facts about the user, their preferences, people, home, routines and notes; update a record when the " +
         "conversation corrects it (give its id); remove a record the user asked to forget (give its id). Skip small " +
         "talk and anything already stored. For add, set id to an empty string.",
       input: `Stored memories:\n${known}\n\nConversation:\n${transcript}`,

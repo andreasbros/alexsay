@@ -26,7 +26,7 @@ const CATEGORY_COLOURS: Record<MemoryCategory, "red" | "indigo" | "grass" | "amb
   people: "grass",
   home: "amber",
   routines: "cyan",
-  reminders: "pink",
+  notes: "pink",
   facts: "gray",
 };
 

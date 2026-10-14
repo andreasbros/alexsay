@@ -230,8 +230,8 @@ function Invitations({
         {canInvite ? (
           <>
             <Text size="2" color="gray">
-              The link in the email signs them in (making an account if they have none) and puts them in this home. It
-              works for 3 days.
+              The link in the email signs them in (making an account if they have none) and puts them in this home. Link
+              expires in 3 days.
             </Text>
             <form
               onSubmit={(event: FormEvent) => {

@@ -356,6 +356,7 @@ describe("App", () => {
     expect(screen.getByRole("combobox", { name: "Role of dad" })).toBeDefined();
     expect(screen.getByText("gran@example.com")).toBeDefined();
     expect(screen.getByText("expired")).toBeDefined();
+    expect(screen.getByText(/Link expires in 3 days\./)).toBeDefined();
     expect(screen.getByRole("button", { name: "Resend" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Invite" })).toBeDefined();
   });

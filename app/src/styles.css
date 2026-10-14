@@ -320,3 +320,9 @@ body {
   margin: 0;
   min-width: 0;
 }
+
+/* The header's own border is the only line under the menu; Radix draws another under its tab list */
+.app-tabs.rt-BaseTabList,
+.app-tabs .rt-BaseTabList {
+  box-shadow: none;
+}

@@ -19,3 +19,12 @@ test("the signed-in pages fit the viewport width", async ({ page }) => {
     expect(await horizontalOverflow()).toBe(0);
   }
 });
+
+test("only the header's border runs under the menu", async ({ page }) => {
+  await login(page, env.user());
+  const shadows = await page
+    .locator(".app-tabs.rt-BaseTabList, .app-tabs .rt-BaseTabList")
+    .evaluateAll((lists) => lists.map((list) => getComputedStyle(list).boxShadow));
+  expect(shadows.length).toBeGreaterThan(0);
+  expect(new Set(shadows)).toEqual(new Set(["none"]));
+});

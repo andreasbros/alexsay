@@ -125,7 +125,7 @@ export function Layout({ user }: { user: User }) {
 
 function Tabs({ pathname }: { pathname: string }) {
   return (
-    <TabNav.Root>
+    <TabNav.Root className="app-tabs">
       {TABS.map(([label, to]) => (
         <TabNav.Link key={to} asChild active={to === "/" ? pathname === "/" : pathname.startsWith(to)}>
           <Link to={to}>{label}</Link>

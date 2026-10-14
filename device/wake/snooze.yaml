@@ -4,8 +4,8 @@ model_name: snooze
 
 target_phrases: ["snooze", "snooze it", "snooze for ten minutes", "snooze the alarm"]
 
-n_samples: 6000
-n_samples_val: 1200
+n_samples: 3000
+n_samples_val: 600
 n_background_samples: 2000
 n_background_samples_val: 500
 tts_batch_size: 50

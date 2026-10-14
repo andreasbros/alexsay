@@ -51,6 +51,21 @@ Each row is an estimate or target from [device-design.md](device-design.md) or [
 | False accepts on "Alexa" | 50 "Alexa" utterances and TV ads | 0 | | |
 | False accepts on "Alexa, say..." | 50 utterances, two speakers | 0 | | |
 
+## Alarm command words (14 Oct 2026)
+
+- Models: `stop.onnx`, `snooze.onnx`, 3,000 synthetic clips a class, 30,000 steps (stop 87 min, snooze 115 min on the laptop CPU), 156 KB each.
+- LiveKit's eval (1,200 positives, 18 h of validation audio, threshold 0.5): stop 56% recall, snooze 28%, 0 false fires an hour.
+- Through the speaker's own streaming detector (`alexsay wake test --file`, heard as live), held-out clips:
+
+| Model | Sensitivity | Caught | Fired on near-misses | Fired on the other command |
+|---|---|---|---|---|
+| stop | 0.5 | 56/60 | 19/78 | 0/60 |
+| stop | 1.0 | 59/60 | 29/78 | |
+| snooze | 0.5 | 47/60 | 34/78 | 0/60 |
+| snooze | 1.0 | 58/60 | 50/78 | |
+
+- Shipped at 0.5. The models listen only in the 3 s after "Alexsay" while something rings, so a near-miss costs a wrong snooze at worst; a miss rings again.
+
 ## Latency
 
 | Test | How | Target | Result | Date |

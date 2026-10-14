@@ -563,6 +563,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_shipped_command_models_load_and_hear_nothing_in_silence() {
+        let mut commands = Commands::load();
+        assert!(commands.available());
+        assert!(commands.snooze.is_some());
+        assert_eq!(commands.feed(&vec![0; 16_000 * 3]), None);
+    }
+
+    #[test]
     fn caches_speech_per_voice_and_text_and_scales_the_ring_without_wrapping() {
         let paths = Paths::new("/tmp/alexsay-home");
         let a = speech_file(&paths, "cedar", "Gym.");

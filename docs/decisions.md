@@ -97,3 +97,9 @@ Newest last. Each entry: what was decided, why, what was rejected.
 - **Static ALSA:** the release binary found no sound cards off the build machine (alsa-lib's config path is a Nix store path); the daemon now falls back to `/usr/share/alsa`.
 - **Service:** a systemd user unit plus `loginctl enable-linger`, so the speaker starts at boot without a login.
 - **Rejected:** a USB-C gadget link to the Pi (the Pi 5's USB-C is its 5 A power input), the Flex's 12 V terminal (speech is loud enough on USB 5 V).
+
+## 2026-10-14: Alarm command words
+
+- **Decision:** "stop" and "snooze" are two small LiveKit classifiers (same toolkit as the wake word, 3,000 clips a class), heard only in the 3 s after "Alexsay" while an alarm rings, at sensitivity 0.5.
+- **Why:** an alarm has to stop offline; a local word model needs no internet and costs nothing while nothing rings. Held out: stop 93%, snooze 78%, never confused with each other (measurements.md).
+- **Rejected:** sensitivity 1.0 (a few more catches, many more near-miss fires), 6,000 clips a class (speech generation at about 2 clips a second made it a day-long run).

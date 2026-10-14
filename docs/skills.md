@@ -49,7 +49,7 @@ Skills are optional abilities the assistant gains: their own tools, settings and
 - The server's `alarm.verify` job checks 45 s after each occurrence: no report from the speaker means it was off or away, recorded **missed**.
 - Commands for the running speaker: `alexsay alarm list|stop|snooze [minutes]` (the future hardware button).
 
-The command models are LiveKit classifiers like the wake word (`device/wake/stop.yaml`, `snooze.yaml`, `just wake-train stop`), about 150 KB each, run only while something rings.
+The command models are LiveKit classifiers like the wake word (`device/wake/stop.yaml`, `snooze.yaml`, `just wake-train stop`), 156 KB each, run only while something rings. Held out, through the speaker's detector: stop 56/60, snooze 47/60, never confused with each other (measurements.md).
 
 ## In the app
 

@@ -5,8 +5,8 @@ model_name: stop
 # "Stop", "stop alarm", "stop the timer" all start with it; the score peaks as "stop" ends
 target_phrases: ["stop", "stop it", "stop alarm", "stop the alarm", "stop the timer"]
 
-n_samples: 6000
-n_samples_val: 1200
+n_samples: 3000
+n_samples_val: 600
 n_background_samples: 2000
 n_background_samples_val: 500
 tts_batch_size: 50

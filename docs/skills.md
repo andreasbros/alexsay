@@ -41,7 +41,8 @@ Skills are optional abilities the assistant gains: their own tools, settings and
 - **"Alexsay"** pauses the ring at once (the wake word runs locally; the board's echo cancelling hears it over the tone). For the next 3 s two small local models listen:
   - **"stop"** ("stop", "stop alarm", "stop the timer"): it is over. Everything ringing stops.
   - **"snooze"**: online, a short GPT-Live session hears the rest ("for 10 minutes", from the preroll) or asks "for how long?" and calls `snooze_alarm`; offline, 9 minutes.
-  - Anything else, or nothing: it rings again. A stray "Alexsay" never silences an alarm; online, other speech goes to a normal conversation.
+  - Anything else, or nothing: it rings again. A stray "Alexsay" never silences an alarm.
+  - Without the command models in the build, "Alexsay" alone stops it: an alarm must never be unstoppable.
 - 3 minutes without "Alexsay, stop" ends the ring and records it **missed**.
 - A conversation in progress ends when an alarm rings; a phone call is not interrupted: the alarm waits for the call to end (if still within its 3 minutes).
 - Everything is reported (`rang`, `stopped`, `snoozed`, `missed`) and queued while offline.

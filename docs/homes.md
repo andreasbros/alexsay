@@ -28,6 +28,7 @@
 - Templates (`api/src/mail_templates.ts`): one table-layout shell (works in Gmail light and dark), each email HTML plus plain text, every interpolated value HTML-escaped: login code, confirm email, home invitation.
 - Server settings (server admins, Users page): **Email login** on or off. It can only be switched on when SMTP is configured; invitations need it on.
 - Cloudflare setup (once): onboard `alexsay.com` under Email Service, Email Sending (DNS records added automatically); no API token or SMTP secrets. Turnstile (below) needs a widget for `app.alexsay.com`.
+- BIMI (14 Oct 2026): `default._bimi.alexsay.com` TXT `v=BIMI1; l=https://www.alexsay.com/bimi.svg; a=;` points at `website/public/bimi.svg` (SVG Tiny PS, indigo square, white mark). Apple Mail and Yahoo can show it; Gmail needs a VMC (registered trademark) or CMC (logo in use 12 months), about $1,000 a year, put in `a=`.
 
 ## Email login
 

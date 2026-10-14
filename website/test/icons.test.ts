@@ -16,3 +16,24 @@ describe("icons", () => {
     });
   }
 });
+
+// A variable keeps Vite from turning the path into a bundled asset URL.
+const BIMI_LOGO = "../public/bimi.svg";
+
+describe("BIMI logo", () => {
+  const svg = readFileSync(new URL(BIMI_LOGO, import.meta.url), "utf8");
+  const root = /<svg[^>]*>/.exec(svg)?.[0] ?? "";
+
+  it("is SVG Tiny Portable/Secure, as mail clients require", () => {
+    expect(root).toContain('version="1.2"');
+    expect(root).toContain('baseProfile="tiny-ps"');
+    expect(root).toMatch(/viewBox="0 0 (\d+) \1"/);
+    expect(root).not.toMatch(/\s(x|y)=/);
+    expect(svg).toMatch(/<title>Alexsay<\/title>/);
+    expect(svg).not.toMatch(/<script|<image|<style|href=|<animate/);
+  });
+
+  it("has a solid background, since clients crop it to a circle", () => {
+    expect(svg).toMatch(/<rect width="100" height="100" fill="#[0-9A-F]{6}"\/>/);
+  });
+});

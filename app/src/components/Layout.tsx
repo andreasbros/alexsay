@@ -12,6 +12,7 @@ const TABS: [string, string][] = [
   ["Devices", "/"],
   ["Assistant", "/assistant"],
   ["Memory", "/memory"],
+  ["Skills", "/skills"],
   ["Connections", "/connections"],
 ];
 

@@ -20,3 +20,12 @@ export function ago(timestamp: number | null, now = Date.now()): string {
 
 export const isUuid = (value: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
+
+/** What an alarm is called in a list: its label, or what it is ("Timer", "Reminder: bins"). */
+export function alarmTitle(alarm: { kind: string; label: string; message?: string }): string {
+  const kind = alarm.kind.charAt(0).toUpperCase() + alarm.kind.slice(1);
+  if (alarm.kind === "reminder" && alarm.message) {
+    return `Reminder: ${alarm.message}`;
+  }
+  return alarm.label ? `${alarm.label.charAt(0).toUpperCase()}${alarm.label.slice(1)}` : kind;
+}

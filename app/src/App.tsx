@@ -8,6 +8,7 @@ import { Login } from "./pages/Login";
 import { MemoryPage } from "./pages/Memory";
 import { Register } from "./pages/Register";
 import { Settings } from "./pages/Settings";
+import { Skills } from "./pages/Skills";
 import { Users } from "./pages/Users";
 import { useSession } from "./session";
 
@@ -38,6 +39,7 @@ export function App() {
         <Route path="assistant" element={<Assistant />} />
         <Route path="connections" element={<Connections />} />
         <Route path="memory" element={<MemoryPage />} />
+        <Route path="skills" element={<Skills />} />
         <Route path="settings" element={<Settings user={user} />} />
         {user.role === "admin" && <Route path="users" element={<Users user={user} />} />}
         <Route path="*" element={<Navigate to="/" replace />} />

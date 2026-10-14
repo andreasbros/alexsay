@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ago, isUuid } from "./format";
+import { ago, alarmTitle, isUuid } from "./format";
 
 describe("format", () => {
   it("words a last-seen stamp", () => {
@@ -13,5 +13,12 @@ describe("format", () => {
   it("accepts UUIDs in any case", () => {
     expect(isUuid(" 7D1D6E2E-7c7b-4f6a-9d0a-1d2e3f4a5b6c ")).toBe(true);
     expect(isUuid("speaker-1")).toBe(false);
+  });
+  it("names an alarm by its label, or by what it is", () => {
+    expect(alarmTitle({ kind: "alarm", label: "gym" })).toBe("Gym");
+    expect(alarmTitle({ kind: "timer", label: "" })).toBe("Timer");
+    expect(alarmTitle({ kind: "reminder", label: "", message: "take the bins out" })).toBe(
+      "Reminder: take the bins out",
+    );
   });
 });

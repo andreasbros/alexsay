@@ -260,6 +260,49 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
 
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+}
+
+export type AlarmKind = "alarm" | "timer" | "reminder";
+
+export interface Alarm {
+  id: string;
+  kind: AlarmKind;
+  label: string;
+  message: string;
+  enabled: boolean;
+  next_at: number | null;
+  /** The next ring in the user's zone and language, such as "Wed 15 Oct, 07:00". */
+  when: string | null;
+  /** "weekdays at 07:00", or null for a one-off. */
+  repeat: string | null;
+  snoozed: boolean;
+  device_id: string | null;
+  speaker: string | null;
+}
+
+export interface AlarmEvent {
+  alarm_id: string;
+  kind: AlarmKind | null;
+  label: string;
+  event: "stopped" | "snoozed" | "missed";
+  at: number;
+  when: string | null;
+  speaker: string | null;
+  detail: string;
+}
+
+export interface AlarmsPage {
+  alarms: Alarm[];
+  recent: AlarmEvent[];
+  speakers: { id: string; name: string }[];
+  timezone: string;
+}
+
 export const api = {
   me: () => request<User>("GET", "/api/session/me"),
   login: (username: string, password: string) => request<User>("POST", "/api/session/login", { username, password }),
@@ -269,6 +312,15 @@ export const api = {
   updateSettings: (settings: Partial<AccountSettings>) =>
     request<AccountSettings>("PATCH", "/api/session/settings", settings),
 
+  skills: () => request<Skill[]>("GET", "/api/skills"),
+  setSkill: (id: string, enabled: boolean) =>
+    request<{ id: string; enabled: boolean }>("PATCH", `/api/skills/${encodeURIComponent(id)}`, { enabled }),
+  alarms: () => request<AlarmsPage>("GET", "/api/alarms"),
+  updateAlarm: (id: string, changes: { enabled?: boolean; device_id?: string }) =>
+    request<Alarm>("PATCH", `/api/alarms/${encodeURIComponent(id)}`, changes),
+  removeAlarm: (id: string) => request<void>("DELETE", `/api/alarms/${encodeURIComponent(id)}`),
+  stopAlarm: (id: string) =>
+    request<{ speakers: string[]; online: number }>("POST", `/api/alarms/${encodeURIComponent(id)}/stop`),
   devices: () => request<Device[]>("GET", "/api/devices"),
   addDevice: (id: string, name: string) => request<Device>("POST", "/api/devices", { id, name }),
   updateDevice: (id: string, changes: { name?: string; owner?: string | null }) =>

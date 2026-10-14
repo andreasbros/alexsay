@@ -164,4 +164,48 @@ describe("App", () => {
     expect(await screen.findByText("+447700900123")).toBeDefined();
     expect(calls).toContain("POST /api/contacts/import");
   });
+  it("lists skills and the alarms coming up, with their speaker and switch", async () => {
+    mockApi({
+      "/api/session/me": json({ username: "maria", role: "user" }),
+      "/api/skills": json([{ id: "alarms", name: "Alarms", description: "Alarms and timers", enabled: true }]),
+      "/api/alarms": json({
+        alarms: [
+          {
+            id: "a1",
+            kind: "alarm",
+            label: "gym",
+            message: "",
+            enabled: true,
+            next_at: 1,
+            when: "Thu 15 Oct, 07:00",
+            repeat: "weekdays at 07:00",
+            snoozed: false,
+            device_id: device.id,
+            speaker: "Kitchen",
+          },
+        ],
+        recent: [
+          {
+            alarm_id: "a0",
+            kind: "timer",
+            label: "pasta",
+            event: "missed",
+            at: 1,
+            when: "Wed 14 Oct, 18:00",
+            speaker: "Kitchen",
+            detail: "",
+          },
+        ],
+        speakers: [{ id: device.id, name: "Kitchen" }],
+        timezone: "Europe/London",
+      }),
+    });
+    renderApp("/skills");
+    expect(await screen.findByText("Thu 15 Oct, 07:00")).toBeDefined();
+    expect(screen.getByText("Gym")).toBeDefined();
+    expect(screen.getByText("weekdays at 07:00")).toBeDefined();
+    expect(screen.getByRole("switch", { name: "Gym on" })).toBeDefined();
+    expect(screen.getByText("Pasta")).toBeDefined();
+    expect(screen.getByText("missed")).toBeDefined();
+  });
 });

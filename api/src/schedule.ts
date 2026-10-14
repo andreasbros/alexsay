@@ -62,7 +62,7 @@ export function localParts(utc: number, tz: string): LocalTime & { second: numbe
 }
 
 /** How far `tz` is ahead of UTC at an instant, in ms. */
-function offsetAt(utc: number, tz: string): number {
+export function offsetAt(utc: number, tz: string): number {
   const p = localParts(utc, tz);
   return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(utc / 1000) * 1000;
 }
@@ -96,15 +96,109 @@ export function parseLocal(text: string): LocalTime | null {
 
 export const validTime = (time: string) => TIME.test(time);
 
-/** Days of the week from a preset ("weekdays") or names ("mon", "friday"); null when none are valid. */
-export function parseDays(value: unknown): number[] | null {
-  if (typeof value === "string" && PRESETS[value.toLowerCase()]) {
-    return PRESETS[value.toLowerCase()] ?? null;
+const CLOCK = /^(\d{1,2})(?:[:.h](\d{2}))?(?::\d{2})?\s*(am|pm|a\.m\.|p\.m\.)?$/i;
+
+/** A time of day as people and models write it: "21:00", "9:30", "9pm", "9.30 p.m.", "07:00:00". */
+export function parseClock(text: string): { hour: number; minute: number } | null {
+  const m = CLOCK.exec(text.trim());
+  if (!m) {
+    return null;
   }
-  const names = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[ ,]+/) : [];
+  let hour = Number(m[1]);
+  const minute = Number(m[2] ?? "0");
+  const half = m[3]?.toLowerCase().replaceAll(".", "");
+  if (half) {
+    if (hour < 1 || hour > 12) {
+      return null;
+    }
+    hour = (hour % 12) + (half === "pm" ? 12 : 0);
+  } else if (m[2] === undefined) {
+    // A bare number is only a time with am or pm: "9" alone could be anything
+    return null;
+  }
+  return hour <= 23 && minute <= 59 ? { hour, minute } : null;
+}
+
+export const clockText = ({ hour, minute }: { hour: number; minute: number }) =>
+  `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+
+const INSTANT = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/**
+ * A date and time: local to `tz` when it has no offset ("2026-10-14T21:00", seconds allowed), the exact
+ * instant when it has one ("...Z", "...+01:00"). Null when it is neither.
+ */
+export function parseInstant(text: string, tz: string): number | null {
+  const m = INSTANT.exec(text.trim());
+  if (!m) {
+    return null;
+  }
+  const local = parseLocal(`${m[1]}T${m[2]}`);
+  if (!local) {
+    return null;
+  }
+  if (!m[3]) {
+    return localToUtc(local, tz);
+  }
+  const naive = Date.UTC(local.year, local.month - 1, local.day, local.hour, local.minute);
+  if (m[3].toUpperCase() === "Z") {
+    return naive;
+  }
+  const sign = m[3].startsWith("-") ? -1 : 1;
+  const digits = m[3].slice(1).replace(":", "");
+  return naive - sign * (Number(digits.slice(0, 2)) * 60 + Number(digits.slice(2))) * 60_000;
+}
+
+/** The next time the wall clock in `tz` shows this time, strictly after `after`: today, else tomorrow. */
+export function nextClock(clock: { hour: number; minute: number }, tz: string, after: number): number {
+  return nextOccurrence({ kind: "repeat", time: clockText(clock), days: PRESETS.daily ?? [], tz }, after) ?? after;
+}
+
+/** ISO 8601 in `tz` with its offset at that instant: "2026-10-14T21:00:00+01:00". */
+export function localIso(utc: number, tz: string): string {
+  const p = localParts(utc, tz);
+  const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+  const offset = Math.round(offsetAt(utc, tz) / 60_000);
+  const sign = offset < 0 ? "-" : "+";
+  const abs = Math.abs(offset);
+  return (
+    `${pad(p.year, 4)}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}:${pad(p.second)}` +
+    `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+  );
+}
+
+const DAY_ALIASES: Record<string, string> = {
+  "every day": "daily",
+  everyday: "daily",
+  weekday: "weekdays",
+  weekend: "weekends",
+  "monday to friday": "weekdays",
+  "mon-fri": "weekdays",
+};
+const FULL_DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const FILLER = new Set(["every", "each", "on", "and", "&", ""]);
+
+/**
+ * Days of the week from a preset ("weekdays", "every day") or names ("mon", "Fridays", "every Monday and
+ * Thursday", ["Mon", "thu"]); null when any part is not a day.
+ */
+export function parseDays(value: unknown): number[] | null {
+  if (typeof value === "string") {
+    const phrase = value.trim().toLowerCase();
+    const preset = PRESETS[DAY_ALIASES[phrase] ?? phrase] ?? PRESETS[DAY_ALIASES[phrase.replace(/^every /, "")] ?? ""];
+    if (preset) {
+      return preset;
+    }
+  }
+  const names = (Array.isArray(value) ? value : typeof value === "string" ? value.split(/[\s,]+/) : [])
+    .map((name) => String(name).trim().toLowerCase())
+    .filter((name) => !FILLER.has(name));
+  if (names.length === 1 && names[0] && PRESETS[DAY_ALIASES[names[0]] ?? names[0]]) {
+    return PRESETS[DAY_ALIASES[names[0]] ?? names[0]] ?? null;
+  }
   const days = new Set<number>();
   for (const name of names) {
-    const index = DAY_NAMES.indexOf(String(name).toLowerCase().slice(0, 3) as (typeof DAY_NAMES)[number]);
+    const index = FULL_DAY_NAMES.findIndex((day) => (name.length >= 3 && day.startsWith(name)) || name === `${day}s`);
     if (index < 0) {
       return null;
     }

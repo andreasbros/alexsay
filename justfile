@@ -53,6 +53,10 @@ install-speaker:
 e2e-device:
     cd device && ALEXSAY_E2E=1 ALEXSAY_E2E_AUDIO="${ALEXSAY_E2E_AUDIO:-1}" ALEXSAY_E2E_CONFIG="${ALEXSAY_E2E_CONFIG:-}" cargo test -p alexsay-daemon --test e2e -- --nocapture
 
+# The real model drives the real tools (alarms in every phrasing) with E2E_OPENAI_API_KEY from .env; costs a few cents
+e2e-llm:
+    cd api && pnpm exec vitest run --config vitest.llm.config.ts
+
 # Copy the Pi build to a Raspberry Pi and start it as a service
 deploy-device host="pi@alexsay.local": (build-speaker "aarch64-linux")
     scp result-aarch64-linux/bin/alexsay {{host}}:/tmp/alexsay

@@ -2,7 +2,8 @@ import { devices, homes } from "./db";
 import { notifyDevice } from "./device_channel";
 import { cancel, type JobRow, schedule, setJobEnabled } from "./jobs";
 import { logFor } from "./log";
-import { describeRepeat, nextOccurrence, occurrences, parseRule, type Rule } from "./schedule";
+import { describeRepeat, localIso, nextOccurrence, occurrences, parseRule, type Rule } from "./schedule";
+import { spokenWhen } from "./spoken_time";
 import type { DeviceRow, Scope } from "./types";
 
 export const ALARM_KINDS = ["alarm", "timer", "reminder"] as const;
@@ -361,7 +362,11 @@ export async function presenter(scope: Scope, home: string) {
         enabled: row.enabled === 1,
         next_at: next,
         when: when(next),
+        at_local: next === null ? null : localIso(next, where.timezone),
+        timezone: where.timezone,
+        repeats: rule?.kind === "repeat",
         repeat: rule ? describeRepeat(rule) : null,
+        say: spokenWhen(next, rule, row.kind, Date.now(), where.locale, where.timezone),
         snoozed: row.snoozed_until !== null && row.snoozed_until > Date.now(),
         device_id: row.device_id,
         speaker: row.device_id ? (names.get(row.device_id) ?? "a removed speaker") : null,
@@ -409,6 +414,10 @@ export const alarms = {
 };
 
 /** Which speaker an alarm rings on, when the user did not say. */
+/**
+ * The speaker to ring: the one named, else the speaker the user is talking from, else the home's only
+ * speaker. From the web app or a phone call with several speakers, the assistant asks which.
+ */
 export async function defaultSpeaker(
   scope: Scope,
   home: string,
@@ -419,11 +428,13 @@ export async function defaultSpeaker(
   if (owned.length === 0) {
     return { error: "the user has no speaker to ring on: add one under Devices first" };
   }
+  const names = owned.map(speakerName);
   if (named) {
-    const wanted = named.toLowerCase();
+    const wanted = named.trim().toLowerCase();
     const match =
-      owned.find((d) => d.name.toLowerCase() === wanted) ?? owned.find((d) => d.name.toLowerCase().includes(wanted));
-    return match ? { device: match } : { error: `no speaker called ${named}`, speakers: owned.map((d) => d.name) };
+      owned.find((d) => speakerName(d).toLowerCase() === wanted) ??
+      owned.find((d) => speakerName(d).toLowerCase().includes(wanted) || wanted.includes(speakerName(d).toLowerCase()));
+    return match ? { device: match } : { error: `no speaker called ${named}: ask which of these`, speakers: names };
   }
   const here = from ? owned.find((d) => d.id === from) : undefined;
   if (here) {
@@ -432,8 +443,8 @@ export async function defaultSpeaker(
   if (owned.length === 1 && owned[0]) {
     return { device: owned[0] };
   }
-  return {
-    error: "the user has several speakers: ask which one should ring, then call again with speaker",
-    speakers: owned.map((d) => d.name),
-  };
+  return { error: "ask the user which speaker should ring, then call again with speaker", speakers: names };
 }
+
+/** A speaker's name, or the start of its id when it has none. */
+const speakerName = (device: DeviceRow): string => device.name || `speaker ${device.id.slice(0, 8)}`;

@@ -80,12 +80,83 @@ describe("alarms skill", () => {
     expect(ruleFrom({ time: "07:00", repeat: "weekdays" }, "Europe/London", now)).toEqual({
       rule: { kind: "repeat", time: "07:00", days: [1, 2, 3, 4, 5], tz: "Europe/London" },
     });
-    expect(ruleFrom({ in_seconds: 60, at: "2026-10-15T13:00" }, "Europe/London", now)).toMatchObject({
-      error: expect.any(String),
+    expect(ruleFrom({ in_seconds: 60, at: "2026-10-15T13:00" }, "Europe/London", now)).toEqual({
+      rule: { kind: "at", at: Date.parse("2026-10-15T12:00:00Z") },
     });
   });
 
+  it("sets the alarm from the arguments that failed live on 14 Oct, every field filled in", async () => {
+    const filled = { kind: "alarm", time: "", repeat: [], label: "9 pm", message: "", speaker: "" };
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    const byClock = await tool(maria, "set_alarm", { ...filled, in_seconds: 0, at: `${tomorrow}T21:00` });
+    expect(byClock).toMatchObject({
+      ok: true,
+      kind: "alarm",
+      label: "9 pm",
+      repeats: false,
+      timezone: "Europe/London",
+    });
+    expect(byClock.at_local).toMatch(new RegExp(`^${tomorrow}T21:00:00\\+0[01]:00$`));
+    expect(byClock.say).toMatch(/^(tomorrow|on \w+) at 21:00$/);
+
+    const bySeconds = await tool(maria, "set_alarm", { ...filled, in_seconds: 8340, at: "" });
+    expect(bySeconds).toMatchObject({ ok: true, kind: "alarm", label: "9 pm" });
+    expect(bySeconds.next_at as number).toBeGreaterThan(Date.now() + 8_330_000);
+  });
+
+  it("answers a timer with a countdown, the ISO time in the user's zone and no repeat", async () => {
+    const out = await tool(maria, "set_alarm", { in_seconds: 60 });
+    expect(out.say).toMatch(/^in 1 minute \((today|tomorrow) at \d{2}:\d{2}\)$/);
+    expect(out.at_local).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+0[01]:00$/);
+    expect(Date.parse(out.at_local as string)).toBe(Math.floor((out.next_at as number) / 1000) * 1000);
+    expect(out.repeats).toBe(false);
+  });
+
+  it("says a repeating alarm with its days and its next ring", async () => {
+    const out = await tool(maria, "set_alarm", { time: "7am", repeat: "every Monday and Thursday" });
+    expect(out).toMatchObject({ ok: true, repeats: true, repeat: "Mon, Thu at 07:00" });
+    expect(out.say).toMatch(/^every Monday and Thursday at 07:00, next (today|tomorrow|on \w+) at 07:00$/);
+  });
+
+  it("speaks the clock the way the user's locale writes it", async () => {
+    await json(`${APP}/api/session/settings`, "PATCH", { locale: "en-US", timezone: "America/New_York" }, maria);
+    const out = await tool(maria, "set_alarm", { time: "21:00" });
+    expect(out.say).toMatch(/at 9:00\sPM$/);
+    expect(out.at_local).toMatch(/T21:00:00-0[45]:00$/);
+    expect(out.timezone).toBe("America/New_York");
+  });
+
+  it("explains what is wrong when it cannot tell when, with the user's current time", async () => {
+    const blank = { kind: "alarm", in_seconds: 0, at: "", time: "", repeat: [], label: "", message: "", speaker: "" };
+    expect(await tool(maria, "set_alarm", blank)).toMatchObject({ error: expect.stringContaining("say when") });
+    const passed = await tool(maria, "set_alarm", { at: "2020-01-01T09:00" });
+    expect(passed.error).toMatch(/already passed \(it is now \d{4}-\d{2}-\d{2}T[\d:]+\+0[01]:00 in Europe\/London\)/);
+    expect(await tool(maria, "set_alarm", { at: "next week sometime" })).toMatchObject({
+      error: expect.stringContaining("YYYY-MM-DDTHH:MM"),
+    });
+    expect(await tool(maria, "set_alarm", { time: "07:00", repeat: "fortnightly" })).toMatchObject({
+      error: expect.stringContaining("repeat must be"),
+    });
+    expect(await tool(maria, "set_alarm", { kind: "reminder", in_seconds: 60 })).toMatchObject({
+      error: expect.stringContaining("needs a message"),
+    });
+    expect((await call(`${APP}/api/alarms`, {}, maria).then((r) => r.json())) as { alarms: unknown[] }).toMatchObject({
+      alarms: [],
+    });
+  });
+
+  it("reschedules with update_alarm only when a timing field has a value", async () => {
+    const out = await tool(maria, "set_alarm", { time: "07:00", repeat: "daily", label: "wake" });
+    const filled = { in_seconds: 0, at: "", time: "", repeat: [], label: "", message: "", speaker: "" };
+    const same = await tool(maria, "update_alarm", { ...filled, id: out.id, enabled: true });
+    expect(same).toMatchObject({ ok: true, label: "wake", next_at: out.next_at, repeat: "daily at 07:00" });
+    const moved = await tool(maria, "update_alarm", { ...filled, id: out.id, enabled: true, time: "08:30" });
+    expect(moved).toMatchObject({ ok: true, repeat: "daily at 08:30" });
+  });
+
   it("asks which speaker when set from the web with several, and rings where it was asked from a speaker", async () => {
+    expect(await tool(maria, "set_alarm", { in_seconds: 60 })).toMatchObject({ ok: true, speaker: "Kitchen" });
+    await call(`${APP}/api/alarms/${(await speakerAlarms()).alarms[0]?.id ?? ""}`, { method: "DELETE" }, maria);
     await json(`${APP}/api/devices`, "POST", { id: SECOND_DEVICE, name: "Bedroom" }, maria);
     const unsure = await tool(maria, "set_alarm", { time: "07:00", repeat: "daily", label: "wake up" });
     expect(unsure).toMatchObject({ error: expect.stringContaining("which"), speakers: ["Kitchen", "Bedroom"] });

@@ -11,7 +11,19 @@ import {
   updateAlarm,
 } from "./alarms";
 import { homes } from "./db";
-import { localToUtc, parseDays, parseLocal, type Rule, validTime } from "./schedule";
+import {
+  clockText,
+  DAY_NAMES,
+  localIso,
+  localParts,
+  nextClock,
+  parseClock,
+  parseDays,
+  parseInstant,
+  parseRule,
+  type Rule,
+} from "./schedule";
+import { duration } from "./spoken_time";
 import type { Tool } from "./tools";
 import type { ToolContext } from "./types";
 
@@ -21,62 +33,118 @@ const int = (args: Record<string, unknown>, key: string): number | null =>
   typeof args[key] === "number" && Number.isFinite(args[key]) ? Math.round(args[key] as number) : null;
 
 const MAX_TIMER_S = 7 * 86_400;
+const NO_REPEAT = new Set(["none", "no", "never", "once", "one-off", "one off", "false"]);
 
-/** "1 minute", "1 hour 30 minutes": how long a timer runs, for its default label. */
-export function duration(seconds: number): string {
-  const parts: string[] = [];
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  const unit = (n: number, name: string) => `${n} ${name}${n === 1 ? "" : "s"}`;
-  if (h) parts.push(unit(h, "hour"));
-  if (m) parts.push(unit(m, "minute"));
-  if (s && !h) parts.push(unit(s, "second"));
-  return parts.join(" ") || unit(0, "second");
+type TimingResult = { rule: Rule; seconds?: number } | { error: string };
+
+/** Models fill every field of a strict schema; 0, "", [] and "none" mean the field was not meant. */
+const blank = (value: unknown): boolean =>
+  value === undefined ||
+  value === null ||
+  value === 0 ||
+  value === false ||
+  (typeof value === "string" && (value.trim() === "" || value.trim() === "0")) ||
+  (Array.isArray(value) && value.length === 0);
+
+const wantsRepeat = (repeat: unknown): boolean =>
+  !blank(repeat) && !(typeof repeat === "string" && NO_REPEAT.has(repeat.trim().toLowerCase()));
+
+/** True when the arguments say anything about when, so update_alarm knows whether to reschedule. */
+export const hasTiming = (args: Record<string, unknown>): boolean =>
+  ["in_seconds", "at", "time"].some((key) => !blank(args[key])) || wantsRepeat(args.repeat);
+
+const nowText = (now: number, timezone: string) => `it is now ${localIso(now, timezone)} in ${timezone}`;
+
+function fromSeconds(value: unknown, now: number): TimingResult {
+  const seconds = typeof value === "string" ? Number(value.trim()) : value;
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) {
+    return { error: "in_seconds must be a number of seconds from now" };
+  }
+  const whole = Math.round(seconds);
+  if (whole < 1 || whole > MAX_TIMER_S) {
+    return { error: "in_seconds must be between 1 and 604800 (a week)" };
+  }
+  return { rule: { kind: "at", at: now + whole * 1000 }, seconds: whole };
+}
+
+/** `at` as a date and time (local, or with an offset), or a bare clock time meaning its next occurrence. */
+function fromAt(at: string, timezone: string, now: number): TimingResult {
+  const clock = parseClock(at);
+  if (clock) {
+    return { rule: { kind: "at", at: nextClock(clock, timezone, now) } };
+  }
+  const instant = parseInstant(at, timezone);
+  if (instant === null) {
+    return { error: `at must be a local date and time, YYYY-MM-DDTHH:MM (${nowText(now, timezone)})` };
+  }
+  if (instant <= now) {
+    return { error: `${at} has already passed (${nowText(now, timezone)}): ask the user which day they meant` };
+  }
+  return { rule: { kind: "at", at: instant } };
+}
+
+function fromTime(time: string, timezone: string, now: number): TimingResult {
+  const clock = parseClock(time);
+  return clock
+    ? { rule: { kind: "at", at: nextClock(clock, timezone, now) } }
+    : { error: "time must be a time of day such as 07:00 or 9pm" };
+}
+
+/** A repeat: the time of day from `time` or `at`; "weekly" takes its day from `at`, else today. */
+function fromRepeat(args: Record<string, unknown>, timezone: string, now: number): TimingResult {
+  const at = text(args, "at");
+  const instant = at ? parseInstant(at, timezone) : null;
+  const clock =
+    parseClock(text(args, "time")) ??
+    (at ? parseClock(at) : null) ??
+    (instant === null ? null : localParts(instant, timezone));
+  if (!clock) {
+    return { error: "a repeating alarm needs time, the local time of day such as 07:00" };
+  }
+  const repeat = args.repeat;
+  const weekly = typeof repeat === "string" && /^(weekly|every week)$/i.test(repeat.trim());
+  const weekday = (ms: number) => {
+    const p = localParts(ms, timezone);
+    return new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay();
+  };
+  const days = weekly ? [weekday(instant ?? now)] : parseDays(repeat);
+  if (!days) {
+    return {
+      error: 'repeat must be daily, weekdays, weekends, weekly or days such as ["mon", "thu"] or "every Friday"',
+    };
+  }
+  return { rule: { kind: "repeat", time: clockText(clock), days, tz: timezone } };
 }
 
 /**
- * The rule from what the model passed: `in_seconds` (the server adds it to its own clock, so the model
- * never does clock arithmetic), `at` (a local date and time) or `time` with `repeat`.
+ * The rule from whatever the model passed. Blank fields are ignored; a repeat wins when one is asked for;
+ * otherwise each given field is tried, the likeliest first (in_seconds for a timer, the clock time for
+ * anything else), and the first that makes sense is used. `in_seconds` is added to the server's clock,
+ * so the model never does clock arithmetic.
  */
-export function ruleFrom(
-  args: Record<string, unknown>,
-  timezone: string,
-  now: number,
-): { rule: Rule; seconds?: number } | { error: string } {
-  const seconds = int(args, "in_seconds");
+export function ruleFrom(args: Record<string, unknown>, timezone: string, now: number): TimingResult {
+  if (wantsRepeat(args.repeat)) {
+    return fromRepeat(args, timezone, now);
+  }
   const at = text(args, "at");
   const time = text(args, "time");
-  const repeat = args.repeat;
-  const given = [seconds !== null, at !== "", time !== "" || repeat !== undefined].filter(Boolean).length;
-  if (given !== 1) {
-    return { error: "give exactly one of in_seconds, at, or time with repeat" };
-  }
-  if (seconds !== null) {
-    if (seconds < 1 || seconds > MAX_TIMER_S) {
-      return { error: "in_seconds must be between 1 and 604800 (a week)" };
+  const clockTries = [
+    ...(at ? [() => fromAt(at, timezone, now)] : []),
+    ...(time ? [() => fromTime(time, timezone, now)] : []),
+  ];
+  const secondTries = blank(args.in_seconds) ? [] : [() => fromSeconds(args.in_seconds, now)];
+  const tries = text(args, "kind") === "timer" ? [...secondTries, ...clockTries] : [...clockTries, ...secondTries];
+  let first: TimingResult | null = null;
+  for (const attempt of tries) {
+    const result = attempt();
+    if (!("error" in result)) {
+      return result;
     }
-    return { rule: { kind: "at", at: now + seconds * 1000 }, seconds };
+    first ??= result;
   }
-  if (at) {
-    const local = parseLocal(at);
-    if (!local) {
-      return { error: "at must be a local date and time, YYYY-MM-DDTHH:MM" };
-    }
-    const instant = localToUtc(local, timezone);
-    if (instant <= now) {
-      return { error: `${at} has already passed in ${timezone}: ask the user which day they meant` };
-    }
-    return { rule: { kind: "at", at: instant } };
-  }
-  if (!validTime(time)) {
-    return { error: "time must be HH:MM (24 hour) when repeating" };
-  }
-  const days = parseDays(repeat);
-  if (!days) {
-    return { error: 'repeat must be daily, weekdays, weekends or a list of days such as ["mon", "thu"]' };
-  }
-  return { rule: { kind: "repeat", time, days, tz: timezone } };
+  return (
+    first ?? { error: "say when: in_seconds for a timer ('in 10 minutes'), at for a clock time, or time with repeat" }
+  );
 }
 
 const kindOf = (args: Record<string, unknown>): AlarmKind | null => {
@@ -88,19 +156,24 @@ const TIMING = {
   in_seconds: {
     type: "integer",
     description:
-      "For a timer or anything relative ('in 10 minutes'): seconds from now. The server does the clock maths.",
+      "For a timer or anything relative ('in 10 minutes', 'in an hour'): seconds from now. The server adds it " +
+      "to its own clock, so never work out the clock time yourself.",
   },
   at: {
     type: "string",
-    description: "A one-off at a clock time: the user's LOCAL date and time, YYYY-MM-DDTHH:MM ('tomorrow at 1pm').",
+    description:
+      "A one-off at a clock time: the user's LOCAL date and time, YYYY-MM-DDTHH:MM ('tomorrow at 1pm'). A bare " +
+      "time such as 21:00 means the next 21:00.",
   },
-  time: { type: "string", description: "With repeat: the local time of day, HH:MM (24 hour)." },
+  time: {
+    type: "string",
+    description: "The local time of day, HH:MM (24 hour): with repeat, or alone for the next time the clock shows it.",
+  },
   repeat: {
-    description: "With time, for repeating alarms: daily, weekdays, weekends, or a list of days.",
-    anyOf: [
-      { type: "string", enum: ["daily", "weekdays", "weekends"] },
-      { type: "array", items: { type: "string", enum: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] } },
-    ],
+    description:
+      'For repeating alarms, with time: daily, weekdays, weekends, weekly, or days such as ["mon", "thu"]. ' +
+      "Leave it out for a one-off.",
+    anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
   },
 };
 
@@ -115,8 +188,9 @@ export const ALARM_TOOLS: Tool[] = [
       description:
         "Set an alarm, timer or reminder that rings on a speaker at the exact time, Alexa style. A timer is " +
         "'for N minutes' (in_seconds); an alarm is a clock time (at, or time + repeat); a reminder speaks its " +
-        "message at the time. When the user has several speakers and is not talking from one, the result asks " +
-        "which: ask them, then call again with speaker. Confirm briefly with the time from the result.",
+        "message at the time. Pass only the fields you need. It rings on the speaker the user is talking from, " +
+        "or the home's only speaker; otherwise the result asks which: ask them, then call again with speaker. " +
+        "Confirm in a few words with the result's `say`, such as 'Alarm set for today at 21:00'.",
       parameters: {
         type: "object",
         properties: {
@@ -198,10 +272,10 @@ export const ALARM_TOOLS: Tool[] = [
       if (typeof args.enabled === "boolean") {
         changes.enabled = args.enabled;
       }
-      if (typeof args.label === "string") {
+      if (text(args, "label")) {
         changes.label = text(args, "label");
       }
-      if (typeof args.message === "string") {
+      if (text(args, "message", 500)) {
         changes.message = text(args, "message", 500);
       }
       if (text(args, "speaker")) {
@@ -211,14 +285,17 @@ export const ALARM_TOOLS: Tool[] = [
         }
         changes.deviceId = speaker.device.id;
       }
-      if (
-        args.in_seconds !== undefined ||
-        args.at !== undefined ||
-        args.time !== undefined ||
-        args.repeat !== undefined
-      ) {
+      if (hasTiming(args)) {
         const where = await homes.locale(c.env.DB, c.user.home);
-        const timing = ruleFrom(args, where.timezone, Date.now());
+        const current = await alarms.get(c.env.DB, c.user.home, id);
+        const rule = current ? parseRule(current.rule) : null;
+        // A new time for a repeating alarm keeps its days unless new ones are given
+        const keepDays = rule?.kind === "repeat" && !wantsRepeat(args.repeat) && blank(args.in_seconds);
+        const timing = ruleFrom(
+          keepDays ? { ...args, repeat: rule.days.map((d) => DAY_NAMES[d]) } : args,
+          where.timezone,
+          Date.now(),
+        );
         if ("error" in timing) {
           return timing;
         }

@@ -1,3 +1,4 @@
+import { ALARM_TOOLS } from "./alarm_tools";
 import { countryCode, lightwaveToken, lightwaveUrls } from "./connections";
 import { calls, contacts, conversations, memories, messages, users } from "./db";
 import { DEFAULT_LOG_LINES, formatLogLine, MAX_LOG_LINES, readLog } from "./log";
@@ -7,6 +8,7 @@ import type { FunctionTool } from "./providers/openai";
 import { type Recipient, type RecipientRef, resolveRecipient } from "./recipients";
 import { applyContactChanges, publicContact } from "./routes/contacts";
 import { memoryCategory } from "./schemas";
+import type { SkillId } from "./skills";
 import {
   addTestAgent,
   addToConference,
@@ -34,6 +36,8 @@ export interface Tool {
   definition: FunctionTool;
   /** Provider tools only make sense once the user connected that provider; the log once the user allowed it. */
   needs?: "lightwave" | "twilio" | "log" | "test";
+  /** Tools of a skill exist only while the user has that skill on. */
+  skill?: SkillId;
   run: (c: ToolContext, args: Record<string, unknown>, conversationId: string | null) => Promise<unknown>;
 }
 
@@ -965,6 +969,8 @@ async function sendTool(c: ToolContext, args: Record<string, unknown>, channel: 
   }));
 }
 
+TOOLS.push(...ALARM_TOOLS);
+
 export const toolByName = (name: string) => TOOLS.find((t) => t.definition.name === name);
 
 export function toolDefinitions(
@@ -972,11 +978,13 @@ export function toolDefinitions(
   hasTwilio = false,
   logAccess = false,
   callTest = false,
+  skillsOn: ReadonlySet<SkillId> = new Set(),
 ): FunctionTool[] {
   const available = { lightwave: hasLightwave, twilio: hasTwilio, log: logAccess, test: callTest };
-  return TOOLS.filter((t) => (!t.needs || available[t.needs]) && !AGENT_TOOLS.has(t.definition.name)).map(
-    (t) => t.definition,
-  );
+  return TOOLS.filter(
+    (t) =>
+      (!t.needs || available[t.needs]) && (!t.skill || skillsOn.has(t.skill)) && !AGENT_TOOLS.has(t.definition.name),
+  ).map((t) => t.definition);
 }
 
 /** What a scripted test agent may do on its call: leave it. Nothing of the user's. */

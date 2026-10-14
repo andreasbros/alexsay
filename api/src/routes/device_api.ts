@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
+import { alarmsForDevice, recordEvents } from "../alarms";
 import { addTurns, endConversation, runToolFor, sessionFor, startConversation } from "../assistant_api";
 import { openaiConnection, twilioConnection } from "../connections";
 import { devices, users } from "../db";
@@ -77,6 +78,19 @@ export const deviceApiRoutes = new Hono<AppEnv>()
   .use("/line", requireClaimedDevice)
   .use("/line/*", requireClaimedDevice)
   .use("/conferences/*", requireClaimedDevice)
+  .use("/alarms", requireClaimedDevice)
+  .use("/alarms/*", requireClaimedDevice)
+  /** What this speaker rings: the next few occurrences of each alarm, so it rings on its own clock. */
+  .get("/alarms", async (c) => {
+    const row = await devices.get(c.env.DB, c.get("device").id);
+    return c.json({ alarms: row ? await alarmsForDevice(c, row) : [], time: Date.now() });
+  })
+  /** What happened when they rang: rang, stopped, snoozed, missed. Sent again until acknowledged. */
+  .post("/alarms/events", async (c) => {
+    const { events } = await jsonBody(c, schemas.alarmEvents);
+    const row = await devices.get(c.env.DB, c.get("device").id);
+    return c.json({ recorded: row ? await recordEvents(c, row, events) : 0 });
+  })
   /** The speaker's phone line: a WebSocket held open while it runs, so calls can open on it. */
   .get("/line", async (c) => {
     if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {

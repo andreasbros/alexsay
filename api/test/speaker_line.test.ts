@@ -1,5 +1,6 @@
 import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { notifyDevice } from "../src/device_channel";
 import { DEVICE_SILENCE_MS, type LineBridge } from "../src/line_bridge";
 import {
   APP,
@@ -259,6 +260,28 @@ describe("speaker phone line", () => {
     upstream.done();
   });
 
+  it("answers the speaker's pings itself, so an idle line costs nothing", async () => {
+    await json(`${APP}/api/devices`, "POST", { id: DEVICE_ID, name: "Kitchen" }, maria);
+    const line = await openLine();
+    line.send(JSON.stringify({ type: "ping" }));
+    expect(await nextMessage(line)).toEqual({ type: "pong" });
+    const stub = env.LINE_BRIDGE.get(env.LINE_BRIDGE.idFromName(DEVICE_ID));
+    const pinged = await runInDurableObject(stub, (_bridge: LineBridge, state: DurableObjectState) =>
+      state.getWebSocketAutoResponseTimestamp(state.getWebSockets("device")[0] as WebSocket),
+    );
+    expect(pinged).toBeInstanceOf(Date);
+  });
+
+  it("pushes the server's messages to the speaker, and says when it is not connected", async () => {
+    const quiet = "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9";
+    await json(`${APP}/api/devices`, "POST", { id: quiet, name: "Hall" }, maria);
+    expect(await notifyDevice({ env }, quiet, { type: "alarms.changed" })).toBe(false);
+    const line = await openLine(quiet);
+    const pushed = nextMessage(line);
+    expect(await notifyDevice({ env }, quiet, { type: "alarm.snooze", minutes: 9 })).toBe(true);
+    expect(await pushed).toEqual({ type: "alarm.snooze", minutes: 9 });
+  });
+
   it("hangs up the call when the speaker goes silent without closing its line", async () => {
     await json(`${APP}/api/devices`, "POST", { id: DEVICE_ID, name: "Kitchen" }, maria);
     await connectTwilio(maria);
@@ -285,8 +308,7 @@ describe("speaker phone line", () => {
     const stub = env.LINE_BRIDGE.get(env.LINE_BRIDGE.idFromName(DEVICE_ID));
 
     // Still talking: the check passes and comes round again
-    line.send(JSON.stringify({ type: "ping" }));
-    expect(await nextMessage(line)).toEqual({ type: "pong" });
+    line.send(JSON.stringify({ type: "mute", muted: false }));
     expect(await runDurableObjectAlarm(stub)).toBe(true);
     expect(completed).toBe(0);
 

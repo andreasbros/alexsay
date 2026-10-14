@@ -20,17 +20,29 @@ interface StreamAttachment {
  * through in both directions (8 kHz mu-law, base64, as Twilio sends them); the speaker converts.
  *
  * Speaker messages: {type: "audio", payload}, {type: "hangup"}, {type: "mute", muted}, {type: "ping"}.
- * To the speaker: {type: "call.start", conference, who}, {type: "audio", payload}, {type: "call.end"}, {type: "pong"}.
+ * To the speaker: {type: "call.start", conference, who}, {type: "audio", payload}, {type: "call.end"}, {type: "pong"},
+ * and whatever the server pushes through /push (the device channel: alarms.changed, alarm.stop, alarm.snooze).
  * If the speaker's socket drops during a call, the call is hung up: nobody is left to carry it.
+ * Pings are answered without waking the object, so an idle speaker costs nothing.
  */
 export class LineBridge extends DurableObject<Env> {
   /** When the speaker last sent anything: a socket that dies without closing still goes quiet. */
   deviceSeenAt = Date.now();
 
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/status") {
       return Response.json(this.status());
+    }
+    if (url.pathname === "/push" && request.method === "POST") {
+      const device = this.ctx.getWebSockets("device")[0];
+      send(device, (await request.json()) as Record<string, unknown>);
+      return Response.json({ delivered: device !== undefined });
     }
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("expected a websocket", { status: 426 });
@@ -157,7 +169,7 @@ export class LineBridge extends DurableObject<Env> {
     if (this.ctx.getWebSockets("twilio").length === 0) {
       return;
     }
-    if (Date.now() - this.deviceSeenAt > DEVICE_SILENCE_MS) {
+    if (Date.now() - this.lastHeardFromDevice() > DEVICE_SILENCE_MS) {
       this.lineDropped();
       for (const device of this.ctx.getWebSockets("device")) {
         device.close(1001, "no word from the speaker");
@@ -165,6 +177,14 @@ export class LineBridge extends DurableObject<Env> {
       return;
     }
     await this.ctx.storage.setAlarm(Date.now() + CHECK_EVERY_MS);
+  }
+
+  /** The last message from the speaker, auto-answered pings included. */
+  private lastHeardFromDevice(): number {
+    const pinged = this.ctx
+      .getWebSockets("device")
+      .map((ws) => this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0);
+    return Math.max(this.deviceSeenAt, ...pinged);
   }
 
   /** Nobody is left on the user's side: the stream closes and the call is hung up. */
@@ -199,6 +219,10 @@ export class LineBridge extends DurableObject<Env> {
     this.webSocketClose(ws);
   }
 }
+
+/** Exactly what the speaker sends (serde, no spaces), so Cloudflare can answer it itself. */
+const PING = '{"type":"ping"}';
+const PONG = '{"type":"pong"}';
 
 function send(ws: WebSocket | undefined, message: Record<string, unknown>): void {
   try {

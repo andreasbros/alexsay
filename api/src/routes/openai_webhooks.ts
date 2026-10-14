@@ -5,6 +5,7 @@ import { calls, connections, users } from "../db";
 import { logFor } from "../log";
 import { serverOrigin } from "../origin";
 import { acceptCall, ProviderError, rejectCall, verifyWebhook } from "../providers/openai";
+import { skills } from "../skills";
 import {
   AGENT_HEADER,
   agentBrief,
@@ -61,10 +62,11 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
   }
   try {
     const hasLights = (await connections.get(c.env.DB, leg.username, "lightwave")) !== null;
-    const [logAccess, callTest, where] = await Promise.all([
+    const [logAccess, callTest, where, skillsOn] = await Promise.all([
       users.logAccess(c.env.DB, leg.username),
       users.callTest(c.env.DB, leg.username),
       users.locale(c.env.DB, leg.username),
+      skills.enabled(c.env.DB, leg.username),
     ]);
     await acceptCall(c.env.OPENAI_BASE_URL, openai.apiKey, callId, {
       model: openai.settings.call_model,
@@ -72,7 +74,7 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
       voice: agent ? agent.voice : openai.settings.voice,
       tools: agent
         ? agentToolDefinitions()
-        : toolDefinitions(hasLights, true, logAccess, callTest).filter((t) => !notOnCalls(t.name)),
+        : toolDefinitions(hasLights, true, logAccess, callTest, skillsOn).filter((t) => !notOnCalls(t.name)),
       // The person called (or the agent playing one) keeps the floor; the assistant gives way, as a caller's helper would
       turnTaking: agent ? "holds" : "yields",
     });

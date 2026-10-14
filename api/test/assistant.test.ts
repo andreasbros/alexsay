@@ -69,7 +69,10 @@ describe("assistant sessions", () => {
     const res = await json(`${APP}/api/assistant/sessions`, "POST", { sdp: OFFER }, maria);
     upstream.done();
     expect(await res.json()).toMatchObject({ tools: ["lights"] });
-    expect(sent?.session.delegation.responses.tools).toEqual([{ type: "web_search" }, ...toolDefinitions(true)]);
+    expect(sent?.session.delegation.responses.tools).toEqual([
+      { type: "web_search" },
+      ...toolDefinitions(true, false, false, false, new Set(["alarms"])),
+    ]);
     expect(toolDefinitions(true).map((t) => t.name)).toEqual(
       expect.arrayContaining(["list_lights", "set_light", "set_lights", "dim_light", "dim_lights"]),
     );

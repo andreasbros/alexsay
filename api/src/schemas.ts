@@ -231,3 +231,23 @@ export const userSettings = z.object({
   locale: z.string().regex(LOCALE_PATTERN, "a locale such as en-GB").optional(),
   timezone: z.string().max(64).refine(validTimezone, "an IANA time zone such as Europe/London").optional(),
 });
+
+export const skillId = z.string().regex(/^[a-z_]{1,32}$/);
+export const setSkill = z.object({ enabled: z.boolean() });
+export const alarmId = z.string().uuid();
+export const updateAlarm = z
+  .object({ enabled: z.boolean().optional(), device_id: deviceId.optional() })
+  .refine((v) => v.enabled !== undefined || v.device_id !== undefined, "nothing to change");
+export const alarmEvents = z.object({
+  events: z
+    .array(
+      z.object({
+        alarm_id: z.string().uuid(),
+        occurrence: z.number().int().nonnegative(),
+        event: z.enum(["rang", "stopped", "snoozed", "missed"]),
+        at: z.number().int().nonnegative(),
+        until: z.number().int().nonnegative().optional(),
+      }),
+    )
+    .max(100),
+});

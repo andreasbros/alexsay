@@ -8,6 +8,10 @@ export const DEVICE_ID = "7d1d6e2e-7c7b-4f6a-9d0a-1d2e3f4a5b6c";
 export async function resetDb(): Promise<void> {
   await env.DB.batch(
     [
+      "alarm_events",
+      "alarms",
+      "jobs",
+      "user_skills",
       "server_log",
       "bridges",
       "call_turns",

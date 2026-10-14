@@ -8,6 +8,7 @@ import { deviceApiRoutes } from "./routes/device_api";
 import { deviceRoutes } from "./routes/devices";
 import { openaiWebhookRoutes } from "./routes/openai_webhooks";
 import { sessionRoutes } from "./routes/session";
+import { alarmRoutes, skillRoutes } from "./routes/skills";
 import { toolRoutes } from "./routes/tools";
 import { twilioRoutes } from "./routes/twilio";
 import { twilioConferenceRoute, twilioStreamRoute, twilioWebhookRoutes } from "./routes/twilio_webhooks";
@@ -43,6 +44,12 @@ export const app = new Hono<AppEnv>()
   .route("/api/contacts", contactRoutes)
   .use("/api/twilio/*", requireUser)
   .route("/api/twilio", twilioRoutes)
+  .use("/api/skills/*", requireUser)
+  .use("/api/skills", requireUser)
+  .route("/api/skills", skillRoutes)
+  .use("/api/alarms/*", requireUser)
+  .use("/api/alarms", requireUser)
+  .route("/api/alarms", alarmRoutes)
   .use("/api/tools/*", requireUser)
   .route("/api/tools", toolRoutes)
   .use("/api/users/*", requireUser, requireAdmin)

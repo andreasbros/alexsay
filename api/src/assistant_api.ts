@@ -3,6 +3,7 @@ import { connections, conversations, type NewTurn, users } from "./db";
 import { logFor } from "./log";
 import { contextInstructions, digestConversation, loadContext } from "./memory";
 import { ProviderError, sessionConfig } from "./providers/openai";
+import { skills } from "./skills";
 import { toolByName, toolDefinitions } from "./tools";
 import type { ConversationSource, ToolContext, User } from "./types";
 
@@ -26,16 +27,21 @@ export async function sessionFor(caller: Caller): Promise<BuiltSession | null> {
   if (!connection) {
     return null;
   }
-  const [hasLights, hasPhone, logAccess, callTest] = await Promise.all([
+  const [hasLights, hasPhone, logAccess, callTest, skillsOn] = await Promise.all([
     connections.get(env.DB, user.username, "lightwave").then((row) => row !== null),
     connections.get(env.DB, user.username, "twilio").then((row) => row !== null),
     users.logAccess(env.DB, user.username),
     users.callTest(env.DB, user.username),
+    skills.enabled(env.DB, user.username),
   ]);
   const context = contextInstructions(await loadContext(env.DB, user.username));
   return {
     apiKey: connection.apiKey,
-    session: sessionConfig(connection.settings, toolDefinitions(hasLights, hasPhone, logAccess, callTest), context),
+    session: sessionConfig(
+      connection.settings,
+      toolDefinitions(hasLights, hasPhone, logAccess, callTest, skillsOn),
+      context,
+    ),
     hasLights,
     hasPhone,
   };
@@ -51,6 +57,9 @@ export async function runToolFor(
   const tool = toolByName(name);
   if (!tool) {
     return { error: `unknown tool ${name}` };
+  }
+  if (tool.skill && !(await skills.enabled(context.env.DB, context.user.username)).has(tool.skill)) {
+    return { error: `the user switched the ${tool.skill} skill off under Skills` };
   }
   const scope = { env: context.env };
   try {

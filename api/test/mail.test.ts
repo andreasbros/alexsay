@@ -181,6 +181,8 @@ describe("email templates", () => {
     expect(invite.html).toContain("&lt;b&gt;Flat&lt;/b&gt;");
     expect(invite.html).not.toContain("<b>Flat</b>");
     expect(invite.text).toContain("https://x.test/invite#token=a");
+    expect(invite.html).toContain("Link expires in 3 days.");
+    expect(invite.text).toContain("Link expires in 3 days.");
     const login = loginEmail({ code: "012345", link: "https://x.test/sign-in/email#token=b", minutes: 10 });
     expect(login.subject).toContain("012345");
     expect(login.html).toContain("012345");

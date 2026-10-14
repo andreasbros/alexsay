@@ -129,7 +129,7 @@ export function inviteEmail({
       ${escapeHtml(inviter)} invited you to their home: its speakers, its assistant and everything it remembers.
     </p>
     ${button(link, "Join the home")}
-    <p style="margin:22px 0 0;font-size:12px;color:#8a8aa0" align="center">The link signs you in (and makes your account if you have none). It works for ${days} days.</p>`,
+    <p style="margin:22px 0 0;font-size:12px;color:#8a8aa0" align="center">The link signs you in (and makes your account if you have none). Link expires in ${days} days.</p>`,
     "You got this because someone typed your address into alexsay. Not expecting it? Ignore this email.",
   );
   const text = [
@@ -137,7 +137,7 @@ export function inviteEmail({
     "",
     `Join: ${link}`,
     "",
-    `The link signs you in (and makes your account if you have none). It works for ${days} days.`,
+    `The link signs you in (and makes your account if you have none). Link expires in ${days} days.`,
     "",
     "You got this because someone typed your address into alexsay. Not expecting it? Ignore this email.",
   ].join("\n");

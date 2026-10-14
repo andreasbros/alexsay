@@ -1,7 +1,10 @@
 import { AlertDialog, Badge, Button, Card, Flex, Heading, Select, Table, Text, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
+import { useLocation } from "react-router";
 import { ApiError, api, type HomeRole, type Invite, type InviteStatus, type User } from "../api";
+import { ConnectionsSection } from "./Connections";
+import { DevicesSection } from "./Devices";
 
 const STATUS_COLORS: Record<InviteStatus, "amber" | "green" | "gray" | "red"> = {
   pending: "amber",
@@ -27,8 +30,27 @@ function errorText(error: Error | null): string | null {
 const when = (ms: number) =>
   new Date(ms).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
-/** The home everything belongs to: its name, who is in it, and (for admins) who has been invited. */
+/**
+ * The home everything belongs to: its name, its speakers, who is in it, (for admins) who has been
+ * invited, and its connections.
+ */
 export function HomePage({ user }: { user: User }) {
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash) {
+      document.getElementById(hash.slice(1))?.scrollIntoView();
+    }
+  }, [hash]);
+  return (
+    <Flex direction="column" gap="5">
+      <HomeDetails user={user} />
+      <ConnectionsSection user={user} />
+    </Flex>
+  );
+}
+
+/** Name, speakers, people and invitations; speakers show while the home itself still loads. */
+function HomeDetails({ user }: { user: User }) {
   const client = useQueryClient();
   const home = useQuery({ queryKey: ["home"], queryFn: api.home });
   const refresh = () => client.invalidateQueries({ queryKey: ["home"] });
@@ -50,7 +72,14 @@ export function HomePage({ user }: { user: User }) {
 
   const data = home.data;
   if (!data) {
-    return <Heading size="7">Home</Heading>;
+    // Same shape as below, so the speakers keep their state (an open Add device dialog) when the home arrives
+    return (
+      <Flex direction="column" gap="5">
+        <Heading size="7">Home</Heading>
+        {null}
+        <DevicesSection user={user} />
+      </Flex>
+    );
   }
   const admin = data.role === "admin";
   const memberError = errorText(setRole.error ?? removeMember.error);
@@ -92,6 +121,8 @@ export function HomePage({ user }: { user: User }) {
           )}
         </Flex>
       </Card>
+
+      <DevicesSection user={user} />
 
       <Card size="3">
         <Flex direction="column" gap="3">

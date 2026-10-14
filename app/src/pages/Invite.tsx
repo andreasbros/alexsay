@@ -52,7 +52,7 @@ export function Invite() {
         <Button
           size="3"
           loading={accept.isPending}
-          onClick={() => accept.mutate(token, { onSuccess: () => navigate("/home", { replace: true }) })}
+          onClick={() => accept.mutate(token, { onSuccess: () => navigate("/", { replace: true }) })}
         >
           Join {info.data.home}
         </Button>

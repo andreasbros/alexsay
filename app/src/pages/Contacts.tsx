@@ -580,7 +580,7 @@ function editError(err: unknown): string {
 }
 
 const PRECONDITIONS: Record<string, string> = {
-  no_twilio_connection: "Connect Twilio under Connections first.",
+  no_twilio_connection: "Connect Twilio under Connections on the Home page first.",
   no_from_number: "Choose a Twilio phone number under Connections.",
   no_my_number: "Add your own mobile number under Connections: calls ring it first.",
   no_whatsapp_sender: "Set a WhatsApp sender under Connections.",

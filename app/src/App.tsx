@@ -2,8 +2,6 @@ import { Flex, Spinner } from "@radix-ui/themes";
 import { Navigate, Route, Routes } from "react-router";
 import { Layout } from "./components/Layout";
 import { Assistant } from "./pages/Assistant";
-import { Connections } from "./pages/Connections";
-import { Devices } from "./pages/Devices";
 import { EmailLink } from "./pages/EmailLink";
 import { HomePage } from "./pages/Home";
 import { Invite } from "./pages/Invite";
@@ -42,12 +40,11 @@ export function App() {
       <Route path="/sign-in/email" element={<EmailLink />} />
       <Route path="/invite" element={<Invite />} />
       <Route element={<Layout user={user} />}>
-        <Route index element={<Devices user={user} />} />
+        <Route index element={<HomePage user={user} />} />
         <Route path="assistant" element={<Assistant />} />
-        <Route path="connections" element={<Connections user={user} />} />
+        <Route path="connections" element={<Navigate to="/#connections" replace />} />
         <Route path="memory" element={<MemoryPage />} />
         <Route path="skills" element={<Skills />} />
-        <Route path="home" element={<HomePage user={user} />} />
         <Route path="settings" element={<Settings user={user} />} />
         {user.role === "admin" && <Route path="users" element={<Users user={user} />} />}
         <Route path="*" element={<Navigate to="/" replace />} />

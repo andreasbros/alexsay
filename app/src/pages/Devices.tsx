@@ -11,7 +11,8 @@ const ERRORS: Record<string, string> = {
   bad_request: "That is not a UUID. It is printed by `alexsay id` on the speaker.",
 };
 
-export function Devices({ user }: { user: User }) {
+/** The home's speakers, a section of the Home page. */
+export function DevicesSection({ user }: { user: User }) {
   const client = useQueryClient();
   const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices, refetchInterval: 30_000 });
   const remove = useMutation({
@@ -22,21 +23,19 @@ export function Devices({ user }: { user: User }) {
   const canChange = admin || user.homeRole === "admin";
 
   return (
-    <Flex direction="column" gap="5">
-      <Flex align="center" justify="between">
-        <Heading size="7">Devices</Heading>
-        {canChange && <AddDevice />}
-      </Flex>
-      {devices.data?.length === 0 && (
-        <Card size="3">
-          <Text color="gray">
+    <Card size="3">
+      <Flex direction="column" gap="3">
+        <Flex align="center" justify="between">
+          <Heading size="4">Devices</Heading>
+          {canChange && <AddDevice />}
+        </Flex>
+        {devices.data?.length === 0 && (
+          <Text size="2" color="gray">
             No speakers yet. Add one with the UUID it prints on its console, then it will show up here as soon as it
             calls home.
           </Text>
-        </Card>
-      )}
-      {devices.data && devices.data.length > 0 && (
-        <Card size="1">
+        )}
+        {devices.data && devices.data.length > 0 && (
           <Table.Root>
             <Table.Header>
               <Table.Row>
@@ -60,9 +59,9 @@ export function Devices({ user }: { user: User }) {
               ))}
             </Table.Body>
           </Table.Root>
-        </Card>
-      )}
-    </Flex>
+        )}
+      </Flex>
+    </Card>
   );
 }
 

@@ -5,7 +5,7 @@ test("stores an OpenAI key, tests it, and the assistant becomes available", asyn
   await openTab(page, /Assistant/);
   await expect(page.getByRole("button", { name: "Start talking" })).toBeDisabled();
 
-  await openTab(page, /Connections/);
+  await openTab(page, /Home/);
   await page.getByLabel("OpenAI API key").fill("sk-e2e-not-a-real-key-0123456789");
   await page.getByRole("button", { name: "Save" }).first().click();
   await expect(page.getByText("connected").first()).toBeVisible();
@@ -18,7 +18,7 @@ test("stores an OpenAI key, tests it, and the assistant becomes available", asyn
   await expect(page.getByRole("button", { name: "Start talking" })).toBeEnabled();
 
   // Settings change without typing the key again
-  await openTab(page, /Connections/);
+  await openTab(page, /Home/);
   await page.getByRole("button", { name: "Change" }).click();
   await page.getByLabel("Backend model").fill("gpt-6.1-sol");
   await page.getByRole("button", { name: "Save" }).first().click();
@@ -27,7 +27,7 @@ test("stores an OpenAI key, tests it, and the assistant becomes available", asyn
 
 test("bad Lightwave tokens are refused when saved", async ({ page, account }) => {
   await login(page, account);
-  await openTab(page, /Connections/);
+  await openTab(page, /Home/);
   await page.getByLabel("Lightwave basic token").fill("e2e-basic-token-0123456789");
   await page.getByLabel("Lightwave refresh token").fill("e2e-refresh-token-0123456789");
   await page.getByRole("button", { name: "Save" }).nth(1).click();
@@ -37,7 +37,7 @@ test("bad Lightwave tokens are refused when saved", async ({ page, account }) =>
 
 test("bad Twilio credentials are refused when saved", async ({ page, account }) => {
   await login(page, account);
-  await openTab(page, /Connections/);
+  await openTab(page, /Home/);
   await page.getByLabel("Twilio account SID").fill("AC00000000000000000000000000000000");
   await page.getByLabel("Twilio auth token").fill("00000000000000000000000000000000");
   await page.getByRole("button", { name: "Save" }).last().click();
@@ -47,7 +47,7 @@ test("bad Twilio credentials are refused when saved", async ({ page, account }) 
 
 test("each connection has a Help dialog with the steps to get its keys", async ({ page, account }) => {
   await login(page, account);
-  await openTab(page, /Connections/);
+  await openTab(page, /Home/);
   await page.getByRole("button", { name: "Help" }).first().click();
   await expect(page.getByRole("heading", { name: "Get an OpenAI API key" })).toBeVisible();
   await expect(page.getByText(/Create new secret key/)).toBeVisible();

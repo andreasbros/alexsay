@@ -73,7 +73,7 @@ test("adds a contact by hand with the number normalised, and calling needs Twili
   await expect(page.getByText("Call after six")).toBeVisible();
 
   await page.getByRole("button", { name: "Call E2E Father" }).click();
-  await expect(page.getByRole("status")).toHaveText(/Connect Twilio under Connections first\./);
+  await expect(page.getByRole("status")).toHaveText(/Connect Twilio under Connections on the Home page first\./);
 
   await page.getByRole("button", { name: "Help" }).click();
   await expect(page.getByRole("heading", { name: "Import contacts from your phone" })).toBeVisible();

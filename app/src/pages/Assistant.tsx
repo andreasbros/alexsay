@@ -382,7 +382,7 @@ export function Assistant() {
       {connections.isSuccess && !ready && (
         <Callout.Root color="amber" size="1">
           <Callout.Text>
-            Add your OpenAI API key under <Link to="/connections">Connections</Link> first.
+            Add your OpenAI API key under <Link to="/#connections">Connections</Link> first.
           </Callout.Text>
         </Callout.Root>
       )}

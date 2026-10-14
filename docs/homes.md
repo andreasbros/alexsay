@@ -44,7 +44,7 @@
 - Home admins invite by email with a role. The invitation email links to `/api/invites/accept?token=...`, valid for 3 days (`invites`, token stored as an HMAC).
 - Opening the link signs the person in: an existing account with that email (or a signed-in session) joins the home; otherwise an account is created with the email already verified. Either way they land in the app, in the new home.
 - One live invitation per home and address; inviting again replaces it and sends a new link.
-- The **Home** tab (admins): rename, members (role, remove), invitations with status (pending, accepted, expired, revoked), resend and delete. Members see the home and can leave it.
+- The **Home** tab (the app's first page, `/`): name, Devices, People, Invitations, Connections. Admins rename, manage members (role, remove), invitations with status (pending, accepted, expired, revoked), resend and delete. Members see the home and can leave it.
 
 ## Data model (migration 0012)
 

@@ -30,13 +30,14 @@ import { ago } from "../format";
 import { toE164 } from "../lib/phone";
 import { DEFAULT_OPENAI as DEFAULTS, VOICES, voiceTypeOf } from "../voices";
 
-export function Connections({ user }: { user: User }) {
+/** The home's provider keys, the last section of the Home page (linked as `/#connections`). */
+export function ConnectionsSection({ user }: { user: User }) {
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });
   const byProvider = new Map(connections.data?.map((c) => [c.provider, c]));
   const canChange = user.homeRole === "admin";
   return (
-    <Flex direction="column" gap="5">
-      <Heading size="7">Connections</Heading>
+    <Flex direction="column" gap="5" id="connections" style={{ scrollMarginTop: 16 }}>
+      <Heading size="5">Connections</Heading>
       <Text color="gray" size="2">
         Keys are stored encrypted and only ever used by your home&apos;s speakers and the assistant in this app.
         {!canChange && " Only the home's admins can change them."}

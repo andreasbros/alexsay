@@ -9,12 +9,10 @@ import { useAppearance } from "../theme";
 import { Logo } from "./Logo";
 
 const TABS: [string, string][] = [
-  ["Devices", "/"],
+  ["Home", "/"],
   ["Assistant", "/assistant"],
   ["Memory", "/memory"],
   ["Skills", "/skills"],
-  ["Connections", "/connections"],
-  ["Home", "/home"],
 ];
 
 const UPDATE_CHECK_MS = 5 * 60_000;

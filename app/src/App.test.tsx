@@ -1,6 +1,6 @@
 import { Theme } from "@radix-ui/themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -103,8 +103,78 @@ describe("App", () => {
     renderApp();
     expect(await screen.findByText("Kitchen")).toBeDefined();
     expect(screen.getByText("online")).toBeDefined();
-    expect(screen.getAllByRole("link", { name: /Assistant/ }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("link", { name: /Connections/ }).length).toBeGreaterThan(0);
+    const tabs = screen.getAllByRole("navigation").flatMap((nav) => within(nav).queryAllByRole("link"));
+    expect([...new Set(tabs.map((link) => link.getAttribute("href")))]).toEqual([
+      "/",
+      "/assistant",
+      "/memory",
+      "/skills",
+    ]);
+  });
+
+  it("keeps the Add device dialog open when the home finishes loading", async () => {
+    let homeArrives: (response: Response) => void = () => undefined;
+    const routes: Record<string, () => Response> = {
+      "/api/session/me": json({ username: "maria", role: "user", home: "maria", homeRole: "admin" }),
+      "/api/devices": json([]),
+      "/api/connections": json([]),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) =>
+        path === "/api/home"
+          ? new Promise<Response>((resolve) => {
+              homeArrives = resolve;
+            })
+          : (routes[path]?.() ?? new Response("{}", { status: 404 })),
+      ),
+    );
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Add device" }));
+    expect(await screen.findByRole("dialog")).toBeDefined();
+    homeArrives(
+      json({
+        id: "maria",
+        name: "Flat 4",
+        role: "admin",
+        creator: true,
+        can_invite: false,
+        members: [],
+        invites: [],
+      })(),
+    );
+    // The open dialog hides the page underneath from the accessibility tree
+    expect(await screen.findByRole("heading", { name: "Flat 4", hidden: true })).toBeDefined();
+    expect(screen.getByRole("dialog")).toBeDefined();
+  });
+
+  it("puts the speakers after the name and the connections last on the Home page", async () => {
+    mockApi({
+      "/api/session/me": json({ username: "maria", role: "user", home: "maria", homeRole: "admin" }),
+      "/api/home": json({
+        id: "maria",
+        name: "Flat 4",
+        role: "admin",
+        creator: true,
+        can_invite: false,
+        members: [],
+        invites: [],
+      }),
+      "/api/devices": json([device]),
+      "/api/connections": json([]),
+    });
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    renderApp("/connections");
+    expect(await screen.findByText("Kitchen")).toBeDefined();
+    expect(scrolled).toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "Flat 4" })).toBeDefined();
+    const order = screen.getAllByRole("heading").map((h) => h.textContent);
+    const at = (name: string) => order.indexOf(name);
+    expect(at("Name")).toBeLessThan(at("Devices"));
+    expect(at("Devices")).toBeLessThan(at("People"));
+    expect(at("People")).toBeLessThan(at("Connections"));
+    expect(at("Connections")).toBeLessThan(at("OpenAI"));
   });
 
   it("explains how to get each provider's keys", async () => {
@@ -112,7 +182,7 @@ describe("App", () => {
       "/api/session/me": json({ username: "maria", role: "user" }),
       "/api/connections": json([]),
     });
-    renderApp("/connections");
+    renderApp("/");
     const help = await screen.findAllByRole("button", { name: "Help" });
     expect(help).toHaveLength(3);
     fireEvent.click(help[0] as HTMLElement);
@@ -280,7 +350,7 @@ describe("App", () => {
         ],
       }),
     });
-    renderApp("/home");
+    renderApp("/");
     expect(await screen.findByRole("heading", { name: "Flat 4" })).toBeDefined();
     expect(screen.getByText("owner")).toBeDefined();
     expect(screen.getByRole("combobox", { name: "Role of dad" })).toBeDefined();
@@ -306,7 +376,7 @@ describe("App", () => {
         invites: [],
       }),
     });
-    renderApp("/home");
+    renderApp("/");
     expect(await screen.findByText("You are a member of Flat 4.")).toBeDefined();
     expect(screen.getByRole("button", { name: "Leave" })).toBeDefined();
     expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();

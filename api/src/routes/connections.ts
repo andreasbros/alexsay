@@ -33,7 +33,7 @@ import { jsonBody } from "../validate";
 /** Each provider is one card in the app: stored sealed, listed without secrets, testable on demand. */
 export const connectionRoutes = new Hono<AppEnv>()
   .get("/", async (c) => {
-    const rows = await connections.list(c.env.DB, c.get("user").username);
+    const rows = await connections.list(c.env.DB, c.get("user").home);
     return c.json(
       rows.map((row) => ({
         provider: row.provider,
@@ -45,8 +45,8 @@ export const connectionRoutes = new Hono<AppEnv>()
   })
   .put("/openai", async (c) => {
     const { api_key, webhook_secret, settings } = await jsonBody(c, schemas.openaiConnection);
-    const username = c.get("user").username;
-    const existing = await connections.get(c.env.DB, username, "openai");
+    const home = c.get("user").home;
+    const existing = await connections.get(c.env.DB, home, "openai");
     const stored = existing ? await open<OpenAiSecret>(c.env.SECRETS_KEY, existing.secret) : null;
     const apiKey = api_key || stored?.api_key;
     if (!apiKey) {
@@ -59,7 +59,7 @@ export const connectionRoutes = new Hono<AppEnv>()
     }
     // Only a new key or secret re-seals; a settings-only save leaves the stored ciphertext alone
     const sealed = !api_key && !webhook_secret && existing ? existing.secret : await seal(c.env.SECRETS_KEY, secret);
-    await connections.put(c.env.DB, username, "openai", sealed, JSON.stringify(settings));
+    await connections.put(c.env.DB, home, "openai", sealed, JSON.stringify(settings));
     return c.json({ provider: "openai", settings, calls: !!(webhookSecret && settings.project_id) });
   })
   .put("/lightwave", async (c) => {
@@ -74,13 +74,13 @@ export const connectionRoutes = new Hono<AppEnv>()
       throw err;
     }
     const sealed = await seal(c.env.SECRETS_KEY, secret);
-    await connections.put(c.env.DB, c.get("user").username, "lightwave", sealed, "{}");
+    await connections.put(c.env.DB, c.get("user").home, "lightwave", sealed, "{}");
     return c.json({ provider: "lightwave", settings: {} });
   })
   .put("/twilio", async (c) => {
     const { account_sid, auth_token, settings } = await jsonBody(c, schemas.twilioConnection);
-    const username = c.get("user").username;
-    const existing = await connections.get(c.env.DB, username, "twilio");
+    const home = c.get("user").home;
+    const existing = await connections.get(c.env.DB, home, "twilio");
     const pasted = account_sid && auth_token ? { account_sid, auth_token } : null;
     if (!pasted && !existing) {
       return c.json({ error: "credentials_required" }, 400);
@@ -125,11 +125,11 @@ export const connectionRoutes = new Hono<AppEnv>()
       throw err;
     }
     const sealed = pasted ? await seal(c.env.SECRETS_KEY, pasted) : (existing?.secret ?? "");
-    await connections.put(c.env.DB, username, "twilio", sealed, JSON.stringify(settings));
+    await connections.put(c.env.DB, home, "twilio", sealed, JSON.stringify(settings));
     return c.json({ provider: "twilio", settings, ...(local ? { local: true, note: LOCAL_SERVER_NOTE } : {}) });
   })
   .post("/openai/test", async (c) => {
-    const connection = await openaiConnection(c, c.get("user").username);
+    const connection = await openaiConnection(c, c.get("user").home);
     if (!connection) {
       return c.json({ error: "not_found" }, 404);
     }
@@ -148,7 +148,7 @@ export const connectionRoutes = new Hono<AppEnv>()
   })
   .post("/lightwave/test", async (c) => {
     try {
-      const token = await lightwaveToken(c, c.get("user").username);
+      const token = await lightwaveToken(c, c.get("user").home);
       if (!token) {
         return c.json({ error: "not_found" }, 404);
       }
@@ -159,7 +159,7 @@ export const connectionRoutes = new Hono<AppEnv>()
     }
   })
   .post("/twilio/test", async (c) => {
-    const connection = await twilioConnection(c, c.get("user").username);
+    const connection = await twilioConnection(c, c.get("user").home);
     if (!connection) {
       return c.json({ error: "not_found" }, 404);
     }
@@ -178,13 +178,13 @@ export const connectionRoutes = new Hono<AppEnv>()
     if (parsed.data === "twilio") {
       await releaseTwilioNumber(c);
     }
-    const result = await connections.remove(c.env.DB, c.get("user").username, parsed.data);
+    const result = await connections.remove(c.env.DB, c.get("user").home, parsed.data);
     return result.meta.changes ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
   });
 
 /** Removing Twilio hands the number's earlier routing back; a failure there must not keep the connection. */
 async function releaseTwilioNumber(c: Context<AppEnv>): Promise<void> {
-  const connection = await twilioConnection(c, c.get("user").username);
+  const connection = await twilioConnection(c, c.get("user").home);
   if (!connection?.settings.number_backup) {
     return;
   }

@@ -1,6 +1,6 @@
 import { ALARM_TOOLS } from "./alarm_tools";
 import { countryCode, lightwaveToken, lightwaveUrls } from "./connections";
-import { calls, contacts, conversations, memories, messages, users } from "./db";
+import { calls, contacts, conversations, homes, memories, messages } from "./db";
 import { DEFAULT_LOG_LINES, formatLogLine, MAX_LOG_LINES, readLog } from "./log";
 import { normalisePhone } from "./phone";
 import { type Light, lights, writeFeatures } from "./providers/lightwave";
@@ -77,8 +77,8 @@ const refOf = (args: Record<string, unknown>): RecipientRef => ({
 });
 
 async function recipientOf(c: ToolContext, args: Record<string, unknown>): Promise<Recipient | { error: string }> {
-  const username = c.user.username;
-  const resolved = await resolveRecipient(c.env.DB, username, await countryCode(c, username), refOf(args));
+  const home = c.user.home;
+  const resolved = await resolveRecipient(c.env.DB, home, await countryCode(c, home), refOf(args));
   return resolved.ok ? resolved : { error: resolved.error, ...(resolved.options ? { options: resolved.options } : {}) };
 }
 
@@ -185,7 +185,7 @@ export const TOOLS: Tool[] = [
       const id = crypto.randomUUID();
       await memories.create(c.env.DB, {
         id,
-        username: c.user.username,
+        home_id: c.user.home,
         category: category.data,
         content,
         source: conversationId,
@@ -206,7 +206,7 @@ export const TOOLS: Tool[] = [
       },
     },
     run: async (c, args) => {
-      const result = await memories.remove(c.env.DB, c.user.username, string(args, "id"));
+      const result = await memories.remove(c.env.DB, c.user.home, string(args, "id"));
       return result.meta.changes ? { ok: true } : { error: "no such memory" };
     },
   },
@@ -223,7 +223,7 @@ export const TOOLS: Tool[] = [
     },
     run: async (c, args) => {
       const category = memoryCategory.safeParse(string(args, "category"));
-      const rows = await memories.list(c.env.DB, c.user.username, category.success ? category.data : undefined);
+      const rows = await memories.list(c.env.DB, c.user.home, category.success ? category.data : undefined);
       return rows.map((m) => ({ id: m.id, category: m.category, content: m.content, updated: day(m.updated_at) }));
     },
   },
@@ -244,7 +244,7 @@ export const TOOLS: Tool[] = [
     },
     run: async (c, args) => {
       const limit = Math.min(50, Math.max(1, num(args, "limit") ?? 10));
-      const rows = await conversations.list(c.env.DB, c.user.username, limit, string(args, "query") || undefined);
+      const rows = await conversations.list(c.env.DB, c.user.home, limit, string(args, "query") || undefined);
       return rows.map((r) => ({
         id: r.id,
         date: day(r.started_at),
@@ -267,7 +267,7 @@ export const TOOLS: Tool[] = [
       },
     },
     run: async (c, args) => {
-      const row = await conversations.get(c.env.DB, c.user.username, string(args, "id"));
+      const row = await conversations.get(c.env.DB, c.user.home, string(args, "id"));
       if (!row) {
         return { error: "no such conversation" };
       }
@@ -428,11 +428,11 @@ export const TOOLS: Tool[] = [
       },
     },
     run: async (c, args) => {
-      if (!(await users.logAccess(c.env.DB, c.user.username))) {
+      if (!(await homes.logAccess(c.env.DB, c.user.home))) {
         return { error: "the user has not allowed log access in Settings" };
       }
       const position = string(args, "position") === "head" ? "head" : "tail";
-      const lines = await readLog(c.env.DB, c.user.username, position, num(args, "lines") ?? DEFAULT_LOG_LINES);
+      const lines = await readLog(c.env.DB, c.user.home, position, num(args, "lines") ?? DEFAULT_LOG_LINES);
       return { position, lines: lines.map(formatLogLine) };
     },
   },
@@ -455,7 +455,7 @@ export const TOOLS: Tool[] = [
       if (!query) {
         return { error: "query is required" };
       }
-      const { rows } = await contacts.list(c.env.DB, c.user.username, { query, page: 1, pageSize: 10 });
+      const { rows } = await contacts.list(c.env.DB, c.user.home, { query, page: 1, pageSize: 10 });
       return rows.map(contactForModel);
     },
   },
@@ -475,7 +475,7 @@ export const TOOLS: Tool[] = [
     },
     run: async (c, args) => {
       const page = Math.max(1, num(args, "page") ?? 1);
-      const result = await contacts.list(c.env.DB, c.user.username, {
+      const result = await contacts.list(c.env.DB, c.user.home, {
         favourites: args.favourites_only === true,
         page,
         pageSize: CONTACT_PAGE,
@@ -509,7 +509,7 @@ export const TOOLS: Tool[] = [
         return { error: "that number is not in the phone book" };
       }
       const favourite = args.favourite === true;
-      await contacts.update(c.env.DB, c.user.username, recipient.contact.id, { favourite });
+      await contacts.update(c.env.DB, c.user.home, recipient.contact.id, { favourite });
       return { ok: true, contact: recipient.contact.name, favourite };
     },
   },
@@ -550,11 +550,11 @@ export const TOOLS: Tool[] = [
       if (Object.keys(changes).length === 0) {
         return { error: "nothing to change" };
       }
-      const result = await applyContactChanges(c, c.user.username, recipient.contact.id, changes);
+      const result = await applyContactChanges(c, c.user.home, recipient.contact.id, changes);
       if (result !== "ok") {
         return { error: CONTACT_EDIT_ERRORS[result] };
       }
-      const updated = await contacts.get(c.env.DB, c.user.username, recipient.contact.id);
+      const updated = await contacts.get(c.env.DB, c.user.home, recipient.contact.id);
       return { ok: true, contact: updated ? contactForModel(updated) : null };
     },
   },
@@ -577,18 +577,18 @@ export const TOOLS: Tool[] = [
     },
     run: async (c, args) => {
       const name = string(args, "name").slice(0, 120);
-      const username = c.user.username;
-      const phone = normalisePhone(string(args, "number"), await countryCode(c, username));
+      const home = c.user.home;
+      const phone = normalisePhone(string(args, "number"), await countryCode(c, home));
       if (!name || !phone) {
         return { error: "a name and a valid phone number are required" };
       }
       await contacts.upsert(
         c.env.DB,
-        username,
+        home,
         [{ name, phone, label: string(args, "label").slice(0, 40), note: string(args, "note").slice(0, 1000) }],
         Date.now(),
       );
-      const row = await contacts.byPhone(c.env.DB, username, phone);
+      const row = await contacts.byPhone(c.env.DB, home, phone);
       return { ok: true, contact: row ? contactForModel(row) : null };
     },
   },
@@ -629,7 +629,7 @@ export const TOOLS: Tool[] = [
         return host;
       }
       return telephony(async () => {
-        const result = await placeCall(c, c.user.username, recipient, { message, task, host: host.host });
+        const result = await placeCall(c, c.user.home, recipient, { message, task, host: host.host });
         const note = message
           ? "the message is being delivered"
           : "conference" in result
@@ -687,7 +687,7 @@ export const TOOLS: Tool[] = [
       }
       return telephony(async () => ({
         ok: true,
-        ...(await startConference(c, c.user.username, recipients, host.host)),
+        ...(await startConference(c, c.user.home, recipients, host.host)),
       }));
     },
   },
@@ -706,7 +706,7 @@ export const TOOLS: Tool[] = [
       if ("error" in recipient) {
         return recipient;
       }
-      return telephony(async () => ({ ok: true, ...(await addToConference(c, c.user.username, recipient)) }));
+      return telephony(async () => ({ ok: true, ...(await addToConference(c, c.user.home, recipient)) }));
     },
   },
   {
@@ -731,7 +731,7 @@ export const TOOLS: Tool[] = [
       if (!digits) {
         return { error: "digits are required: 0-9, * or #" };
       }
-      return telephony(async () => ({ ok: true, ...(await pressDigits(c, c.user.username, digits)) }));
+      return telephony(async () => ({ ok: true, ...(await pressDigits(c, c.user.home, digits)) }));
     },
   },
   {
@@ -743,7 +743,7 @@ export const TOOLS: Tool[] = [
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
     run: async (c) =>
-      telephony(async () => ({ ok: true, ...(await endCall(c, c.user.username, c.onCall ? "assistant" : "user")) })),
+      telephony(async () => ({ ok: true, ...(await endCall(c, c.user.home, c.onCall ? "assistant" : "user")) })),
   },
   {
     needs: "test",
@@ -783,7 +783,7 @@ export const TOOLS: Tool[] = [
       }
       const task = string(args, "task").slice(0, 1000) || undefined;
       return telephony(async () => {
-        const result = await placeTestCall(c, c.user.username, agent, { task, host: host.host });
+        const result = await placeTestCall(c, c.user.home, agent, { task, host: host.host });
         return {
           ok: true,
           ...result,
@@ -819,7 +819,7 @@ export const TOOLS: Tool[] = [
       if ("error" in agent) {
         return agent;
       }
-      return telephony(async () => ({ ok: true, ...(await addTestAgent(c, c.user.username, agent)) }));
+      return telephony(async () => ({ ok: true, ...(await addTestAgent(c, c.user.home, agent)) }));
     },
   },
   {
@@ -830,7 +830,7 @@ export const TOOLS: Tool[] = [
       description: "Hangs up your own line and leaves the call; everyone else stays on.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
-    run: async (c) => telephony(async () => ({ ok: true, ...(await leaveCall(c, c.user.username, c.legId)) })),
+    run: async (c) => telephony(async () => ({ ok: true, ...(await leaveCall(c, c.user.home, c.legId)) })),
   },
   {
     needs: "twilio",
@@ -849,11 +849,11 @@ export const TOOLS: Tool[] = [
     },
     run: async (c, args) =>
       telephony(async () => {
-        const conference = string(args, "conference") || (await calls.latestConference(c.env.DB, c.user.username));
+        const conference = string(args, "conference") || (await calls.latestConference(c.env.DB, c.user.home));
         if (!conference) {
           return { error: "there have been no calls" };
         }
-        const report = await callReport(c, c.user.username, conference);
+        const report = await callReport(c, c.user.home, conference);
         return {
           ...report,
           transcript: report.transcript.map((t) => `${clock(t.at)} ${t.speaker}: ${t.text}`),
@@ -870,7 +870,7 @@ export const TOOLS: Tool[] = [
         "or gone, and whether you are seated on it. Answer every question about a call from this, never from memory.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
-    run: async (c) => telephony(async () => callStatus(c, c.user.username)),
+    run: async (c) => telephony(async () => callStatus(c, c.user.home)),
   },
   {
     needs: "twilio",
@@ -934,11 +934,11 @@ export const TOOLS: Tool[] = [
         }
         contactId = recipient.contact.id;
       }
-      const rows = await messages.list(c.env.DB, c.user.username, contactId, limit);
+      const rows = await messages.list(c.env.DB, c.user.home, contactId, limit);
       const names = new Map<string, string>();
       for (const row of rows) {
         if (row.contact_id && !names.has(row.contact_id)) {
-          const contact = await contacts.get(c.env.DB, c.user.username, row.contact_id);
+          const contact = await contacts.get(c.env.DB, c.user.home, row.contact_id);
           names.set(row.contact_id, contact?.name ?? row.phone);
         }
       }
@@ -965,7 +965,7 @@ async function sendTool(c: ToolContext, args: Record<string, unknown>, channel: 
   }
   return telephony(async () => ({
     ok: true,
-    ...(await sendText(c, c.user.username, recipient, body, channel)),
+    ...(await sendText(c, c.user.home, recipient, body, channel)),
   }));
 }
 
@@ -993,7 +993,7 @@ export const agentToolDefinitions = (): FunctionTool[] =>
   TOOLS.filter((t) => AGENT_TOOLS.has(t.definition.name)).map((t) => t.definition);
 
 async function userLights(c: ToolContext): Promise<Light[]> {
-  const token = await lightwaveToken(c, c.user.username);
+  const token = await lightwaveToken(c, c.user.home);
   if (!token) {
     throw new Error("Lightwave is not connected");
   }
@@ -1018,7 +1018,7 @@ async function writeLights(c: ToolContext, targets: Light[], args: Record<string
   if (writes.length === 0) {
     return;
   }
-  const token = await lightwaveToken(c, c.user.username);
+  const token = await lightwaveToken(c, c.user.home);
   if (!token) {
     throw new Error("Lightwave is not connected");
   }

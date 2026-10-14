@@ -4,7 +4,7 @@ import type { Scope } from "./types";
 /** A scheduled job: the scheduler runs its topic's handler delay_ms after each occurrence of its rule. */
 export interface JobRow {
   id: string;
-  username: string;
+  home_id: string;
   topic: string;
   payload: string;
   rule: string;
@@ -18,7 +18,7 @@ export interface JobRow {
 
 export interface NewJob {
   id?: string;
-  username: string;
+  home: string;
   topic: string;
   payload: Record<string, unknown>;
   rule: Rule;
@@ -37,7 +37,7 @@ export async function schedule(scope: Scope, job: NewJob, now = Date.now()): Pro
   const delay = job.delayMs ?? 0;
   const next = runAt(job.rule, delay, now);
   await scope.env.DB.prepare(
-    `INSERT INTO jobs (id, username, topic, payload, rule, delay_ms, next_at, enabled, created_at, updated_at)
+    `INSERT INTO jobs (id, home_id, topic, payload, rule, delay_ms, next_at, enabled, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (id) DO UPDATE SET topic = excluded.topic, payload = excluded.payload, rule = excluded.rule,
        delay_ms = excluded.delay_ms, next_at = excluded.next_at, enabled = excluded.enabled,
@@ -45,7 +45,7 @@ export async function schedule(scope: Scope, job: NewJob, now = Date.now()): Pro
   )
     .bind(
       id,
-      job.username,
+      job.home,
       job.topic,
       JSON.stringify(job.payload),
       JSON.stringify(job.rule),
@@ -56,58 +56,58 @@ export async function schedule(scope: Scope, job: NewJob, now = Date.now()): Pro
       now,
     )
     .run();
-  await wakeScheduler(scope, job.username);
+  await wakeScheduler(scope, job.home);
   return id;
 }
 
 /** Pauses or resumes a job; resuming recomputes its next run from now. */
 export async function setJobEnabled(
   scope: Scope,
-  username: string,
+  home: string,
   id: string,
   enabled: boolean,
   now = Date.now(),
 ): Promise<void> {
-  const row = await jobs.get(scope.env.DB, username, id);
+  const row = await jobs.get(scope.env.DB, home, id);
   const rule = row ? parseRule(row.rule) : null;
   if (!row || !rule) {
     return;
   }
   const next = enabled ? runAt(rule, row.delay_ms, now) : null;
-  await scope.env.DB.prepare("UPDATE jobs SET enabled = ?, next_at = ?, updated_at = ? WHERE id = ? AND username = ?")
-    .bind(enabled && next !== null ? 1 : 0, next, now, id, username)
+  await scope.env.DB.prepare("UPDATE jobs SET enabled = ?, next_at = ?, updated_at = ? WHERE id = ? AND home_id = ?")
+    .bind(enabled && next !== null ? 1 : 0, next, now, id, home)
     .run();
-  await wakeScheduler(scope, username);
+  await wakeScheduler(scope, home);
 }
 
-export async function cancel(scope: Scope, username: string, id: string): Promise<void> {
-  await scope.env.DB.prepare("DELETE FROM jobs WHERE id = ? AND username = ?").bind(id, username).run();
-  await wakeScheduler(scope, username);
+export async function cancel(scope: Scope, home: string, id: string): Promise<void> {
+  await scope.env.DB.prepare("DELETE FROM jobs WHERE id = ? AND home_id = ?").bind(id, home).run();
+  await wakeScheduler(scope, home);
 }
 
 /** The user's scheduler sets its alarm to their earliest job (or clears it). */
-export async function wakeScheduler(scope: Scope, username: string): Promise<void> {
-  const scheduler = scope.env.SCHEDULER.get(scope.env.SCHEDULER.idFromName(username));
-  await scheduler.sync(username);
+export async function wakeScheduler(scope: Scope, home: string): Promise<void> {
+  const scheduler = scope.env.SCHEDULER.get(scope.env.SCHEDULER.idFromName(home));
+  await scheduler.sync(home);
 }
 
 export const jobs = {
-  get: (db: D1Database, username: string, id: string) =>
-    db.prepare("SELECT * FROM jobs WHERE id = ? AND username = ?").bind(id, username).first<JobRow>(),
+  get: (db: D1Database, home: string, id: string) =>
+    db.prepare("SELECT * FROM jobs WHERE id = ? AND home_id = ?").bind(id, home).first<JobRow>(),
 
-  earliest: async (db: D1Database, username: string) =>
+  earliest: async (db: D1Database, home: string) =>
     (
       await db
-        .prepare("SELECT MIN(next_at) AS at FROM jobs WHERE username = ? AND enabled = 1 AND next_at IS NOT NULL")
-        .bind(username)
+        .prepare("SELECT MIN(next_at) AS at FROM jobs WHERE home_id = ? AND enabled = 1 AND next_at IS NOT NULL")
+        .bind(home)
         .first<{ at: number | null }>()
     )?.at ?? null,
 
-  due: async (db: D1Database, username: string, until: number) =>
+  due: async (db: D1Database, home: string, until: number) =>
     (
       await db
-        .prepare("SELECT * FROM jobs WHERE username = ? AND enabled = 1 AND next_at <= ? ORDER BY next_at LIMIT 50")
-        .bind(username, until)
+        .prepare("SELECT * FROM jobs WHERE home_id = ? AND enabled = 1 AND next_at <= ? ORDER BY next_at LIMIT 50")
+        .bind(home, until)
         .all<JobRow>()
     ).results,
 

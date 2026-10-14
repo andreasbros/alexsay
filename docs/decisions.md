@@ -103,3 +103,13 @@ Newest last. Each entry: what was decided, why, what was rejected.
 - **Decision:** "stop" and "snooze" are two small LiveKit classifiers (same toolkit as the wake word, 3,000 clips a class), heard only in the 3 s after "Alexsay" while an alarm rings, at sensitivity 0.5.
 - **Why:** an alarm has to stop offline; a local word model needs no internet and costs nothing while nothing rings. Held out: stop 93%, snooze 78%, never confused with each other (measurements.md).
 - **Rejected:** sensitivity 1.0 (a few more catches, many more near-miss fires), 6,000 clips a class (speech generation at about 2 clips a second made it a day-long run).
+
+## 2026-10-14: Homes and email
+
+- **Decision:** everything belongs to a home; one home per person; a home's id is its creator's username.
+- **Why:** sharing the whole household (speakers, memories, contacts, alarms) is the point of a home speaker. Keying homes by the creator's username made the migration a column rename with no data rewritten, and kept every foreign key.
+- **Cost:** a home cannot change owner; deleting the creator's account deletes the home.
+- **Email:** one SMTP client for Cloudflare (Email Service's relay, from `alexsay.com`, 3,000 a month included in Workers Paid) and self-hosted (any relay). Running our own mail server is not possible on Workers (no listening sockets, port 25 blocked) and a new sending IP would land in spam.
+- **Codes:** HMAC-SHA256 under the server's secret instead of the plain SHA-256 used in sxreels (6 digits are trivial to brute-force from a leaked hash); guesses are not reset by a new code.
+- **Rejected:** several homes per person with a switcher (asked: one home), per-person data inside a shared home (asked: everything shared), Cloudflare's `send_email` binding (a second code path next to SMTP for self-hosting).
+

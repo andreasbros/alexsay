@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { calls } from "./db";
 import { logFor } from "./log";
 import { toolByName } from "./tools";
-import type { CallSpeaker, ToolContext } from "./types";
+import { actingFor, type CallSpeaker, type ToolContext } from "./types";
 
 export interface CallAgentStart {
   callId: string;
@@ -13,7 +13,7 @@ export interface CallAgentStart {
   legId?: string;
   apiKey: string;
   baseUrl: string;
-  username: string;
+  home: string;
   origin: string;
 }
 
@@ -105,7 +105,7 @@ export class CallAgent extends DurableObject<Env> {
       const detail = err instanceof Error ? err.message : "failed";
       await logFor(
         { env: this.env },
-        start.username,
+        start.home,
         "error",
         `call agent: no realtime socket for ${start.callId}: ${detail}`,
       );
@@ -123,10 +123,10 @@ export class CallAgent extends DurableObject<Env> {
     }
     socket.accept();
     this.socket = socket;
-    await logFor({ env: this.env }, start.username, "info", `call agent: on the realtime socket for ${start.callId}`);
+    await logFor({ env: this.env }, start.home, "info", `call agent: on the realtime socket for ${start.callId}`);
     const context: ToolContext = {
       env: this.env,
-      user: { username: start.username, role: "user" },
+      user: actingFor(start.home),
       origin: start.origin,
       voice: "browser",
       onCall: true,
@@ -145,7 +145,7 @@ export class CallAgent extends DurableObject<Env> {
           await calls.setLeft(this.env.DB, leg.sid, Date.now());
         }
       }
-      await logFor({ env: this.env }, start.username, "info", `call agent: socket closed for ${start.callId}`);
+      await logFor({ env: this.env }, start.home, "info", `call agent: socket closed for ${start.callId}`);
     });
   }
 
@@ -192,7 +192,7 @@ export class CallAgent extends DurableObject<Env> {
     const output = await runCallTool(context, call);
     await logFor(
       { env: this.env },
-      context.user.username,
+      context.user.home,
       output.includes('"error"') ? "warn" : "info",
       `on-call tool ${call.name} ${call.arguments.slice(0, 120)} -> ${output.slice(0, 200)}`,
     );

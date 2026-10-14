@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { CallAgentStart } from "../call_agent";
 import { openaiConnection } from "../connections";
-import { calls, connections, users } from "../db";
+import { calls, connections, homes } from "../db";
 import { logFor } from "../log";
 import { serverOrigin } from "../origin";
 import { acceptCall, ProviderError, rejectCall, verifyWebhook } from "../providers/openai";
@@ -48,7 +48,7 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
   const agent = agentLeg?.conference === conference ? parseAgent(agentLeg.brief) : null;
   const candidate = agent ? agentLeg : conference ? await calls.assistantLeg(c.env.DB, conference) : null;
   const leg = candidate && isLiveLeg(candidate, Date.now()) ? candidate : null;
-  const openai = leg ? await openaiConnection(c, leg.username) : null;
+  const openai = leg ? await openaiConnection(c, leg.home_id) : null;
   if (!leg || !openai?.webhookSecret || !callId) {
     return c.json({ error: "not_found" }, 404);
   }
@@ -61,16 +61,16 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
     return c.text("forbidden", 403);
   }
   try {
-    const hasLights = (await connections.get(c.env.DB, leg.username, "lightwave")) !== null;
+    const hasLights = (await connections.get(c.env.DB, leg.home_id, "lightwave")) !== null;
     const [logAccess, callTest, where, skillsOn] = await Promise.all([
-      users.logAccess(c.env.DB, leg.username),
-      users.callTest(c.env.DB, leg.username),
-      users.locale(c.env.DB, leg.username),
-      skills.enabled(c.env.DB, leg.username),
+      homes.logAccess(c.env.DB, leg.home_id),
+      homes.callTest(c.env.DB, leg.home_id),
+      homes.locale(c.env.DB, leg.home_id),
+      skills.enabled(c.env.DB, leg.home_id),
     ]);
     await acceptCall(c.env.OPENAI_BASE_URL, openai.apiKey, callId, {
       model: openai.settings.call_model,
-      instructions: agent ? agentBrief(agent, leg.username, where) : (leg.brief ?? ""),
+      instructions: agent ? agentBrief(agent, leg.home_id, where) : (leg.brief ?? ""),
       voice: agent ? agent.voice : openai.settings.voice,
       tools: agent
         ? agentToolDefinitions()
@@ -85,12 +85,12 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
       legId: agent ? leg.id : undefined,
       apiKey: openai.apiKey,
       baseUrl: c.env.OPENAI_BASE_URL,
-      username: leg.username,
+      home: leg.home_id,
       origin: serverOrigin(c),
     };
     await logFor(
       c,
-      leg.username,
+      leg.home_id,
       "info",
       `openai: SIP call ${callId} accepted for ${conference}${agent ? ` (test agent: ${agent.role})` : ""}`,
     );
@@ -101,8 +101,8 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
     );
   } catch (err) {
     const detail = err instanceof ProviderError ? err.detail : err instanceof Error ? err.message : "accept failed";
-    console.warn(JSON.stringify({ provider: "openai", webhook: "call.incoming", user: leg.username, error: detail }));
-    await logFor(c, leg.username, "error", `openai: SIP call for ${conference} refused: ${detail}`);
+    console.warn(JSON.stringify({ provider: "openai", webhook: "call.incoming", user: leg.home_id, error: detail }));
+    await logFor(c, leg.home_id, "error", `openai: SIP call for ${conference} refused: ${detail}`);
     await rejectCall(c.env.OPENAI_BASE_URL, openai.apiKey, callId).catch(() => undefined);
     return c.json({ ok: false });
   }

@@ -1,4 +1,4 @@
-import { devices, users } from "./db";
+import { devices, homes } from "./db";
 import { notifyDevice } from "./device_channel";
 import { cancel, type JobRow, schedule, setJobEnabled } from "./jobs";
 import { logFor } from "./log";
@@ -12,7 +12,7 @@ export type AlarmEvent = (typeof ALARM_EVENTS)[number];
 
 export interface AlarmRow {
   id: string;
-  username: string;
+  home_id: string;
   device_id: string | null;
   kind: AlarmKind;
   label: string;
@@ -30,7 +30,7 @@ export interface AlarmRow {
 export interface AlarmEventRow {
   id: number;
   alarm_id: string;
-  username: string;
+  home_id: string;
   device_id: string | null;
   occurrence: number;
   event: AlarmEvent;
@@ -54,16 +54,16 @@ export interface NewAlarm {
 }
 
 /** Stores an alarm with its verify job and tells its speaker. */
-export async function createAlarm(scope: Scope, username: string, alarm: NewAlarm, now = Date.now()) {
+export async function createAlarm(scope: Scope, home: string, alarm: NewAlarm, now = Date.now()) {
   const id = crypto.randomUUID();
   const jobId = await schedule(
     scope,
-    { username, topic: "alarm.verify", payload: { alarm_id: id }, rule: alarm.rule, delayMs: VERIFY_AFTER_MS },
+    { home, topic: "alarm.verify", payload: { alarm_id: id }, rule: alarm.rule, delayMs: VERIFY_AFTER_MS },
     now,
   );
   const row: AlarmRow = {
     id,
-    username,
+    home_id: home,
     device_id: alarm.deviceId,
     kind: alarm.kind,
     label: alarm.label,
@@ -78,13 +78,13 @@ export async function createAlarm(scope: Scope, username: string, alarm: NewAlar
     updated_at: now,
   };
   await scope.env.DB.prepare(
-    `INSERT INTO alarms (id, username, device_id, kind, label, message, rule, enabled, next_at, snoozed_until,
+    `INSERT INTO alarms (id, home_id, device_id, kind, label, message, rule, enabled, next_at, snoozed_until,
        job_id, created_via, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       row.id,
-      row.username,
+      row.home_id,
       row.device_id,
       row.kind,
       row.label,
@@ -113,12 +113,12 @@ export interface AlarmChanges {
 
 export async function updateAlarm(
   scope: Scope,
-  username: string,
+  home: string,
   id: string,
   changes: AlarmChanges,
   now = Date.now(),
 ): Promise<AlarmRow | null> {
-  const row = await alarms.get(scope.env.DB, username, id);
+  const row = await alarms.get(scope.env.DB, home, id);
   if (!row) {
     return null;
   }
@@ -141,7 +141,7 @@ export async function updateAlarm(
   };
   await scope.env.DB.prepare(
     `UPDATE alarms SET device_id = ?, label = ?, message = ?, rule = ?, enabled = ?, next_at = ?, snoozed_until = ?,
-       updated_at = ? WHERE id = ? AND username = ?`,
+       updated_at = ? WHERE id = ? AND home_id = ?`,
   )
     .bind(
       updated.device_id,
@@ -153,7 +153,7 @@ export async function updateAlarm(
       updated.snoozed_until,
       now,
       id,
-      username,
+      home,
     )
     .run();
   if (changes.rule) {
@@ -161,7 +161,7 @@ export async function updateAlarm(
       scope,
       {
         id: row.job_id,
-        username,
+        home,
         topic: "alarm.verify",
         payload: { alarm_id: id },
         rule,
@@ -171,7 +171,7 @@ export async function updateAlarm(
     );
   }
   if (changes.enabled !== undefined || changes.rule) {
-    await setJobEnabled(scope, username, row.job_id, updated.enabled === 1, now);
+    await setJobEnabled(scope, home, row.job_id, updated.enabled === 1, now);
   }
   await tellSpeaker(scope, row.device_id);
   if (updated.device_id !== row.device_id) {
@@ -180,13 +180,13 @@ export async function updateAlarm(
   return updated;
 }
 
-export async function deleteAlarm(scope: Scope, username: string, id: string): Promise<boolean> {
-  const row = await alarms.get(scope.env.DB, username, id);
+export async function deleteAlarm(scope: Scope, home: string, id: string): Promise<boolean> {
+  const row = await alarms.get(scope.env.DB, home, id);
   if (!row) {
     return false;
   }
-  await scope.env.DB.prepare("DELETE FROM alarms WHERE id = ? AND username = ?").bind(id, username).run();
-  await cancel(scope, username, row.job_id);
+  await scope.env.DB.prepare("DELETE FROM alarms WHERE id = ? AND home_id = ?").bind(id, home).run();
+  await cancel(scope, home, row.job_id);
   await tellSpeaker(scope, row.device_id);
   return true;
 }
@@ -200,12 +200,12 @@ async function tellSpeaker(scope: Scope, deviceId: string | null): Promise<void>
 
 /** What a speaker rings: the next few occurrences of each of its alarms, and what to say. */
 export async function alarmsForDevice(scope: Scope, device: DeviceRow, now = Date.now()) {
-  if (!device.owner) {
+  if (!device.home_id) {
     return [];
   }
   const rows = (
-    await scope.env.DB.prepare("SELECT * FROM alarms WHERE device_id = ? AND username = ? AND enabled = 1")
-      .bind(device.id, device.owner)
+    await scope.env.DB.prepare("SELECT * FROM alarms WHERE device_id = ? AND home_id = ? AND enabled = 1")
+      .bind(device.id, device.home_id)
       .all<AlarmRow>()
   ).results;
   return rows.flatMap((row) => {
@@ -243,20 +243,20 @@ export interface ReportedEvent {
 
 /** What the speaker says happened; repeats of the same event are ignored. */
 export async function recordEvents(scope: Scope, device: DeviceRow, events: ReportedEvent[]): Promise<number> {
-  if (!device.owner) {
+  if (!device.home_id) {
     return 0;
   }
   let recorded = 0;
   for (const event of events) {
-    const row = await alarms.get(scope.env.DB, device.owner, event.alarm_id);
+    const row = await alarms.get(scope.env.DB, device.home_id, event.alarm_id);
     if (!row) {
       continue;
     }
     const result = await scope.env.DB.prepare(
-      `INSERT OR IGNORE INTO alarm_events (alarm_id, username, device_id, occurrence, event, at, detail)
+      `INSERT OR IGNORE INTO alarm_events (alarm_id, home_id, device_id, occurrence, event, at, detail)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-      .bind(row.id, row.username, device.id, event.occurrence, event.event, event.at, "")
+      .bind(row.id, row.home_id, device.id, event.occurrence, event.event, event.at, "")
       .run();
     recorded += result.meta.changes;
     if (event.event === "snoozed" && event.until) {
@@ -287,7 +287,7 @@ async function finishOccurrence(scope: Scope, row: AlarmRow, now: number): Promi
  */
 export async function verifyAlarm(scope: Scope, job: JobRow, occurrence: number): Promise<void> {
   const { alarm_id } = JSON.parse(job.payload) as { alarm_id: string };
-  const row = await alarms.get(scope.env.DB, job.username, alarm_id);
+  const row = await alarms.get(scope.env.DB, job.home_id, alarm_id);
   if (!row) {
     return;
   }
@@ -298,12 +298,12 @@ export async function verifyAlarm(scope: Scope, job: JobRow, occurrence: number)
     .first<{ n: number }>();
   if ((heard?.n ?? 0) === 0) {
     await scope.env.DB.prepare(
-      `INSERT OR IGNORE INTO alarm_events (alarm_id, username, device_id, occurrence, event, at, detail)
+      `INSERT OR IGNORE INTO alarm_events (alarm_id, home_id, device_id, occurrence, event, at, detail)
        VALUES (?, ?, ?, ?, 'missed', ?, ?)`,
     )
-      .bind(row.id, row.username, row.device_id, occurrence, Date.now(), "no word from the speaker")
+      .bind(row.id, row.home_id, row.device_id, occurrence, Date.now(), "no word from the speaker")
       .run();
-    await logFor(scope, row.username, "warn", `alarm ${row.label || row.kind}: the speaker never reported ringing`);
+    await logFor(scope, row.home_id, "warn", `alarm ${row.label || row.kind}: the speaker never reported ringing`);
   }
   const snoozedAhead = row.snoozed_until !== null && row.snoozed_until > occurrence;
   if (!snoozedAhead) {
@@ -314,12 +314,12 @@ export async function verifyAlarm(scope: Scope, job: JobRow, occurrence: number)
 /** Stops (or snoozes) what is ringing: one alarm's speaker, or every speaker of the user. */
 export async function signalRinging(
   scope: Scope,
-  username: string,
+  home: string,
   id: string | null,
   snoozeMinutes: number | null,
 ): Promise<{ speakers: string[]; online: number }> {
-  const owned = await devices.list(scope.env.DB, username);
-  const row = id ? await alarms.get(scope.env.DB, username, id) : null;
+  const owned = await devices.list(scope.env.DB, home);
+  const row = id ? await alarms.get(scope.env.DB, home, id) : null;
   const targets = row?.device_id ? owned.filter((d) => d.id === row.device_id) : owned;
   let online = 0;
   for (const device of targets) {
@@ -335,11 +335,8 @@ export async function signalRinging(
 }
 
 /** How an alarm reads for the model and the app, in the user's own zone and language. */
-export async function presenter(scope: Scope, username: string) {
-  const [where, owned] = await Promise.all([
-    users.locale(scope.env.DB, username),
-    devices.list(scope.env.DB, username),
-  ]);
+export async function presenter(scope: Scope, home: string) {
+  const [where, owned] = await Promise.all([homes.locale(scope.env.DB, home), devices.list(scope.env.DB, home)]);
   const names = new Map(owned.map((d) => [d.id, d.name]));
   const format = new Intl.DateTimeFormat(where.locale, {
     timeZone: where.timezone,
@@ -384,29 +381,29 @@ export async function presenter(scope: Scope, username: string) {
 }
 
 export const alarms = {
-  get: (db: D1Database, username: string, id: string) =>
-    db.prepare("SELECT * FROM alarms WHERE id = ? AND username = ?").bind(id, username).first<AlarmRow>(),
+  get: (db: D1Database, home: string, id: string) =>
+    db.prepare("SELECT * FROM alarms WHERE id = ? AND home_id = ?").bind(id, home).first<AlarmRow>(),
 
   /** Everything still to come or switched off; spent one-offs are only history. */
-  list: async (db: D1Database, username: string) =>
+  list: async (db: D1Database, home: string) =>
     (
       await db
         .prepare(
-          `SELECT * FROM alarms WHERE username = ? AND (next_at IS NOT NULL OR snoozed_until IS NOT NULL OR rule LIKE '%"repeat"%')
+          `SELECT * FROM alarms WHERE home_id = ? AND (next_at IS NOT NULL OR snoozed_until IS NOT NULL OR rule LIKE '%"repeat"%')
            ORDER BY next_at IS NULL, next_at`,
         )
-        .bind(username)
+        .bind(home)
         .all<AlarmRow>()
     ).results,
 
-  recent: async (db: D1Database, username: string, limit = 5) =>
+  recent: async (db: D1Database, home: string, limit = 5) =>
     (
       await db
         .prepare(
           `SELECT e.*, a.kind, a.label FROM alarm_events e LEFT JOIN alarms a ON a.id = e.alarm_id
-           WHERE e.username = ? AND e.event != 'rang' ORDER BY e.at DESC LIMIT ?`,
+           WHERE e.home_id = ? AND e.event != 'rang' ORDER BY e.at DESC LIMIT ?`,
         )
-        .bind(username, limit)
+        .bind(home, limit)
         .all<AlarmEventRow & { kind: string | null; label: string | null }>()
     ).results,
 };
@@ -414,11 +411,11 @@ export const alarms = {
 /** Which speaker an alarm rings on, when the user did not say. */
 export async function defaultSpeaker(
   scope: Scope,
-  username: string,
+  home: string,
   from: string | undefined,
   named: string,
 ): Promise<{ device: DeviceRow } | { error: string; speakers?: string[] }> {
-  const owned = await devices.list(scope.env.DB, username);
+  const owned = await devices.list(scope.env.DB, home);
   if (owned.length === 0) {
     return { error: "the user has no speaker to ring on: add one under Devices first" };
   }

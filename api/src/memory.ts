@@ -1,4 +1,4 @@
-import { conversations, memories, users } from "./db";
+import { conversations, homes, memories } from "./db";
 import { type Locale, localeInstructions } from "./locale";
 import { ProviderError } from "./providers/openai";
 import type { ConversationRow, MemoryCategory, MemoryRow, TurnRow } from "./types";
@@ -15,11 +15,11 @@ export interface Context {
   where: Locale;
 }
 
-export async function loadContext(db: D1Database, username: string): Promise<Context> {
+export async function loadContext(db: D1Database, home: string): Promise<Context> {
   const [all, recent, where] = await Promise.all([
-    memories.list(db, username),
-    conversations.list(db, username, RECENT_CONVERSATIONS),
-    users.locale(db, username),
+    memories.list(db, home),
+    conversations.list(db, home, RECENT_CONVERSATIONS),
+    homes.locale(db, home),
   ]);
   const last = recent.find((r) => r.ended_at !== null);
   const lastTurns = last ? (await conversations.turns(db, last.id, 400)).slice(-LAST_CHAT_TURNS) : [];
@@ -95,14 +95,14 @@ const DIGEST_SCHEMA = {
 export async function digestConversation(
   db: D1Database,
   openai: { baseUrl: string; apiKey: string; model: string },
-  username: string,
+  home: string,
   conversationId: string,
 ): Promise<void> {
   const turns = await conversations.turns(db, conversationId, 400);
   if (turns.length === 0) {
     return;
   }
-  const existing = await memories.list(db, username);
+  const existing = await memories.list(db, home);
   const transcript = turns.map((t) => `${t.role}: ${t.text}`).join("\n");
   const known = existing.map((m) => `${m.id} [${m.category}] ${m.content}`).join("\n") || "(none)";
   const res = await fetch(`${openai.baseUrl}/responses`, {
@@ -134,15 +134,15 @@ export async function digestConversation(
     if (change.op === "add" && change.category && content) {
       await memories.create(db, {
         id: crypto.randomUUID(),
-        username,
+        home_id: home,
         category: change.category,
         content,
         source: conversationId,
       });
     } else if (change.op === "update" && change.id && content) {
-      await memories.update(db, username, change.id, { category: change.category, content });
+      await memories.update(db, home, change.id, { category: change.category, content });
     } else if (change.op === "remove" && change.id) {
-      await memories.remove(db, username, change.id);
+      await memories.remove(db, home, change.id);
     }
   }
 }
@@ -167,8 +167,8 @@ function parseDigest(body: unknown): Digest | null {
 const CURRENT_TURNS = 30;
 
 /** What has been said so far in the conversation that is still open, for an assistant joining it elsewhere. */
-export async function currentConversation(db: D1Database, username: string): Promise<string> {
-  const recent = await conversations.list(db, username, 1);
+export async function currentConversation(db: D1Database, home: string): Promise<string> {
+  const recent = await conversations.list(db, home, 1);
   const open = recent[0];
   if (!open || open.ended_at !== null) {
     return "";

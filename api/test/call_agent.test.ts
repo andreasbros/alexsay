@@ -7,6 +7,7 @@ import {
   runCallTool,
   transcriptLine,
 } from "../src/call_agent";
+import { actingFor } from "../src/types";
 import { APP, addUser, json, resetDb, signIn } from "./helpers";
 
 describe("call agent", () => {
@@ -61,7 +62,7 @@ describe("call agent", () => {
   it("runs the registry's tools for the user on the call and turns failures into results", async () => {
     const maria = await signIn("maria", "maria-pass");
     await json(`${APP}/api/contacts`, "POST", { name: "Mum", phone: "07700900123", note: "Sister" }, maria);
-    const context = { env, user: { username: "maria", role: "user" as const }, origin: APP, voice: "browser" as const };
+    const context = { env, user: actingFor("maria"), origin: APP, voice: "browser" as const };
     const found = JSON.parse(
       await runCallTool(context, { call_id: "c1", name: "find_contact", arguments: '{"query":"mum"}' }),
     ) as { name: string }[];

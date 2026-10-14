@@ -14,6 +14,8 @@ import type {
   ConversationSource,
   DeviceRow,
   Direction,
+  HomeRole,
+  HomeRow,
   MemoryCategory,
   MemoryRow,
   MessageRow,
@@ -29,26 +31,41 @@ const DAY_MS = 86_400_000;
 /** Caps how many unclaimed devices can call home, so random traffic cannot grow the table. */
 const MAX_UNCLAIMED_DEVICES = 200;
 
+const SESSION_USER = `SELECT u.username, u.role, u.email, COALESCE(u.home_id, u.username) AS home,
+  CASE WHEN u.home_id IS NULL OR u.home_id = u.username THEN 'admin' ELSE u.home_role END AS homeRole
+  FROM users u`;
+
 export const users = {
   get: (db: D1Database, username: string) =>
     db.prepare("SELECT * FROM users WHERE username = ?").bind(username).first<UserRow>(),
+
+  /** The signed-in shape of an account: its home and role there. */
+  session: (db: D1Database, username: string) =>
+    db.prepare(`${SESSION_USER} WHERE u.username = ?`).bind(username).first<User>(),
+
+  byEmail: (db: D1Database, email: string) => db.prepare(`${SESSION_USER} WHERE u.email = ?`).bind(email).first<User>(),
 
   list: async (db: D1Database) =>
     (
       await db
         .prepare(
-          `SELECT u.username, u.role, u.created_at, COUNT(d.id) AS devices
-           FROM users u LEFT JOIN devices d ON d.owner = u.username
-           GROUP BY u.username ORDER BY u.username`,
+          `SELECT u.username, u.role, u.email, u.created_at, COALESCE(u.home_id, u.username) AS home,
+             (SELECT COUNT(*) FROM devices d WHERE d.home_id = COALESCE(u.home_id, u.username)) AS devices
+           FROM users u ORDER BY u.username`,
         )
-        .all<User & { created_at: number; devices: number }>()
+        .all<Pick<User, "username" | "role" | "email" | "home"> & { created_at: number; devices: number }>()
     ).results,
 
-  create: (db: D1Database, user: { username: string; password_hash: string; role: Role }) =>
-    db
-      .prepare("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)")
-      .bind(user.username, user.password_hash, user.role, Date.now())
-      .run(),
+  /** A new account and its own home, called "Home". */
+  create: (db: D1Database, user: { username: string; password_hash: string; role: Role; email?: string | null }) => {
+    const now = Date.now();
+    return db.batch([
+      db
+        .prepare("INSERT INTO users (username, password_hash, role, email, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(user.username, user.password_hash, user.role, user.email ?? null, now),
+      db.prepare("INSERT INTO homes (id, created_at) VALUES (?, ?)").bind(user.username, now),
+    ]);
+  },
 
   setRole: (db: D1Database, username: string, role: Role) =>
     db.prepare("UPDATE users SET role = ? WHERE username = ?").bind(role, username).run(),
@@ -56,49 +73,82 @@ export const users = {
   setPassword: (db: D1Database, username: string, passwordHash: string) =>
     db.prepare("UPDATE users SET password_hash = ? WHERE username = ?").bind(passwordHash, username).run(),
 
+  setEmail: (db: D1Database, username: string, email: string | null) =>
+    db.prepare("UPDATE users SET email = ? WHERE username = ?").bind(email, username).run(),
+
+  /** Moves a person into a home; their own home (NULL) makes them its admin again. */
+  setHome: (db: D1Database, username: string, home: string | null, role: HomeRole) =>
+    db
+      .prepare("UPDATE users SET home_id = ?, home_role = ? WHERE username = ?")
+      .bind(home === username ? null : home, role, username)
+      .run(),
+
   remove: (db: D1Database, username: string) => db.prepare("DELETE FROM users WHERE username = ?").bind(username).run(),
-
-  /** Whether the user let the assistant read their server log. */
-  locale: async (db: D1Database, username: string): Promise<Locale> =>
-    (await db.prepare("SELECT locale, timezone FROM users WHERE username = ?").bind(username).first<Locale>()) ??
-    DEFAULT_LOCALE,
-
-  setLocale: (db: D1Database, username: string, changes: Partial<Locale>) =>
-    db
-      .prepare("UPDATE users SET locale = COALESCE(?, locale), timezone = COALESCE(?, timezone) WHERE username = ?")
-      .bind(changes.locale ?? null, changes.timezone ?? null, username)
-      .run(),
-
-  callTest: async (db: D1Database, username: string) =>
-    (
-      await db
-        .prepare("SELECT ai_call_test FROM users WHERE username = ?")
-        .bind(username)
-        .first<{ ai_call_test: number }>()
-    )?.ai_call_test === 1,
-
-  setCallTest: (db: D1Database, username: string, allowed: boolean) =>
-    db
-      .prepare("UPDATE users SET ai_call_test = ? WHERE username = ?")
-      .bind(allowed ? 1 : 0, username)
-      .run(),
-
-  logAccess: async (db: D1Database, username: string) =>
-    (
-      await db
-        .prepare("SELECT ai_log_access FROM users WHERE username = ?")
-        .bind(username)
-        .first<{ ai_log_access: number }>()
-    )?.ai_log_access === 1,
-
-  setLogAccess: (db: D1Database, username: string, allowed: boolean) =>
-    db
-      .prepare("UPDATE users SET ai_log_access = ? WHERE username = ?")
-      .bind(allowed ? 1 : 0, username)
-      .run(),
 
   countAdmins: async (db: D1Database) =>
     (await db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").first<{ n: number }>())?.n ?? 0,
+
+  /** Whether a username is free, for accounts made from an email address. */
+  exists: async (db: D1Database, username: string) =>
+    (await db.prepare("SELECT 1 AS x FROM users WHERE username = ?").bind(username).first()) !== null,
+};
+
+export interface HomeMember {
+  username: string;
+  email: string | null;
+  role: HomeRole;
+  creator: boolean;
+}
+
+export const homes = {
+  get: (db: D1Database, id: string) => db.prepare("SELECT * FROM homes WHERE id = ?").bind(id).first<HomeRow>(),
+
+  rename: (db: D1Database, id: string, name: string) =>
+    db.prepare("UPDATE homes SET name = ? WHERE id = ?").bind(name, id).run(),
+
+  /** The creator first, then everyone who joined. */
+  members: async (db: D1Database, id: string) =>
+    (
+      await db
+        .prepare(
+          `SELECT username, email, CASE WHEN username = ?1 THEN 'admin' ELSE home_role END AS role,
+             username = ?1 AS creator
+           FROM users WHERE COALESCE(home_id, username) = ?1 ORDER BY username != ?1, username`,
+        )
+        .bind(id)
+        .all<Omit<HomeMember, "creator"> & { creator: number }>()
+    ).results.map((m) => ({ ...m, creator: m.creator === 1 })),
+
+  locale: async (db: D1Database, id: string): Promise<Locale> =>
+    (await db.prepare("SELECT locale, timezone FROM homes WHERE id = ?").bind(id).first<Locale>()) ?? DEFAULT_LOCALE,
+
+  setLocale: (db: D1Database, id: string, changes: Partial<Locale>) =>
+    db
+      .prepare("UPDATE homes SET locale = COALESCE(?, locale), timezone = COALESCE(?, timezone) WHERE id = ?")
+      .bind(changes.locale ?? null, changes.timezone ?? null, id)
+      .run(),
+
+  /** Whether the home lets the assistant place scripted test calls. */
+  callTest: async (db: D1Database, id: string) =>
+    (await db.prepare("SELECT ai_call_test FROM homes WHERE id = ?").bind(id).first<{ ai_call_test: number }>())
+      ?.ai_call_test === 1,
+
+  setCallTest: (db: D1Database, id: string, allowed: boolean) =>
+    db
+      .prepare("UPDATE homes SET ai_call_test = ? WHERE id = ?")
+      .bind(allowed ? 1 : 0, id)
+      .run(),
+
+  /** Whether the home lets the assistant read its server log. */
+  logAccess: async (db: D1Database, id: string) =>
+    (await db.prepare("SELECT ai_log_access FROM homes WHERE id = ?").bind(id).first<{ ai_log_access: number }>())
+      ?.ai_log_access === 1,
+
+  setLogAccess: (db: D1Database, id: string, allowed: boolean) =>
+    db
+      .prepare("UPDATE homes SET ai_log_access = ? WHERE id = ?")
+      .bind(allowed ? 1 : 0, id)
+      .run(),
 };
 
 export const sessions = {
@@ -111,8 +161,7 @@ export const sessions = {
   user: (db: D1Database, tokenSha256: string, now: number) =>
     db
       .prepare(
-        `SELECT u.username, u.role FROM sessions s JOIN users u ON u.username = s.username
-         WHERE s.token_sha256 = ? AND s.expires_at > ?`,
+        `${SESSION_USER} JOIN sessions s ON u.username = s.username WHERE s.token_sha256 = ? AND s.expires_at > ?`,
       )
       .bind(tokenSha256, now)
       .first<User>(),
@@ -140,47 +189,50 @@ export const loginFailures = {
 export const devices = {
   get: (db: D1Database, id: string) => db.prepare("SELECT * FROM devices WHERE id = ?").bind(id).first<DeviceRow>(),
 
-  /** Every device for admins (owner null), otherwise the owner's. */
-  list: async (db: D1Database, owner: string | null) => {
-    const query = owner
-      ? db.prepare("SELECT * FROM devices WHERE owner = ? ORDER BY created_at").bind(owner)
-      : db.prepare("SELECT * FROM devices ORDER BY owner IS NULL, created_at");
+  /** Every device for admins (home null), otherwise the home's. */
+  list: async (db: D1Database, home: string | null) => {
+    const query = home
+      ? db.prepare("SELECT * FROM devices WHERE home_id = ? ORDER BY created_at").bind(home)
+      : db.prepare("SELECT * FROM devices ORDER BY home_id IS NULL, created_at");
     return (await query.all<DeviceRow>()).results;
   },
 
-  /** Adds the device to the owner, creating the row if the speaker has never called home. */
-  claim: (db: D1Database, id: string, name: string, owner: string, now: number) =>
+  /** Adds the device to the home, creating the row if the speaker has never called home. */
+  claim: (db: D1Database, id: string, name: string, home: string, now: number) =>
     db
       .prepare(
-        `INSERT INTO devices (id, name, owner, created_at, claimed_at) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (id) DO UPDATE SET owner = excluded.owner, claimed_at = excluded.claimed_at,
+        `INSERT INTO devices (id, name, home_id, created_at, claimed_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET home_id = excluded.home_id, claimed_at = excluded.claimed_at,
            name = CASE WHEN excluded.name = '' THEN devices.name ELSE excluded.name END
-         WHERE devices.owner IS NULL`,
+         WHERE devices.home_id IS NULL`,
       )
-      .bind(id, name, owner, now, now)
+      .bind(id, name, home, now, now)
       .run(),
 
-  update: (db: D1Database, id: string, changes: { name?: string; owner?: string | null }) =>
+  update: (db: D1Database, id: string, changes: { name?: string; home_id?: string | null }) =>
     db
       .prepare(
         `UPDATE devices SET
            name = COALESCE(?, name),
-           owner = CASE WHEN ? THEN ? ELSE owner END,
+           home_id = CASE WHEN ? THEN ? ELSE home_id END,
            claimed_at = CASE WHEN ? THEN ? ELSE claimed_at END
          WHERE id = ?`,
       )
       .bind(
         changes.name ?? null,
-        changes.owner !== undefined ? 1 : 0,
-        changes.owner ?? null,
-        changes.owner !== undefined ? 1 : 0,
-        changes.owner ? Date.now() : null,
+        changes.home_id !== undefined ? 1 : 0,
+        changes.home_id ?? null,
+        changes.home_id !== undefined ? 1 : 0,
+        changes.home_id ? Date.now() : null,
         id,
       )
       .run(),
 
-  release: (db: D1Database, id: string, owner: string) =>
-    db.prepare("UPDATE devices SET owner = NULL, claimed_at = NULL WHERE id = ? AND owner = ?").bind(id, owner).run(),
+  release: (db: D1Database, id: string, home: string) =>
+    db
+      .prepare("UPDATE devices SET home_id = NULL, claimed_at = NULL WHERE id = ? AND home_id = ?")
+      .bind(id, home)
+      .run(),
 
   remove: (db: D1Database, id: string) => db.prepare("DELETE FROM devices WHERE id = ?").bind(id).run(),
 
@@ -190,7 +242,7 @@ export const devices = {
       db
         .prepare(
           `INSERT INTO devices (id, created_at, last_seen_at, firmware, last_meta)
-           SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM devices WHERE owner IS NULL) < ?
+           SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM devices WHERE home_id IS NULL) < ?
            ON CONFLICT (id) DO NOTHING`,
         )
         .bind(id, now, now, firmware, meta, MAX_UNCLAIMED_DEVICES),
@@ -201,41 +253,41 @@ export const devices = {
 };
 
 export const connections = {
-  get: (db: D1Database, username: string, provider: Provider) =>
+  get: (db: D1Database, home: string, provider: Provider) =>
     db
-      .prepare("SELECT * FROM connections WHERE username = ? AND provider = ?")
-      .bind(username, provider)
+      .prepare("SELECT * FROM connections WHERE home_id = ? AND provider = ?")
+      .bind(home, provider)
       .first<ConnectionRow>(),
 
-  list: async (db: D1Database, username: string) =>
+  list: async (db: D1Database, home: string) =>
     (
       await db
         .prepare(
-          "SELECT provider, settings, created_at, updated_at FROM connections WHERE username = ? ORDER BY provider",
+          "SELECT provider, settings, created_at, updated_at FROM connections WHERE home_id = ? ORDER BY provider",
         )
-        .bind(username)
+        .bind(home)
         .all<Pick<ConnectionRow, "provider" | "settings" | "created_at" | "updated_at">>()
     ).results,
 
-  put: (db: D1Database, username: string, provider: Provider, secret: string, settings: string) =>
+  put: (db: D1Database, home: string, provider: Provider, secret: string, settings: string) =>
     db
       .prepare(
-        `INSERT INTO connections (username, provider, secret, settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT (username, provider) DO UPDATE SET secret = excluded.secret, settings = excluded.settings,
+        `INSERT INTO connections (home_id, provider, secret, settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (home_id, provider) DO UPDATE SET secret = excluded.secret, settings = excluded.settings,
            updated_at = excluded.updated_at`,
       )
-      .bind(username, provider, secret, settings, Date.now(), Date.now())
+      .bind(home, provider, secret, settings, Date.now(), Date.now())
       .run(),
 
   /** Rotating credentials (Lightwave's refresh token) are re-sealed after every use. */
-  setSecret: (db: D1Database, username: string, provider: Provider, secret: string) =>
+  setSecret: (db: D1Database, home: string, provider: Provider, secret: string) =>
     db
-      .prepare("UPDATE connections SET secret = ? WHERE username = ? AND provider = ?")
-      .bind(secret, username, provider)
+      .prepare("UPDATE connections SET secret = ? WHERE home_id = ? AND provider = ?")
+      .bind(secret, home, provider)
       .run(),
 
-  remove: (db: D1Database, username: string, provider: Provider) =>
-    db.prepare("DELETE FROM connections WHERE username = ? AND provider = ?").bind(username, provider).run(),
+  remove: (db: D1Database, home: string, provider: Provider) =>
+    db.prepare("DELETE FROM connections WHERE home_id = ? AND provider = ?").bind(home, provider).run(),
 
   /** Whose Twilio number (or WhatsApp sender) an incoming call or message was addressed to. */
   /** Every user whose Twilio number or WhatsApp sender this is: the sandbox sender is shared by all. */
@@ -246,19 +298,20 @@ export const connections = {
           `SELECT * FROM connections WHERE provider = 'twilio' AND (
              json_extract(settings, '$.from_number') = ?1 OR
              json_extract(settings, '$.whatsapp_from') IN (?1, 'whatsapp:' || ?1))
-           ORDER BY username`,
+           ORDER BY home_id`,
         )
         .bind(number)
         .all<ConnectionRow>()
     ).results,
 };
 
-/** Nightly: drops expired sessions and old login failures. */
+/** Nightly: drops expired sessions and sign-in codes, and old login failures. */
 export async function purgeExpired(db: D1Database, now: number): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now),
     db.prepare("DELETE FROM login_failures WHERE at <= ?").bind(now - DAY_MS),
     db.prepare("DELETE FROM bridges WHERE created_at <= ?").bind(now - DAY_MS),
+    db.prepare("DELETE FROM email_codes WHERE expires_at <= ?").bind(now),
     purgeLog(db, now),
   ]);
 }
@@ -272,30 +325,28 @@ export interface NewTurn {
 export const conversations = {
   create: (
     db: D1Database,
-    row: { id: string; username: string; source: ConversationSource; device_id: string | null },
+    row: { id: string; home_id: string; source: ConversationSource; device_id: string | null },
   ) =>
     db
-      .prepare("INSERT INTO conversations (id, username, source, device_id, started_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(row.id, row.username, row.source, row.device_id, Date.now())
+      .prepare("INSERT INTO conversations (id, home_id, source, device_id, started_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(row.id, row.home_id, row.source, row.device_id, Date.now())
       .run(),
 
-  get: (db: D1Database, username: string, id: string) =>
-    db.prepare("SELECT * FROM conversations WHERE id = ? AND username = ?").bind(id, username).first<ConversationRow>(),
+  get: (db: D1Database, home: string, id: string) =>
+    db.prepare("SELECT * FROM conversations WHERE id = ? AND home_id = ?").bind(id, home).first<ConversationRow>(),
 
   /** Newest first; `query` matches the summary and the turns' text (capped: D1 rejects long LIKE patterns). */
-  list: async (db: D1Database, username: string, limit: number, rawQuery?: string) => {
+  list: async (db: D1Database, home: string, limit: number, rawQuery?: string) => {
     const query = rawQuery?.trim().slice(0, 100);
     const statement = query
       ? db
           .prepare(
             `SELECT DISTINCT c.* FROM conversations c LEFT JOIN conversation_turns t ON t.conversation_id = c.id
-             WHERE c.username = ? AND (c.summary LIKE ? OR t.text LIKE ?)
+             WHERE c.home_id = ? AND (c.summary LIKE ? OR t.text LIKE ?)
              ORDER BY c.started_at DESC LIMIT ?`,
           )
-          .bind(username, `%${query}%`, `%${query}%`, limit)
-      : db
-          .prepare("SELECT * FROM conversations WHERE username = ? ORDER BY started_at DESC LIMIT ?")
-          .bind(username, limit);
+          .bind(home, `%${query}%`, `%${query}%`, limit)
+      : db.prepare("SELECT * FROM conversations WHERE home_id = ? ORDER BY started_at DESC LIMIT ?").bind(home, limit);
     return (await statement.all<ConversationRow>()).results;
   },
 
@@ -323,52 +374,52 @@ export const conversations = {
   setSummary: (db: D1Database, id: string, summary: string) =>
     db.prepare("UPDATE conversations SET summary = ? WHERE id = ?").bind(summary, id).run(),
 
-  remove: (db: D1Database, username: string, id: string) =>
-    db.prepare("DELETE FROM conversations WHERE id = ? AND username = ?").bind(id, username).run(),
+  remove: (db: D1Database, home: string, id: string) =>
+    db.prepare("DELETE FROM conversations WHERE id = ? AND home_id = ?").bind(id, home).run(),
 };
 
 export const memories = {
-  list: async (db: D1Database, username: string, category?: MemoryCategory) =>
+  list: async (db: D1Database, home: string, category?: MemoryCategory) =>
     (
       await db
         .prepare(
-          `SELECT * FROM memories WHERE username = ? AND (? IS NULL OR category = ?)
+          `SELECT * FROM memories WHERE home_id = ? AND (? IS NULL OR category = ?)
            ORDER BY CASE category WHEN 'important' THEN 0 ELSE 1 END, updated_at DESC`,
         )
-        .bind(username, category ?? null, category ?? null)
+        .bind(home, category ?? null, category ?? null)
         .all<MemoryRow>()
     ).results,
 
-  get: (db: D1Database, username: string, id: string) =>
-    db.prepare("SELECT * FROM memories WHERE id = ? AND username = ?").bind(id, username).first<MemoryRow>(),
+  get: (db: D1Database, home: string, id: string) =>
+    db.prepare("SELECT * FROM memories WHERE id = ? AND home_id = ?").bind(id, home).first<MemoryRow>(),
 
   create: (
     db: D1Database,
-    row: { id: string; username: string; category: MemoryCategory; content: string; source: string | null },
+    row: { id: string; home_id: string; category: MemoryCategory; content: string; source: string | null },
   ) =>
     db
       .prepare(
-        `INSERT INTO memories (id, username, category, content, source_conversation_id, created_at, updated_at)
+        `INSERT INTO memories (id, home_id, category, content, source_conversation_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(row.id, row.username, row.category, row.content, row.source, Date.now(), Date.now())
+      .bind(row.id, row.home_id, row.category, row.content, row.source, Date.now(), Date.now())
       .run(),
 
-  count: async (db: D1Database, username: string) =>
-    (await db.prepare("SELECT COUNT(*) AS n FROM memories WHERE username = ?").bind(username).first<{ n: number }>())
-      ?.n ?? 0,
+  count: async (db: D1Database, home: string) =>
+    (await db.prepare("SELECT COUNT(*) AS n FROM memories WHERE home_id = ?").bind(home).first<{ n: number }>())?.n ??
+    0,
 
-  update: (db: D1Database, username: string, id: string, changes: { category?: MemoryCategory; content?: string }) =>
+  update: (db: D1Database, home: string, id: string, changes: { category?: MemoryCategory; content?: string }) =>
     db
       .prepare(
         `UPDATE memories SET category = COALESCE(?, category), content = COALESCE(?, content), updated_at = ?
-         WHERE id = ? AND username = ?`,
+         WHERE id = ? AND home_id = ?`,
       )
-      .bind(changes.category ?? null, changes.content ?? null, Date.now(), id, username)
+      .bind(changes.category ?? null, changes.content ?? null, Date.now(), id, home)
       .run(),
 
-  remove: (db: D1Database, username: string, id: string) =>
-    db.prepare("DELETE FROM memories WHERE id = ? AND username = ?").bind(id, username).run(),
+  remove: (db: D1Database, home: string, id: string) =>
+    db.prepare("DELETE FROM memories WHERE id = ? AND home_id = ?").bind(id, home).run(),
 };
 
 export interface ContactPage {
@@ -390,15 +441,15 @@ export const contacts = {
   /** Favourites first, then by name; `query` matches a name fragment or the digits of a number. */
   list: async (
     db: D1Database,
-    username: string,
+    home: string,
     options: { query?: string; favourites?: boolean; page: number; pageSize: number },
   ): Promise<ContactPage> => {
     const name = options.query ? `%${searchName(options.query)}%` : null;
     const digits = options.query?.replace(/\D/g, "") ?? "";
     const phone = digits.length >= 3 ? `%${digits}%` : null;
-    const where = `username = ?1 AND (?2 IS NULL OR search_name LIKE ?2 OR (?3 IS NOT NULL AND phone LIKE ?3))
+    const where = `home_id = ?1 AND (?2 IS NULL OR search_name LIKE ?2 OR (?3 IS NOT NULL AND phone LIKE ?3))
       AND (?4 = 0 OR favourite = 1)`;
-    const args = [username, name, phone, options.favourites ? 1 : 0];
+    const args = [home, name, phone, options.favourites ? 1 : 0];
     const [rows, count] = await Promise.all([
       db
         .prepare(`SELECT * FROM contacts WHERE ${where} ORDER BY favourite DESC, search_name, label LIMIT ?5 OFFSET ?6`)
@@ -412,35 +463,35 @@ export const contacts = {
     return { rows: rows.results, total: count?.n ?? 0 };
   },
 
-  get: (db: D1Database, username: string, id: string) =>
-    db.prepare("SELECT * FROM contacts WHERE id = ? AND username = ?").bind(id, username).first<ContactRow>(),
+  get: (db: D1Database, home: string, id: string) =>
+    db.prepare("SELECT * FROM contacts WHERE id = ? AND home_id = ?").bind(id, home).first<ContactRow>(),
 
-  byPhone: (db: D1Database, username: string, phone: string) =>
-    db.prepare("SELECT * FROM contacts WHERE username = ? AND phone = ?").bind(username, phone).first<ContactRow>(),
+  byPhone: (db: D1Database, home: string, phone: string) =>
+    db.prepare("SELECT * FROM contacts WHERE home_id = ? AND phone = ?").bind(home, phone).first<ContactRow>(),
 
-  phones: async (db: D1Database, username: string) =>
+  phones: async (db: D1Database, home: string) =>
     new Set(
       (
-        await db.prepare("SELECT phone FROM contacts WHERE username = ?").bind(username).all<{ phone: string }>()
+        await db.prepare("SELECT phone FROM contacts WHERE home_id = ?").bind(home).all<{ phone: string }>()
       ).results.map((r) => r.phone),
     ),
 
   /** Inserts new numbers and renames known ones; a blank imported label never wipes a kept one. */
-  upsert: (db: D1Database, username: string, rows: NewContact[], now: number) =>
+  upsert: (db: D1Database, home: string, rows: NewContact[], now: number) =>
     db.batch(
       rows.map((row) =>
         db
           .prepare(
-            `INSERT INTO contacts (id, username, name, search_name, phone, label, note, created_at, updated_at)
+            `INSERT INTO contacts (id, home_id, name, search_name, phone, label, note, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT (username, phone) DO UPDATE SET name = excluded.name, search_name = excluded.search_name,
+             ON CONFLICT (home_id, phone) DO UPDATE SET name = excluded.name, search_name = excluded.search_name,
                label = CASE WHEN excluded.label = '' THEN contacts.label ELSE excluded.label END,
                note = CASE WHEN excluded.note = '' THEN contacts.note ELSE excluded.note END,
                updated_at = excluded.updated_at`,
           )
           .bind(
             crypto.randomUUID(),
-            username,
+            home,
             row.name,
             searchName(row.name),
             row.phone,
@@ -454,7 +505,7 @@ export const contacts = {
 
   update: (
     db: D1Database,
-    username: string,
+    home: string,
     id: string,
     changes: { name?: string; phone?: string; label?: string; note?: string; favourite?: boolean },
   ) =>
@@ -463,7 +514,7 @@ export const contacts = {
         `UPDATE contacts SET name = COALESCE(?, name), search_name = COALESCE(?, search_name),
            phone = COALESCE(?, phone), label = COALESCE(?, label), note = COALESCE(?, note),
            favourite = COALESCE(?, favourite), updated_at = ?
-         WHERE id = ? AND username = ?`,
+         WHERE id = ? AND home_id = ?`,
       )
       .bind(
         changes.name ?? null,
@@ -474,22 +525,22 @@ export const contacts = {
         changes.favourite === undefined ? null : changes.favourite ? 1 : 0,
         Date.now(),
         id,
-        username,
+        home,
       )
       .run(),
 
-  remove: (db: D1Database, username: string, id: string) =>
-    db.prepare("DELETE FROM contacts WHERE id = ? AND username = ?").bind(id, username).run(),
+  remove: (db: D1Database, home: string, id: string) =>
+    db.prepare("DELETE FROM contacts WHERE id = ? AND home_id = ?").bind(id, home).run(),
 
-  stamp: (db: D1Database, username: string, phone: string, field: ContactStamp, at: number) =>
-    db.prepare(`UPDATE contacts SET ${field} = ? WHERE username = ? AND phone = ?`).bind(at, username, phone).run(),
+  stamp: (db: D1Database, home: string, phone: string, field: ContactStamp, at: number) =>
+    db.prepare(`UPDATE contacts SET ${field} = ? WHERE home_id = ? AND phone = ?`).bind(at, home, phone).run(),
 };
 
 export const messages = {
   create: (
     db: D1Database,
     row: {
-      username: string;
+      home_id: string;
       contact_id: string | null;
       channel: Channel;
       direction: Direction;
@@ -502,12 +553,12 @@ export const messages = {
   ) =>
     db
       .prepare(
-        `INSERT INTO messages (id, username, contact_id, channel, direction, phone, body, sid, status, at)
+        `INSERT INTO messages (id, home_id, contact_id, channel, direction, phone, body, sid, status, at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         crypto.randomUUID(),
-        row.username,
+        row.home_id,
         row.contact_id,
         row.channel,
         row.direction,
@@ -520,11 +571,11 @@ export const messages = {
       .run(),
 
   /** Newest first, for one contact or across the phone book. */
-  list: async (db: D1Database, username: string, contactId: string | null, limit: number) =>
+  list: async (db: D1Database, home: string, contactId: string | null, limit: number) =>
     (
       await db
-        .prepare(`SELECT * FROM messages WHERE username = ? AND (? IS NULL OR contact_id = ?) ORDER BY at DESC LIMIT ?`)
-        .bind(username, contactId, contactId, limit)
+        .prepare(`SELECT * FROM messages WHERE home_id = ? AND (? IS NULL OR contact_id = ?) ORDER BY at DESC LIMIT ?`)
+        .bind(home, contactId, contactId, limit)
         .all<MessageRow>()
     ).results,
 };
@@ -535,7 +586,7 @@ export const calls = {
   create: (
     db: D1Database,
     row: {
-      username: string;
+      home_id: string;
       contact_id: string | null;
       direction: Direction;
       kind: CallRow["kind"];
@@ -551,12 +602,12 @@ export const calls = {
   ) =>
     db
       .prepare(
-        `INSERT INTO calls (id, username, contact_id, direction, kind, phone, conference, role, brief, sid, status, at)
+        `INSERT INTO calls (id, home_id, contact_id, direction, kind, phone, conference, role, brief, sid, status, at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         row.id ?? crypto.randomUUID(),
-        row.username,
+        row.home_id,
         row.contact_id,
         row.direction,
         row.kind,
@@ -570,11 +621,11 @@ export const calls = {
       )
       .run(),
 
-  list: async (db: D1Database, username: string, contactId: string | null, limit: number) =>
+  list: async (db: D1Database, home: string, contactId: string | null, limit: number) =>
     (
       await db
-        .prepare(`SELECT * FROM calls WHERE username = ? AND (? IS NULL OR contact_id = ?) ORDER BY at DESC LIMIT ?`)
-        .bind(username, contactId, contactId, limit)
+        .prepare(`SELECT * FROM calls WHERE home_id = ? AND (? IS NULL OR contact_id = ?) ORDER BY at DESC LIMIT ?`)
+        .bind(home, contactId, contactId, limit)
         .all<CallRow>()
     ).results,
 
@@ -616,11 +667,11 @@ export const calls = {
       .run(),
 
   /** The user's most recent conference, in progress or not. */
-  latestConference: async (db: D1Database, username: string) =>
+  latestConference: async (db: D1Database, home: string) =>
     (
       await db
-        .prepare("SELECT conference FROM calls WHERE username = ? AND kind = 'conference' ORDER BY at DESC LIMIT 1")
-        .bind(username)
+        .prepare("SELECT conference FROM calls WHERE home_id = ? AND kind = 'conference' ORDER BY at DESC LIMIT 1")
+        .bind(home)
         .first<{ conference: string }>()
     )?.conference ?? null,
 
@@ -642,8 +693,8 @@ export const calls = {
   recordEnd: async (db: D1Database, row: CallReportRow) =>
     (
       await db
-        .prepare("INSERT OR IGNORE INTO call_reports (conference, username, ended_at, ended_by) VALUES (?, ?, ?, ?)")
-        .bind(row.conference, row.username, row.ended_at, row.ended_by)
+        .prepare("INSERT OR IGNORE INTO call_reports (conference, home_id, ended_at, ended_by) VALUES (?, ?, ?, ?)")
+        .bind(row.conference, row.home_id, row.ended_at, row.ended_by)
         .run()
     ).meta.changes > 0,
 
@@ -666,15 +717,15 @@ export const calls = {
   /** The assistant's seat, with its briefing already in place for OpenAI's webhook, which may come first. */
   claimAssistant: async (
     db: D1Database,
-    row: { id: string; username: string; conference: string; brief: string; at: number },
+    row: { id: string; home_id: string; conference: string; brief: string; at: number },
   ) => {
     try {
       await db
         .prepare(
-          `INSERT INTO calls (id, username, contact_id, direction, kind, phone, conference, role, brief, sid, status, at)
+          `INSERT INTO calls (id, home_id, contact_id, direction, kind, phone, conference, role, brief, sid, status, at)
            VALUES (?, ?, NULL, 'out', 'conference', 'assistant', ?, 'assistant', ?, NULL, 'dialling', ?)`,
         )
-        .bind(row.id, row.username, row.conference, row.brief, row.at)
+        .bind(row.id, row.home_id, row.conference, row.brief, row.at)
         .run();
       return true;
     } catch {
@@ -714,10 +765,10 @@ export const calls = {
       .bind(conference)
       .first<CallRow>(),
 
-  hostLeg: (db: D1Database, username: string, conference: string) =>
+  hostLeg: (db: D1Database, home: string, conference: string) =>
     db
-      .prepare("SELECT * FROM calls WHERE username = ? AND conference = ? AND role = 'host' ORDER BY at DESC LIMIT 1")
-      .bind(username, conference)
+      .prepare("SELECT * FROM calls WHERE home_id = ? AND conference = ? AND role = 'host' ORDER BY at DESC LIMIT 1")
+      .bind(home, conference)
       .first<CallRow>(),
 
   endConference: (db: D1Database, conference: string) =>
@@ -727,14 +778,14 @@ export const calls = {
       .run(),
 
   /** The conference the user is in right now, if any leg started recently and has not ended. */
-  openConference: async (db: D1Database, username: string, since: number) =>
+  openConference: async (db: D1Database, home: string, since: number) =>
     (
       await db
         .prepare(
-          `SELECT conference FROM calls WHERE username = ? AND kind = 'conference' AND at > ?
+          `SELECT conference FROM calls WHERE home_id = ? AND kind = 'conference' AND at > ?
              AND status NOT IN ${TERMINAL_CALL_STATUSES} ORDER BY at DESC LIMIT 1`,
         )
-        .bind(username, since)
+        .bind(home, since)
         .first<{ conference: string }>()
     )?.conference ?? null,
 };
@@ -743,23 +794,23 @@ export const calls = {
 export const bridges = {
   create: (
     db: D1Database,
-    row: { token: string; username: string; device_id: string; conference: string; at: number },
+    row: { token: string; home_id: string; device_id: string; conference: string; at: number },
   ) =>
     db
-      .prepare("INSERT INTO bridges (token, username, device_id, conference, created_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(row.token, row.username, row.device_id, row.conference, row.at)
+      .prepare("INSERT INTO bridges (token, home_id, device_id, conference, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(row.token, row.home_id, row.device_id, row.conference, row.at)
       .run(),
 
   get: (db: D1Database, token: string) =>
     db.prepare("SELECT * FROM bridges WHERE token = ?").bind(token).first<BridgeRow>(),
 
   /** The newest bridge of a user that Twilio has not called back for yet. */
-  pending: (db: D1Database, username: string, since: number) =>
+  pending: (db: D1Database, home: string, since: number) =>
     db
       .prepare(
-        "SELECT * FROM bridges WHERE username = ? AND used_at IS NULL AND created_at > ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT * FROM bridges WHERE home_id = ? AND used_at IS NULL AND created_at > ? ORDER BY created_at DESC LIMIT 1",
       )
-      .bind(username, since)
+      .bind(home, since)
       .first<BridgeRow>(),
 
   use: (db: D1Database, token: string, at: number) =>

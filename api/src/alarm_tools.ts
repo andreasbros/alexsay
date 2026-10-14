@@ -10,7 +10,7 @@ import {
   signalRinging,
   updateAlarm,
 } from "./alarms";
-import { users } from "./db";
+import { homes } from "./db";
 import { localToUtc, parseDays, parseLocal, type Rule, validTime } from "./schedule";
 import type { Tool } from "./tools";
 import type { ToolContext } from "./types";
@@ -130,7 +130,7 @@ export const ALARM_TOOLS: Tool[] = [
       },
     },
     run: async (c, args) => {
-      const where = await users.locale(c.env.DB, c.user.username);
+      const where = await homes.locale(c.env.DB, c.user.home);
       const now = Date.now();
       const timing = ruleFrom(args, where.timezone, now);
       if ("error" in timing) {
@@ -141,7 +141,7 @@ export const ALARM_TOOLS: Tool[] = [
       if (kind === "reminder" && !message && !text(args, "label")) {
         return { error: "a reminder needs a message: ask the user what to remind them of" };
       }
-      const speaker = await defaultSpeaker(c, c.user.username, c.device, text(args, "speaker"));
+      const speaker = await defaultSpeaker(c, c.user.home, c.device, text(args, "speaker"));
       if ("error" in speaker) {
         return speaker;
       }
@@ -149,11 +149,11 @@ export const ALARM_TOOLS: Tool[] = [
         text(args, "label") || (kind === "timer" && timing.seconds ? `${duration(timing.seconds)} timer` : "");
       const row = await createAlarm(
         c,
-        c.user.username,
+        c.user.home,
         { kind, rule: timing.rule, label, message, deviceId: speaker.device.id, via: viaOf(c) },
         now,
       );
-      const show = await presenter(c, c.user.username);
+      const show = await presenter(c, c.user.home);
       return { ok: true, ...show.alarm(row) };
     },
   },
@@ -166,8 +166,8 @@ export const ALARM_TOOLS: Tool[] = [
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
     run: async (c) => {
-      const show = await presenter(c, c.user.username);
-      return (await alarms.list(c.env.DB, c.user.username)).map(show.alarm);
+      const show = await presenter(c, c.user.home);
+      return (await alarms.list(c.env.DB, c.user.home)).map(show.alarm);
     },
   },
   {
@@ -205,7 +205,7 @@ export const ALARM_TOOLS: Tool[] = [
         changes.message = text(args, "message", 500);
       }
       if (text(args, "speaker")) {
-        const speaker = await defaultSpeaker(c, c.user.username, undefined, text(args, "speaker"));
+        const speaker = await defaultSpeaker(c, c.user.home, undefined, text(args, "speaker"));
         if ("error" in speaker) {
           return speaker;
         }
@@ -217,18 +217,18 @@ export const ALARM_TOOLS: Tool[] = [
         args.time !== undefined ||
         args.repeat !== undefined
       ) {
-        const where = await users.locale(c.env.DB, c.user.username);
+        const where = await homes.locale(c.env.DB, c.user.home);
         const timing = ruleFrom(args, where.timezone, Date.now());
         if ("error" in timing) {
           return timing;
         }
         changes.rule = timing.rule;
       }
-      const row = await updateAlarm(c, c.user.username, id, changes);
+      const row = await updateAlarm(c, c.user.home, id, changes);
       if (!row) {
         return { error: "no such alarm: call list_alarms for the ids" };
       }
-      return { ok: true, ...(await presenter(c, c.user.username)).alarm(row) };
+      return { ok: true, ...(await presenter(c, c.user.home)).alarm(row) };
     },
   },
   {
@@ -240,7 +240,7 @@ export const ALARM_TOOLS: Tool[] = [
       parameters: { type: "object", properties: { id: ID }, required: ["id"], additionalProperties: false },
     },
     run: async (c, args) =>
-      (await deleteAlarm(c, c.user.username, text(args, "id")))
+      (await deleteAlarm(c, c.user.home, text(args, "id")))
         ? { ok: true }
         : { error: "no such alarm: call list_alarms for the ids" },
   },
@@ -254,7 +254,7 @@ export const ALARM_TOOLS: Tool[] = [
     },
     run: async (c, args) => ({
       ok: true,
-      ...(await signalRinging(c, c.user.username, text(args, "id") || null, null)),
+      ...(await signalRinging(c, c.user.home, text(args, "id") || null, null)),
     }),
   },
   {
@@ -273,7 +273,7 @@ export const ALARM_TOOLS: Tool[] = [
     },
     run: async (c, args) => {
       const minutes = Math.min(120, Math.max(1, int(args, "minutes") ?? DEFAULT_SNOOZE_MINUTES));
-      return { ok: true, minutes, ...(await signalRinging(c, c.user.username, text(args, "id") || null, minutes)) };
+      return { ok: true, minutes, ...(await signalRinging(c, c.user.home, text(args, "id") || null, minutes)) };
     },
   },
 ];

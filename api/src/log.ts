@@ -18,9 +18,9 @@ const KEEP_MS = 7 * 86_400_000;
  * Best effort: a failure is swallowed, so callers await it (a Worker cancels floating promises once
  * the response is sent, which lost lines from webhooks on 12 Oct 2026).
  */
-export function logFor(scope: Scope, username: string, level: LogLevel, message: string): Promise<void> {
-  return scope.env.DB.prepare("INSERT INTO server_log (username, at, level, message) VALUES (?, ?, ?, ?)")
-    .bind(username, Date.now(), level, message.slice(0, MAX_MESSAGE))
+export function logFor(scope: Scope, home: string, level: LogLevel, message: string): Promise<void> {
+  return scope.env.DB.prepare("INSERT INTO server_log (home_id, at, level, message) VALUES (?, ?, ?, ?)")
+    .bind(home, Date.now(), level, message.slice(0, MAX_MESSAGE))
     .run()
     .then(() => undefined)
     .catch(() => undefined);
@@ -29,7 +29,7 @@ export function logFor(scope: Scope, username: string, level: LogLevel, message:
 /** The first or last lines of a user's log, newest last. */
 export async function readLog(
   db: D1Database,
-  username: string,
+  home: string,
   position: "head" | "tail",
   lines: number,
 ): Promise<LogLine[]> {
@@ -37,9 +37,9 @@ export async function readLog(
   const rows = (
     await db
       .prepare(
-        `SELECT at, level, message FROM server_log WHERE username = ? ORDER BY id ${position === "head" ? "ASC" : "DESC"} LIMIT ?`,
+        `SELECT at, level, message FROM server_log WHERE home_id = ? ORDER BY id ${position === "head" ? "ASC" : "DESC"} LIMIT ?`,
       )
-      .bind(username, count)
+      .bind(home, count)
       .all<LogLine>()
   ).results;
   return position === "head" ? rows : rows.reverse();

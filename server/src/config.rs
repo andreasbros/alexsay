@@ -27,6 +27,13 @@ pub struct Config {
     pub lightwave_auth_url: String,
     pub lightwave_base_url: String,
     pub twilio_base_url: String,
+    /// The SMTP relay for sign-in codes and invitations; empty means no email. 465 is TLS from the
+    /// start, any other port upgrades with STARTTLS. The password lives in the secrets file.
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_user: String,
+    /// The sender, as `alexsay <hello@example.com>` or a bare address.
+    pub email_from: String,
 }
 
 impl Default for Config {
@@ -41,6 +48,10 @@ impl Default for Config {
             lightwave_auth_url: "https://auth.lightwaverf.com/token".to_owned(),
             lightwave_base_url: "https://publicapi.lightwaverf.com/v1".to_owned(),
             twilio_base_url: "https://api.twilio.com".to_owned(),
+            smtp_host: String::new(),
+            smtp_port: 465,
+            smtp_user: String::new(),
+            email_from: String::new(),
         }
     }
 }
@@ -111,12 +122,17 @@ impl Config {
 }
 
 /// The server's generated secrets: never in `config.toml`, never printed.
+// The field names are the keys of existing secrets files.
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Secrets {
     /// 32 bytes as hex: seals provider credentials in the database (the Worker's `SECRETS_KEY`).
     pub secrets_key: String,
     /// Guards the loopback housekeeping socket.
     pub admin_token: String,
+    /// The SMTP relay's password (`alexsay-server config set smtp_password ...`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub smtp_password: String,
 }
 
 impl Secrets {
@@ -124,6 +140,7 @@ impl Secrets {
         Ok(Self {
             secrets_key: random_hex(32)?,
             admin_token: random_hex(24)?,
+            smtp_password: String::new(),
         })
     }
 }
@@ -200,6 +217,17 @@ impl Paths {
         write_private(&path, &toml::to_string(&secrets)?)?;
         Ok(secrets)
     }
+
+    pub fn save_secrets(&self, secrets: &Secrets) -> anyhow::Result<()> {
+        let path = self.secrets_file();
+        match std::fs::remove_file(&path) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+                return Err(err).with_context(|| format!("replacing {}", path.display()));
+            }
+            _ => {}
+        }
+        write_private(&path, &toml::to_string(secrets)?)
+    }
 }
 
 #[cfg(unix)]
@@ -265,5 +293,27 @@ mod tests {
             assert_eq!(mode & 0o777, 0o600);
         }
         assert_ne!(Secrets::generate().unwrap(), first);
+    }
+
+    #[test]
+    fn keeps_the_smtp_password_in_the_private_secrets_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            home: dir.path().to_path_buf(),
+        };
+        let mut secrets = paths.load_or_create_secrets().unwrap();
+        secrets.smtp_password = "relay-token".into();
+        paths.save_secrets(&secrets).unwrap();
+        assert_eq!(paths.load_or_create_secrets().unwrap(), secrets);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(paths.secrets_file())
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        assert!(!Config::default().to_toml().contains("relay-token"));
     }
 }

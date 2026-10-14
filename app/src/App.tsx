@@ -4,6 +4,9 @@ import { Layout } from "./components/Layout";
 import { Assistant } from "./pages/Assistant";
 import { Connections } from "./pages/Connections";
 import { Devices } from "./pages/Devices";
+import { EmailLink } from "./pages/EmailLink";
+import { HomePage } from "./pages/Home";
+import { Invite } from "./pages/Invite";
 import { Login } from "./pages/Login";
 import { MemoryPage } from "./pages/Memory";
 import { Register } from "./pages/Register";
@@ -27,6 +30,8 @@ export function App() {
     return (
       <Routes>
         <Route path="/register" element={<Register />} />
+        <Route path="/sign-in/email" element={<EmailLink />} />
+        <Route path="/invite" element={<Invite />} />
         <Route path="*" element={<Login />} />
       </Routes>
     );
@@ -34,12 +39,15 @@ export function App() {
 
   return (
     <Routes>
+      <Route path="/sign-in/email" element={<EmailLink />} />
+      <Route path="/invite" element={<Invite />} />
       <Route element={<Layout user={user} />}>
         <Route index element={<Devices user={user} />} />
         <Route path="assistant" element={<Assistant />} />
-        <Route path="connections" element={<Connections />} />
+        <Route path="connections" element={<Connections user={user} />} />
         <Route path="memory" element={<MemoryPage />} />
         <Route path="skills" element={<Skills />} />
+        <Route path="home" element={<HomePage user={user} />} />
         <Route path="settings" element={<Settings user={user} />} />
         {user.role === "admin" && <Route path="users" element={<Users user={user} />} />}
         <Route path="*" element={<Navigate to="/" replace />} />

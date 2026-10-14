@@ -98,6 +98,7 @@ export class Admin extends WorkerEntrypoint<SelfHostEnv> {
           `INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)
            ON CONFLICT (username) DO UPDATE SET password_hash = excluded.password_hash, role = excluded.role`,
         ).bind(username, hash, role, Date.now()),
+        env.DB.prepare("INSERT OR IGNORE INTO homes (id, created_at) VALUES (?, ?)").bind(username, Date.now()),
         env.DB.prepare("DELETE FROM sessions WHERE username = ?").bind(username),
       ]);
       return json({ ok: true, username, role });

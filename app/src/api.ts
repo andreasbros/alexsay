@@ -1,9 +1,17 @@
 export type Role = "admin" | "user";
 export type Provider = "openai" | "lightwave" | "twilio";
 
+export type HomeRole = "admin" | "user";
+
 export interface User {
   username: string;
+  /** Say over the server: admins manage accounts and server settings. */
   role: Role;
+  email?: string | null;
+  /** The home everything belongs to: its id is its creator's username. */
+  home?: string;
+  /** Say over the home: admins change its speakers, connections, settings and members. */
+  homeRole?: HomeRole;
   created_at?: number;
   devices?: number;
   /** The assistant may read this user's server log. */
@@ -303,12 +311,80 @@ export interface AlarmsPage {
   timezone: string;
 }
 
+export interface AuthConfig {
+  email_login: boolean;
+  registration: boolean;
+}
+
+export type InviteStatus = "pending" | "accepted" | "revoked" | "expired";
+
+export interface Invite {
+  id: string;
+  email: string;
+  role: HomeRole;
+  invited_by: string;
+  status: InviteStatus;
+  created_at: number;
+  expires_at: number;
+  accepted_at: number | null;
+  accepted_by: string | null;
+}
+
+export interface HomeMember {
+  username: string;
+  email: string | null;
+  role: HomeRole;
+  creator: boolean;
+}
+
+export interface Home {
+  id: string;
+  name: string;
+  role: HomeRole;
+  creator: boolean;
+  members: HomeMember[];
+  invites: Invite[];
+  can_invite: boolean;
+}
+
+export interface InviteInfo {
+  home: string;
+  invited_by: string;
+  email: string;
+  role: HomeRole;
+}
+
+export interface ServerSettings {
+  email_login: boolean;
+  smtp: { host: string; from: string } | null;
+}
+
 export const api = {
   me: () => request<User>("GET", "/api/session/me"),
   login: (username: string, password: string) => request<User>("POST", "/api/session/login", { username, password }),
   register: (username: string, password: string) =>
     request<User>("POST", "/api/session/register", { username, password }),
   logout: () => request<void>("POST", "/api/session/logout"),
+  authConfig: () => request<AuthConfig>("GET", "/api/session/config"),
+  emailStart: (email: string) => request<{ sent: boolean }>("POST", "/api/session/email/start", { email }),
+  emailVerify: (email: string, code: string) => request<User>("POST", "/api/session/email/verify", { email, code }),
+  emailLink: (token: string) => request<User>("POST", "/api/session/email/link", { token }),
+  addEmail: (email: string) => request<{ sent: boolean }>("POST", "/api/session/email/add", { email }),
+  confirmEmail: (code: string) => request<{ email: string }>("POST", "/api/session/email/confirm", { code }),
+  removeEmail: () => request<void>("DELETE", "/api/session/email"),
+  home: () => request<Home>("GET", "/api/home"),
+  renameHome: (name: string) => request<{ name: string }>("PATCH", "/api/home", { name }),
+  setMemberRole: (username: string, role: HomeRole) =>
+    request<void>("PATCH", `/api/home/members/${encodeURIComponent(username)}`, { role }),
+  removeMember: (username: string) => request<void>("DELETE", `/api/home/members/${encodeURIComponent(username)}`),
+  leaveHome: () => request<void>("POST", "/api/home/leave"),
+  invite: (email: string, role: HomeRole) => request<Invite>("POST", "/api/home/invites", { email, role }),
+  resendInvite: (id: string) => request<Invite>("POST", `/api/home/invites/${encodeURIComponent(id)}/resend`),
+  removeInvite: (id: string) => request<void>("DELETE", `/api/home/invites/${encodeURIComponent(id)}`),
+  inviteInfo: (token: string) => request<InviteInfo>("POST", "/api/invites/lookup", { token }),
+  acceptInvite: (token: string) => request<User>("POST", "/api/invites/accept", { token }),
+  serverSettings: () => request<ServerSettings>("GET", "/api/server"),
+  updateServerSettings: (changes: { email_login: boolean }) => request<ServerSettings>("PATCH", "/api/server", changes),
   updateSettings: (settings: Partial<AccountSettings>) =>
     request<AccountSettings>("PATCH", "/api/session/settings", settings),
 

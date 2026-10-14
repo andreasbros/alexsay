@@ -1,17 +1,59 @@
-import { Button, Callout, Flex, Text } from "@radix-ui/themes";
+import { Button, Callout, Flex, Tabs, Text } from "@radix-ui/themes";
+import { useMutation } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Link } from "react-router";
-import { ApiError } from "../api";
+import { ApiError, api } from "../api";
 import { AuthCard } from "../components/AuthCard";
 import { Field } from "../components/Field";
-import { useLogin } from "../session";
+import { useAuthConfig, useLogin, useSignIn } from "../session";
 
 const MESSAGES: Record<string, string> = {
   invalid: "Wrong username or password.",
   locked: "Too many attempts. Try again in 15 minutes.",
+  wrong: "That code is not right. Check the latest email.",
+  expired: "That code has expired. Send a new one.",
+  too_many_attempts: "Too many wrong codes. Send a new one.",
+  too_many: "Too many emails to this address. Try again in an hour.",
+  email_login_off: "Email sign-in is switched off on this server.",
+  bad_request: "Check the address and the six-digit code.",
 };
 
+function errorText(error: Error | null): string | undefined {
+  return error instanceof ApiError ? (MESSAGES[error.code] ?? error.message) : error?.message;
+}
+
 export function Login() {
+  const config = useAuthConfig();
+  return (
+    <AuthCard title="Alexsay" lead="Sign in to your speakers.">
+      {config.data?.email_login ? (
+        <Tabs.Root defaultValue="email">
+          <Tabs.List>
+            <Tabs.Trigger value="email">Email</Tabs.Trigger>
+            <Tabs.Trigger value="password">Password</Tabs.Trigger>
+          </Tabs.List>
+          <Flex direction="column" pt="4">
+            <Tabs.Content value="email">
+              <EmailSignIn />
+            </Tabs.Content>
+            <Tabs.Content value="password">
+              <PasswordSignIn />
+            </Tabs.Content>
+          </Flex>
+        </Tabs.Root>
+      ) : (
+        <PasswordSignIn />
+      )}
+      {config.data?.registration !== false && (
+        <Text size="2" color="gray" align="center">
+          New here? <Link to="/register">Create an account</Link>
+        </Text>
+      )}
+    </AuthCard>
+  );
+}
+
+function PasswordSignIn() {
   const login = useLogin();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -20,27 +62,71 @@ export function Login() {
     event.preventDefault();
     login.mutate({ username, password });
   };
-  const error = login.error instanceof ApiError ? MESSAGES[login.error.code] : login.error?.message;
+  const error = errorText(login.error);
 
   return (
-    <AuthCard title="Alexsay" lead="Sign in to your speakers.">
-      <form onSubmit={submit}>
+    <form onSubmit={submit}>
+      <Flex direction="column" gap="4">
+        <Field
+          id="username"
+          label="Username"
+          autoComplete="username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+        />
+        <Field
+          id="password"
+          label="Password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+        {error && (
+          <Callout.Root color="red" size="1">
+            <Callout.Text>{error}</Callout.Text>
+          </Callout.Root>
+        )}
+        <Button size="3" type="submit" loading={login.isPending}>
+          Sign in
+        </Button>
+      </Flex>
+    </form>
+  );
+}
+
+/** Two steps: the address, then the six digits from the email (or its link, which signs in by itself). */
+function EmailSignIn() {
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const send = useMutation({
+    mutationFn: (address: string) => api.emailStart(address).then(() => address),
+    onSuccess: setSentTo,
+  });
+  const verify = useSignIn(({ address, digits }: { address: string; digits: string }) =>
+    api.emailVerify(address, digits),
+  );
+
+  if (!sentTo) {
+    const error = errorText(send.error);
+    return (
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          send.mutate(email.trim());
+        }}
+      >
         <Flex direction="column" gap="4">
           <Field
-            id="username"
-            label="Username"
-            autoComplete="username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-          />
-          <Field
-            id="password"
-            label="Password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            id="email"
+            label="Email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             required
           />
           {error && (
@@ -48,14 +134,57 @@ export function Login() {
               <Callout.Text>{error}</Callout.Text>
             </Callout.Root>
           )}
-          <Button size="3" type="submit" loading={login.isPending}>
-            Sign in
+          <Button size="3" type="submit" loading={send.isPending}>
+            Email me a code
           </Button>
-          <Text size="2" color="gray" align="center">
-            New here? <Link to="/register">Create an account</Link>
-          </Text>
         </Flex>
       </form>
-    </AuthCard>
+    );
+  }
+  const error = errorText(verify.error);
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        verify.mutate({ address: sentTo, digits: code.trim() });
+      }}
+    >
+      <Flex direction="column" gap="4">
+        <Text size="2" color="gray">
+          If {sentTo} can sign in here, a code is on its way. Type it below, or open the link in the email.
+        </Text>
+        <Field
+          id="code"
+          label="Code"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          pattern="[0-9]{6}"
+          maxLength={6}
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+          required
+        />
+        {error && (
+          <Callout.Root color="red" size="1">
+            <Callout.Text>{error}</Callout.Text>
+          </Callout.Root>
+        )}
+        <Button size="3" type="submit" loading={verify.isPending}>
+          Sign in
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          color="gray"
+          onClick={() => {
+            setSentTo(null);
+            setCode("");
+            verify.reset();
+          }}
+        >
+          Use another address or send a new code
+        </Button>
+      </Flex>
+    </form>
   );
 }

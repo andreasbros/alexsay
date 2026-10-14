@@ -45,8 +45,11 @@ export async function login(c: Context<AppEnv>, username: string, password: stri
     return { ok: false, reason: "invalid" };
   }
   await Promise.all([loginFailures.clear(db, username), loginFailures.clear(db, pair)]);
-  const user = { username: row.username, role: row.role };
-  await startSession(c, user);
+  const user = await users.session(db, row.username);
+  if (!user) {
+    return { ok: false, reason: "invalid" };
+  }
+  await startSession(c, user.username);
   return { ok: true, user };
 }
 
@@ -66,10 +69,10 @@ export function overHttps(c: Context<AppEnv>): boolean {
   return new URL(c.req.url).protocol === "https:" || c.req.header("x-forwarded-proto") === "https";
 }
 
-export async function startSession(c: Context<AppEnv>, user: User): Promise<void> {
+export async function startSession(c: Context<AppEnv>, username: string): Promise<void> {
   const token = randomToken();
   const expiresAt = Date.now() + SESSION_TTL_MS;
-  await sessions.create(c.env.DB, await sha256Hex(token), user.username, expiresAt);
+  await sessions.create(c.env.DB, await sha256Hex(token), username, expiresAt);
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     secure: overHttps(c),
@@ -100,6 +103,27 @@ export const requireUser = createMiddleware<AppEnv>(async (c, next) => {
 export const requireAdmin = createMiddleware<AppEnv>(async (c, next) => {
   if (c.get("user").role !== "admin") {
     return c.json({ error: "forbidden" }, 403);
+  }
+  await next();
+});
+
+/** Changing the home itself (speakers, connections, settings, members) is for its admins. */
+export const requireHomeAdmin = createMiddleware<AppEnv>(async (c, next) => {
+  if (c.get("user").homeRole !== "admin") {
+    return c.json({ error: "home_admin_only" }, 403);
+  }
+  await next();
+});
+
+/**
+ * Members see the home's speakers and connections; only its admins (and server admins) change them.
+ * Connection tests change nothing, so everyone may run them.
+ */
+export const changesNeedHomeAdmin = createMiddleware<AppEnv>(async (c, next) => {
+  const user = c.get("user");
+  const changes = c.req.method !== "GET" && c.req.method !== "HEAD" && !c.req.path.endsWith("/test");
+  if (changes && user.homeRole !== "admin" && user.role !== "admin") {
+    return c.json({ error: "home_admin_only" }, 403);
   }
   await next();
 });

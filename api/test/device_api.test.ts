@@ -27,7 +27,7 @@ describe("device heartbeat", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ claimed: false, poll_s: 30 });
     const row = await env.DB.prepare("SELECT * FROM devices WHERE id = ?").bind(DEVICE_ID).first();
-    expect(row).toMatchObject({ owner: null, firmware: "0.1.0" });
+    expect(row).toMatchObject({ home_id: null, firmware: "0.1.0" });
   });
 
   it("hands a claimed speaker its owner's assistant credentials", async () => {

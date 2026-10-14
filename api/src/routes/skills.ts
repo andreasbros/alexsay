@@ -9,7 +9,7 @@ import { jsonBody, parse } from "../validate";
 /** The Skills page: which skills are on. */
 export const skillRoutes = new Hono<AppEnv>()
   .get("/", async (c) => {
-    const on = await skills.enabled(c.env.DB, c.get("user").username);
+    const on = await skills.enabled(c.env.DB, c.get("user").home);
     return c.json(SKILLS.map((s) => ({ ...s, enabled: on.has(s.id) })));
   })
   .patch("/:id", async (c) => {
@@ -18,19 +18,19 @@ export const skillRoutes = new Hono<AppEnv>()
       return c.json({ error: "not_found" }, 404);
     }
     const { enabled } = await jsonBody(c, schemas.setSkill);
-    await skills.set(c.env.DB, c.get("user").username, id, enabled);
+    await skills.set(c.env.DB, c.get("user").home, id, enabled);
     return c.json({ id, enabled });
   });
 
 /** Skills, Alarms: what is coming, what happened lately, and changing either. */
 export const alarmRoutes = new Hono<AppEnv>()
   .get("/", async (c) => {
-    const username = c.get("user").username;
+    const home = c.get("user").home;
     const [show, upcoming, recent, owned] = await Promise.all([
-      presenter(c, username),
-      alarms.list(c.env.DB, username),
-      alarms.recent(c.env.DB, username),
-      devices.list(c.env.DB, username),
+      presenter(c, home),
+      alarms.list(c.env.DB, home),
+      alarms.recent(c.env.DB, home),
+      devices.list(c.env.DB, home),
     ]);
     return c.json({
       alarms: upcoming.map(show.alarm),
@@ -40,20 +40,20 @@ export const alarmRoutes = new Hono<AppEnv>()
     });
   })
   .patch("/:id", async (c) => {
-    const username = c.get("user").username;
+    const home = c.get("user").home;
     const id = parse(schemas.alarmId, c.req.param("id"));
     const { enabled, device_id } = await jsonBody(c, schemas.updateAlarm);
-    if (device_id && (await devices.get(c.env.DB, device_id))?.owner !== username) {
+    if (device_id && (await devices.get(c.env.DB, device_id))?.home_id !== home) {
       return c.json({ error: "not_your_speaker" }, 400);
     }
-    const row = await updateAlarm(c, username, id, { enabled, deviceId: device_id });
-    return row ? c.json((await presenter(c, username)).alarm(row)) : c.json({ error: "not_found" }, 404);
+    const row = await updateAlarm(c, home, id, { enabled, deviceId: device_id });
+    return row ? c.json((await presenter(c, home)).alarm(row)) : c.json({ error: "not_found" }, 404);
   })
   .delete("/:id", async (c) => {
     const id = parse(schemas.alarmId, c.req.param("id"));
-    return (await deleteAlarm(c, c.get("user").username, id)) ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
+    return (await deleteAlarm(c, c.get("user").home, id)) ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
   })
   .post("/:id/stop", async (c) => {
     const id = parse(schemas.alarmId, c.req.param("id"));
-    return c.json(await signalRinging(c, c.get("user").username, id, null));
+    return c.json(await signalRinging(c, c.get("user").home, id, null));
   });

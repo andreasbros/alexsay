@@ -30,6 +30,7 @@ Owner:
 | Daemon design: state machine, audio formats, realtime events, wake word, tools, deployment | `docs/software.md` |
 | Step-by-step bring-up | `docs/build-manual.md` |
 | Training the wake word with your own takes | `docs/train-with-your-voice.md` |
+| Homes, members, email sign-in, invitations | `docs/homes.md` |
 | What was bought / still to buy | `docs/procurement.md` |
 | Test plan and results | `docs/measurements.md` |
 | Why decisions were made | `docs/decisions.md` |
@@ -96,6 +97,14 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 - Alarms (`api/src/alarms.ts`, `alarm_tools.ts`): `alarms` + `alarm_events` tables; tools `set_alarm` (`in_seconds` server clock, `at` local, `time`+`repeat`; several speakers from the web: refused with the names so the assistant asks), `list_alarms`, `update_alarm`, `delete_alarm`, `stop_alarm`, `snooze_alarm`. Each alarm owns an `alarm.verify` job 45 s after each occurrence: no report from the speaker = missed. Speaker API: `GET /v1/device/alarms` (next 3 fires each, plus a snooze), `POST /v1/device/alarms/events` (idempotent by alarm, occurrence, event).
 - Speaker (`core/src/alarm.rs` logic, `daemon/src/alarms.rs` glue): rings from its own clock, schedule in `data/alarms.json`, unsent reports in `data/alarm-events.json`, speech cached in `data/cache/alarms` (made at sync with the owner's voice). Ring rises 20% to `alarms.volume` over 30 s, words every fourth cycle, 3 min then missed. "Alexsay" pauses it; `stop.onnx` / `snooze.onnx` (LiveKit classifiers, `device/wake/{stop,snooze}.yaml`, `just wake-train stop|snooze`, 3,000 clips a class, trained 14 Oct: held out stop 56/60, snooze 47/60, never each other) listen 3 s at sensitivity 0.5; snooze online opens a GPT-Live session (`Opening::Snooze`, the conversation intercepts `snooze_alarm`/`stop_alarm` locally), offline 9 min; nothing recognised rings again; without the command models "Alexsay" alone stops it. A conversation closes when an alarm is due; a call is not interrupted. `alexsay alarm list|stop|snooze [min]` via the control socket. Line reconnects trigger a sync.
 - Tested end to end on 14 Oct 2026: a 1-minute timer set through the speaker's tool API reached the Pi by push in ~100 ms.
+
+## Homes, email sign-in, invitations (14 Oct 2026)
+
+- Design in `docs/homes.md`. Everything (speakers, connections, memories, conversations, contacts, calls, alarms, skills, jobs, server log, home settings) belongs to a home; a home's id is its creator's username, so migration 0012 only renamed `username`/`owner` columns to `home_id`. `User` carries `home` and `homeRole`; data code takes `home`, never `username`. `actingFor(home)` is the user a speaker or a call's assistant acts as.
+- One home per person (`users.home_id`, NULL = own home). Joining keeps your own home aside; a creator whose home has members cannot join another. `requireHomeAdmin` / `changesNeedHomeAdmin` guard renaming, members, invitations, settings, speakers and connections; server admins (`users.role`) keep the Users page and `/api/server`.
+- Email: `api/src/mail.ts` (SMTP over `cloudflare:sockets`, 465 implicit TLS or STARTTLS, base64 bodies, `transport.send` swapped in tests), templates in `mail_templates.ts` (escaped), codes in `email_codes.ts` (6 digits, HMAC under `SECRETS_KEY`, 10 minutes, 5 guesses kept across resends, 5 sends per address and 30 per IP an hour). Off until a server admin switches it on (`server_settings.email_login`) and `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM` exist. Self-hosted: `alexsay-server config set smtp_host ...`, `smtp_password` goes to the secrets file.
+- Invitations (`invites.ts`, `routes/home.ts`): 3 days, token as HMAC, one pending per home and address, accept makes the account (email already verified) and signs in. Links put the token after `#`; the app page posts it.
+- App: Email tab on sign-in (when on), `/sign-in/email`, `/invite`, **Home** tab, email in Settings, server switch on Users.
 
 ## The self-hosted server (12 Oct 2026)
 

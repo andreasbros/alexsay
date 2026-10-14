@@ -24,17 +24,26 @@ export async function resetDb(): Promise<void> {
       "memories",
       "connections",
       "devices",
+      "invites",
+      "email_codes",
+      "server_settings",
       "sessions",
       "login_failures",
+      "homes",
       "users",
     ].map((t) => env.DB.prepare(`DELETE FROM ${t}`)),
   );
 }
 
 export async function addUser(username: string, password: string, role: "admin" | "user"): Promise<void> {
-  await env.DB.prepare("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, 0)")
-    .bind(username, await hashPassword(password), role)
-    .run();
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, 0)").bind(
+      username,
+      await hashPassword(password),
+      role,
+    ),
+    env.DB.prepare("INSERT INTO homes (id, created_at) VALUES (?, 0)").bind(username),
+  ]);
 }
 
 export function call(url: string, init: RequestInit = {}, cookie?: string): Promise<Response> {

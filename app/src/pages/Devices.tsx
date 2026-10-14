@@ -19,12 +19,13 @@ export function Devices({ user }: { user: User }) {
     onSuccess: () => client.invalidateQueries({ queryKey: ["devices"] }),
   });
   const admin = user.role === "admin";
+  const canChange = admin || user.homeRole === "admin";
 
   return (
     <Flex direction="column" gap="5">
       <Flex align="center" justify="between">
         <Heading size="7">Devices</Heading>
-        <AddDevice />
+        {canChange && <AddDevice />}
       </Flex>
       {devices.data?.length === 0 && (
         <Card size="3">
@@ -41,7 +42,7 @@ export function Devices({ user }: { user: User }) {
               <Table.Row>
                 <Table.ColumnHeaderCell>Name</Table.ColumnHeaderCell>
                 <Table.ColumnHeaderCell>UUID</Table.ColumnHeaderCell>
-                {admin && <Table.ColumnHeaderCell>Owner</Table.ColumnHeaderCell>}
+                {admin && <Table.ColumnHeaderCell>Home</Table.ColumnHeaderCell>}
                 <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
                 <Table.ColumnHeaderCell>Last seen</Table.ColumnHeaderCell>
                 <Table.ColumnHeaderCell />
@@ -49,7 +50,13 @@ export function Devices({ user }: { user: User }) {
             </Table.Header>
             <Table.Body>
               {devices.data.map((d) => (
-                <DeviceRow key={d.id} device={d} admin={admin} onRemove={() => remove.mutate(d.id)} />
+                <DeviceRow
+                  key={d.id}
+                  device={d}
+                  admin={admin}
+                  canChange={canChange}
+                  onRemove={() => remove.mutate(d.id)}
+                />
               ))}
             </Table.Body>
           </Table.Root>
@@ -59,7 +66,17 @@ export function Devices({ user }: { user: User }) {
   );
 }
 
-function DeviceRow({ device, admin, onRemove }: { device: Device; admin: boolean; onRemove: () => void }) {
+function DeviceRow({
+  device,
+  admin,
+  canChange,
+  onRemove,
+}: {
+  device: Device;
+  admin: boolean;
+  canChange: boolean;
+  onRemove: () => void;
+}) {
   return (
     <Table.Row align="center">
       <Table.RowHeaderCell>{device.name || <Text color="gray">unnamed</Text>}</Table.RowHeaderCell>
@@ -72,33 +89,35 @@ function DeviceRow({ device, admin, onRemove }: { device: Device; admin: boolean
       </Table.Cell>
       <Table.Cell>{ago(device.last_seen_at)}</Table.Cell>
       <Table.Cell justify="end">
-        <AlertDialog.Root>
-          <AlertDialog.Trigger>
-            <Button size="1" variant="ghost" color="red">
-              Remove
-            </Button>
-          </AlertDialog.Trigger>
-          <AlertDialog.Content maxWidth="420px">
-            <AlertDialog.Title>Remove {device.name || "this speaker"}?</AlertDialog.Title>
-            <AlertDialog.Description size="2">
-              {admin
-                ? "The speaker is deleted; it reappears unclaimed the next time it calls home."
-                : "The speaker leaves your account and can be added again with its UUID."}
-            </AlertDialog.Description>
-            <Flex gap="3" mt="4" justify="end">
-              <AlertDialog.Cancel>
-                <Button variant="soft" color="gray">
-                  Keep
-                </Button>
-              </AlertDialog.Cancel>
-              <AlertDialog.Action>
-                <Button color="red" onClick={onRemove}>
-                  Remove
-                </Button>
-              </AlertDialog.Action>
-            </Flex>
-          </AlertDialog.Content>
-        </AlertDialog.Root>
+        {canChange && (
+          <AlertDialog.Root>
+            <AlertDialog.Trigger>
+              <Button size="1" variant="ghost" color="red">
+                Remove
+              </Button>
+            </AlertDialog.Trigger>
+            <AlertDialog.Content maxWidth="420px">
+              <AlertDialog.Title>Remove {device.name || "this speaker"}?</AlertDialog.Title>
+              <AlertDialog.Description size="2">
+                {admin
+                  ? "The speaker is deleted; it reappears unclaimed the next time it calls home."
+                  : "The speaker leaves your account and can be added again with its UUID."}
+              </AlertDialog.Description>
+              <Flex gap="3" mt="4" justify="end">
+                <AlertDialog.Cancel>
+                  <Button variant="soft" color="gray">
+                    Keep
+                  </Button>
+                </AlertDialog.Cancel>
+                <AlertDialog.Action>
+                  <Button color="red" onClick={onRemove}>
+                    Remove
+                  </Button>
+                </AlertDialog.Action>
+              </Flex>
+            </AlertDialog.Content>
+          </AlertDialog.Root>
+        )}
       </Table.Cell>
     </Table.Row>
   );

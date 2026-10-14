@@ -1,20 +1,47 @@
 export type Role = "admin" | "user";
 export type Provider = "openai" | "lightwave" | "twilio";
 
+export type HomeRole = "admin" | "user";
+
+/** A signed-in person: `role` is their say over the server, `homeRole` over the home they are in. */
 export interface User {
   username: string;
   role: Role;
+  email: string | null;
+  /** The home everything they do belongs to: its id is its creator's username. */
+  home: string;
+  homeRole: HomeRole;
 }
 
-export interface UserRow extends User {
+/** Who a speaker or a phone call's assistant acts as: the home itself, with no say over it. */
+export function actingFor(home: string): User {
+  return { username: home, role: "user", email: null, home, homeRole: "user" };
+}
+
+export interface UserRow {
+  username: string;
+  role: Role;
   password_hash: string;
+  email: string | null;
+  home_id: string | null;
+  home_role: HomeRole;
+  created_at: number;
+}
+
+export interface HomeRow {
+  id: string;
+  name: string;
+  locale: string;
+  timezone: string;
+  ai_log_access: number;
+  ai_call_test: number;
   created_at: number;
 }
 
 export interface DeviceRow {
   id: string;
   name: string;
-  owner: string | null;
+  home_id: string | null;
   created_at: number;
   claimed_at: number | null;
   last_seen_at: number | null;
@@ -23,7 +50,7 @@ export interface DeviceRow {
 }
 
 export interface ConnectionRow {
-  username: string;
+  home_id: string;
   provider: Provider;
   secret: string;
   settings: string;
@@ -64,7 +91,7 @@ export interface ToolContext extends Scope {
 
 export interface BridgeRow {
   token: string;
-  username: string;
+  home_id: string;
   device_id: string;
   conference: string;
   created_at: number;
@@ -86,7 +113,7 @@ export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
 
 export interface ConversationRow {
   id: string;
-  username: string;
+  home_id: string;
   source: ConversationSource;
   device_id: string | null;
   started_at: number;
@@ -105,7 +132,7 @@ export interface TurnRow {
 
 export interface MemoryRow {
   id: string;
-  username: string;
+  home_id: string;
   category: MemoryCategory;
   content: string;
   source_conversation_id: string | null;
@@ -115,7 +142,7 @@ export interface MemoryRow {
 
 export interface ContactRow {
   id: string;
-  username: string;
+  home_id: string;
   name: string;
   search_name: string;
   phone: string;
@@ -134,7 +161,7 @@ export type CallKind = "call" | "announcement" | "conference";
 
 export interface MessageRow {
   id: string;
-  username: string;
+  home_id: string;
   contact_id: string | null;
   channel: Channel;
   direction: Direction;
@@ -147,7 +174,7 @@ export interface MessageRow {
 
 export interface CallRow {
   id: string;
-  username: string;
+  home_id: string;
   contact_id: string | null;
   direction: Direction;
   kind: CallKind;
@@ -174,7 +201,7 @@ export interface CallTurnRow {
 
 export interface CallReportRow {
   conference: string;
-  username: string;
+  home_id: string;
   ended_at: number;
   ended_by: string;
 }

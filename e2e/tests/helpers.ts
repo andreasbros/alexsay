@@ -26,6 +26,12 @@ export function mask(value: string): void {
 
 export async function login(page: Page, account: Account): Promise<void> {
   await page.goto("/");
+  // With email sign-in on, the password form is the second tab
+  const passwordTab = page.getByRole("tab", { name: /Password/ });
+  await expect(page.getByLabel("Username").or(passwordTab).first()).toBeVisible();
+  if (await passwordTab.isVisible()) {
+    await passwordTab.click();
+  }
   await page.getByLabel("Username").fill(account.username);
   await page.getByLabel("Password").fill(account.password);
   await page.getByRole("button", { name: "Sign in" }).click();

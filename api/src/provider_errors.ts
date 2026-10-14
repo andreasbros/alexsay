@@ -18,14 +18,14 @@ export function providerFailure(c: Context<AppEnv>, provider: Provider, err: unk
         provider,
         status: err.status,
         detail,
-        user: c.get("user")?.username,
+        user: c.get("user")?.home,
         path: c.req.path,
       }),
     );
-    const username = c.get("user")?.username;
-    if (username) {
+    const home = c.get("user")?.home;
+    if (home) {
       c.executionCtx.waitUntil(
-        logFor(c, username, "error", `${provider} ${c.req.method} ${c.req.path}: ${err.status} ${detail}`),
+        logFor(c, home, "error", `${provider} ${c.req.method} ${c.req.path}: ${err.status} ${detail}`),
       );
     }
     return c.json({ ok: false, error: "provider", status: err.status, detail }, 502);

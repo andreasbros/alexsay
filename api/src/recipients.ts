@@ -25,12 +25,12 @@ const MATCH_LIMIT = 10;
  */
 export async function resolveRecipient(
   db: D1Database,
-  username: string,
+  home: string,
   countryCode: string,
   ref: RecipientRef,
 ): Promise<Resolved> {
   if (ref.contact_id) {
-    const contact = await contacts.get(db, username, ref.contact_id);
+    const contact = await contacts.get(db, home, ref.contact_id);
     return contact ? { ok: true, phone: contact.phone, contact } : { ok: false, error: "no such contact" };
   }
   if (ref.number) {
@@ -38,16 +38,16 @@ export async function resolveRecipient(
     if (!phone) {
       return { ok: false, error: `"${ref.number}" is not a phone number` };
     }
-    return { ok: true, phone, contact: await contacts.byPhone(db, username, phone) };
+    return { ok: true, phone, contact: await contacts.byPhone(db, home, phone) };
   }
   if (ref.name) {
-    return byName(db, username, ref.name);
+    return byName(db, home, ref.name);
   }
   return { ok: false, error: "give a contact_id, a name or a number" };
 }
 
-async function byName(db: D1Database, username: string, name: string): Promise<Resolved> {
-  const { rows } = await contacts.list(db, username, { query: name, page: 1, pageSize: MATCH_LIMIT });
+async function byName(db: D1Database, home: string, name: string): Promise<Resolved> {
+  const { rows } = await contacts.list(db, home, { query: name, page: 1, pageSize: MATCH_LIMIT });
   if (rows.length === 0) {
     return { ok: false, error: `no contact called "${name}"` };
   }

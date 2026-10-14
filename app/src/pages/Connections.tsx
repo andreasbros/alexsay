@@ -23,24 +23,32 @@ import {
   type Provider,
   type ProviderTest,
   type TwilioSettings,
+  type User,
 } from "../api";
 import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP, OPENAI_SIP_HELP, TWILIO_HELP } from "../components/HelpDialog";
 import { ago } from "../format";
 import { toE164 } from "../lib/phone";
 import { DEFAULT_OPENAI as DEFAULTS, VOICES, voiceTypeOf } from "../voices";
 
-export function Connections() {
+export function Connections({ user }: { user: User }) {
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });
   const byProvider = new Map(connections.data?.map((c) => [c.provider, c]));
+  const canChange = user.homeRole === "admin";
   return (
     <Flex direction="column" gap="5">
       <Heading size="7">Connections</Heading>
       <Text color="gray" size="2">
-        Keys are stored encrypted and only ever used by your speakers and the assistant in this app.
+        Keys are stored encrypted and only ever used by your home&apos;s speakers and the assistant in this app.
+        {!canChange && " Only the home's admins can change them."}
       </Text>
-      <OpenAiCard connection={byProvider.get("openai")} />
-      <LightwaveCard connection={byProvider.get("lightwave")} />
-      <TwilioCard connection={byProvider.get("twilio")} />
+      {/* A disabled fieldset turns off every input and button inside it for members */}
+      <fieldset disabled={!canChange} className="plain-fieldset">
+        <Flex direction="column" gap="5">
+          <OpenAiCard connection={byProvider.get("openai")} />
+          <LightwaveCard connection={byProvider.get("lightwave")} />
+          <TwilioCard connection={byProvider.get("twilio")} />
+        </Flex>
+      </fieldset>
       <Card size="3" style={{ opacity: 0.7 }}>
         <Flex justify="between" align="center">
           <Heading size="4">Apple Home, Google Home, Claude, Gemini</Heading>

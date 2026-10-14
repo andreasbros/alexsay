@@ -17,15 +17,15 @@ export const ROUTES: Record<string, JobHandler> = {
 const SLACK_MS = 500;
 
 /**
- * One per user: keeps a single storage alarm at the user's earliest job, runs what is due through the
+ * One per home: keeps a single storage alarm at the home's earliest job, runs what is due through the
  * router when it fires, moves each job on, and sets the alarm again. Durable Object alarms are delivered
  * at least once, so handlers are idempotent; a handler that throws is logged and its job still moves on.
  */
 export class Scheduler extends DurableObject<Env> {
-  /** Sets the alarm to the user's earliest job, or clears it when nothing is scheduled. */
-  async sync(username: string): Promise<void> {
-    await this.ctx.storage.put("username", username);
-    const earliest = await jobs.earliest(this.env.DB, username);
+  /** Sets the alarm to the home's earliest job, or clears it when nothing is scheduled. */
+  async sync(home: string): Promise<void> {
+    await this.ctx.storage.put("home", home);
+    const earliest = await jobs.earliest(this.env.DB, home);
     if (earliest === null) {
       await this.ctx.storage.deleteAlarm();
     } else {
@@ -34,18 +34,19 @@ export class Scheduler extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    const username = await this.ctx.storage.get<string>("username");
-    if (!username) {
+    // Objects set before homes stored the same value under "username".
+    const home = (await this.ctx.storage.get<string>("home")) ?? (await this.ctx.storage.get<string>("username"));
+    if (!home) {
       return;
     }
-    await runDue({ env: this.env }, username, Date.now());
-    await this.sync(username);
+    await runDue({ env: this.env }, home, Date.now());
+    await this.sync(home);
   }
 }
 
 /** Runs every job due by `now` and moves each to its next run. */
-export async function runDue(scope: Scope, username: string, now: number): Promise<number> {
-  const due = await jobs.due(scope.env.DB, username, now + SLACK_MS);
+export async function runDue(scope: Scope, home: string, now: number): Promise<number> {
+  const due = await jobs.due(scope.env.DB, home, now + SLACK_MS);
   for (const job of due) {
     const occurrence = (job.next_at ?? now) - job.delay_ms;
     const handler = ROUTES[job.topic];
@@ -55,7 +56,7 @@ export async function runDue(scope: Scope, username: string, now: number): Promi
       }
       await handler(scope, job, occurrence);
     } catch (err) {
-      await logFor(scope, username, "error", `scheduler: ${job.topic} job ${job.id} failed: ${String(err)}`);
+      await logFor(scope, home, "error", `scheduler: ${job.topic} job ${job.id} failed: ${String(err)}`);
     }
     const rule = parseRule(job.rule);
     await jobs.advance(scope.env.DB, job.id, rule ? runAt(rule, job.delay_ms, occurrence) : null, now);

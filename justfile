@@ -118,7 +118,7 @@ add-user username role="user" where="--remote":
     hash=$(node scripts/hash-password.mjs "$password")
     unset password
     pnpm --filter api exec wrangler d1 execute alexsay {{where}} --command \
-      "INSERT INTO users (username, password_hash, role, created_at) VALUES ('{{username}}', '$hash', '{{role}}', unixepoch() * 1000) ON CONFLICT (username) DO UPDATE SET password_hash = excluded.password_hash, role = excluded.role; DELETE FROM sessions WHERE username = '{{username}}'"
+      "INSERT INTO users (username, password_hash, role, created_at) VALUES ('{{username}}', '$hash', '{{role}}', unixepoch() * 1000) ON CONFLICT (username) DO UPDATE SET password_hash = excluded.password_hash, role = excluded.role; INSERT OR IGNORE INTO homes (id, created_at) VALUES ('{{username}}', unixepoch() * 1000); DELETE FROM sessions WHERE username = '{{username}}'"
 
 # Create the two e2e accounts on the deployed site from the passwords in .env
 e2e-users:

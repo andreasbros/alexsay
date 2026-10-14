@@ -1,8 +1,8 @@
-import { AlertDialog, Badge, Button, Card, Flex, Heading, Select, Table, Text } from "@radix-ui/themes";
+import { AlertDialog, Badge, Button, Card, Flex, Heading, Select, Switch, Table, Text } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, type Role, type User } from "../api";
 
-/** Admin only: every registered account, its role and how many speakers it owns. */
+/** Server admins only: the server's switches, then every account, its role and its home's speakers. */
 export function Users({ user: me }: { user: User }) {
   const client = useQueryClient();
   const users = useQuery({ queryKey: ["users"], queryFn: api.users });
@@ -18,6 +18,7 @@ export function Users({ user: me }: { user: User }) {
   return (
     <Flex direction="column" gap="5">
       <Heading size="7">Users</Heading>
+      <ServerCard />
       {error && (
         <Text color="red" size="2">
           {error}
@@ -28,6 +29,7 @@ export function Users({ user: me }: { user: User }) {
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeaderCell>Username</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>Email</Table.ColumnHeaderCell>
               <Table.ColumnHeaderCell>Role</Table.ColumnHeaderCell>
               <Table.ColumnHeaderCell>Devices</Table.ColumnHeaderCell>
               <Table.ColumnHeaderCell />
@@ -37,6 +39,9 @@ export function Users({ user: me }: { user: User }) {
             {users.data?.map((u) => (
               <Table.Row key={u.username} align="center">
                 <Table.RowHeaderCell>{u.username}</Table.RowHeaderCell>
+                <Table.Cell>
+                  <Text color="gray">{u.email ?? ""}</Text>
+                </Table.Cell>
                 <Table.Cell>
                   {u.username === me.username ? (
                     <Badge color="indigo">{u.role}</Badge>
@@ -67,7 +72,8 @@ export function Users({ user: me }: { user: User }) {
                       <AlertDialog.Content maxWidth="420px">
                         <AlertDialog.Title>Remove {u.username}?</AlertDialog.Title>
                         <AlertDialog.Description size="2">
-                          Their sessions and connections are deleted. Their speakers become unclaimed.
+                          Their account is deleted. If they made a home, it goes too, with everything in it; its other
+                          people go back to their own homes.
                         </AlertDialog.Description>
                         <Flex gap="3" mt="4" justify="end">
                           <AlertDialog.Cancel>
@@ -91,5 +97,43 @@ export function Users({ user: me }: { user: User }) {
         </Table.Root>
       </Card>
     </Flex>
+  );
+}
+
+function ServerCard() {
+  const client = useQueryClient();
+  const settings = useQuery({ queryKey: ["server"], queryFn: api.serverSettings });
+  const update = useMutation({
+    mutationFn: api.updateServerSettings,
+    onSuccess: (data) => {
+      client.setQueryData(["server"], data);
+      void client.invalidateQueries({ queryKey: ["auth-config"] });
+    },
+  });
+  const smtp = settings.data?.smtp ?? null;
+  return (
+    <Card size="3">
+      <Flex direction="column" gap="3">
+        <Heading size="4">Server</Heading>
+        <Text as="label" size="2">
+          <Flex gap="3" align="center">
+            <Switch
+              checked={
+                update.isPending ? (update.variables?.email_login ?? false) : (settings.data?.email_login ?? false)
+              }
+              onCheckedChange={(on) => update.mutate({ email_login: on })}
+              disabled={!smtp}
+              aria-label="Email sign-in"
+            />
+            Email sign-in and invitations
+          </Flex>
+        </Text>
+        <Text size="2" color="gray">
+          {smtp
+            ? `Sign-in codes and home invitations go out as ${smtp.from} through ${smtp.host}.`
+            : "This server has no SMTP relay configured, so it cannot send email."}
+        </Text>
+      </Flex>
+    </Card>
   );
 }

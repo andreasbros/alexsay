@@ -13,22 +13,22 @@ export const isSkill = (id: string): id is SkillId => SKILLS.some((s) => s.id ==
 
 export const skills = {
   /** The skills that are on for the user. */
-  enabled: async (db: D1Database, username: string): Promise<Set<SkillId>> => {
+  enabled: async (db: D1Database, home: string): Promise<Set<SkillId>> => {
     const off = (
       await db
-        .prepare("SELECT skill FROM user_skills WHERE username = ? AND enabled = 0")
-        .bind(username)
+        .prepare("SELECT skill FROM user_skills WHERE home_id = ? AND enabled = 0")
+        .bind(home)
         .all<{ skill: string }>()
     ).results.map((r) => r.skill);
     return new Set(SKILLS.map((s) => s.id).filter((id) => !off.includes(id)));
   },
 
-  set: (db: D1Database, username: string, skill: SkillId, enabled: boolean) =>
+  set: (db: D1Database, home: string, skill: SkillId, enabled: boolean) =>
     db
       .prepare(
-        `INSERT INTO user_skills (username, skill, enabled) VALUES (?, ?, ?)
-         ON CONFLICT (username, skill) DO UPDATE SET enabled = excluded.enabled`,
+        `INSERT INTO user_skills (home_id, skill, enabled) VALUES (?, ?, ?)
+         ON CONFLICT (home_id, skill) DO UPDATE SET enabled = excluded.enabled`,
       )
-      .bind(username, skill, enabled ? 1 : 0)
+      .bind(home, skill, enabled ? 1 : 0)
       .run(),
 };

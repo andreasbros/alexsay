@@ -61,7 +61,8 @@ enum Cmd {
 enum ConfigCmd {
     Show,
     Path,
-    /// `host`, `port`, `admin_port`, `public_url` or a provider URL such as `openai_base_url`
+    /// `host`, `port`, `admin_port`, `public_url`, `registration`, the email keys (`smtp_host`,
+    /// `smtp_port`, `smtp_user`, `smtp_password`, `email_from`) or a provider URL such as `openai_base_url`
     Set {
         key: String,
         value: String,
@@ -94,6 +95,16 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 println!("{}", paths.config_file().display());
                 Ok(())
             }
+            ConfigCmd::Set { key, value } if key == "smtp_password" => {
+                let mut secrets = paths.load_or_create_secrets()?;
+                secrets.smtp_password = value;
+                paths.save_secrets(&secrets)?;
+                println!(
+                    "smtp_password saved to {} (restart the server to apply)",
+                    paths.secrets_file().display()
+                );
+                Ok(())
+            }
             ConfigCmd::Set { key, value } => {
                 let mut config = paths.load_config()?;
                 set(&mut config, &key, &value)?;
@@ -124,6 +135,10 @@ fn set(config: &mut Config, key: &str, value: &str) -> anyhow::Result<()> {
         "registration" => {
             config.registration = value.parse().context("registration is true or false")?;
         }
+        "smtp_host" => value.trim().clone_into(&mut config.smtp_host),
+        "smtp_port" => config.smtp_port = value.parse().context("smtp_port must be a number")?,
+        "smtp_user" => value.trim().clone_into(&mut config.smtp_user),
+        "email_from" => value.trim().clone_into(&mut config.email_from),
         "openai_base_url" | "lightwave_auth_url" | "lightwave_base_url" | "twilio_base_url" => {
             let url = value.trim_end_matches('/').to_owned();
             match key {
@@ -134,7 +149,7 @@ fn set(config: &mut Config, key: &str, value: &str) -> anyhow::Result<()> {
             }
         }
         other => anyhow::bail!(
-            "unknown key {other}: host, port, admin_port, public_url, registration, openai_base_url, lightwave_auth_url, lightwave_base_url or twilio_base_url"
+            "unknown key {other}: host, port, admin_port, public_url, registration, smtp_host, smtp_port, smtp_user, smtp_password, email_from, openai_base_url, lightwave_auth_url, lightwave_base_url or twilio_base_url"
         ),
     }
     Ok(())
@@ -174,6 +189,11 @@ impl Server {
             .env("ALEXSAY_SECRETS_KEY", &secrets.secrets_key)
             .env("ALEXSAY_ADMIN_TOKEN", &secrets.admin_token)
             .env("ALEXSAY_PUBLIC_URL", &config.public_url)
+            .env("ALEXSAY_SMTP_HOST", &config.smtp_host)
+            .env("ALEXSAY_SMTP_PORT", config.smtp_port.to_string())
+            .env("ALEXSAY_SMTP_USER", &config.smtp_user)
+            .env("ALEXSAY_SMTP_PASSWORD", &secrets.smtp_password)
+            .env("ALEXSAY_EMAIL_FROM", &config.email_from)
             .env(
                 "ALEXSAY_REGISTRATION",
                 if config.registration {
@@ -358,6 +378,18 @@ mod tests {
         );
         assert!(set(&mut config, "port", "x").is_err());
         assert!(set(&mut config, "colour", "red").is_err());
+        set(&mut config, "smtp_host", "smtp.mx.cloudflare.net").unwrap();
+        set(&mut config, "smtp_port", "587").unwrap();
+        set(&mut config, "email_from", "alexsay <hello@example.com>").unwrap();
+        assert_eq!(
+            (
+                config.smtp_host.as_str(),
+                config.smtp_port,
+                config.email_from.as_str()
+            ),
+            ("smtp.mx.cloudflare.net", 587, "alexsay <hello@example.com>")
+        );
+        assert!(set(&mut config, "smtp_port", "x").is_err());
         set(&mut config, "registration", "false").unwrap();
         assert!(!config.registration);
         assert!(set(&mut config, "registration", "maybe").is_err());

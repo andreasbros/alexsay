@@ -75,6 +75,11 @@ const main :Workerd.Worker = (
     (name = "LIGHTWAVE_AUTH_URL", fromEnvironment = "ALEXSAY_LIGHTWAVE_AUTH_URL"),
     (name = "LIGHTWAVE_BASE_URL", fromEnvironment = "ALEXSAY_LIGHTWAVE_BASE_URL"),
     (name = "TWILIO_BASE_URL", fromEnvironment = "ALEXSAY_TWILIO_BASE_URL"),
+    (name = "SMTP_HOST", fromEnvironment = "ALEXSAY_SMTP_HOST"),
+    (name = "SMTP_PORT", fromEnvironment = "ALEXSAY_SMTP_PORT"),
+    (name = "SMTP_USER", fromEnvironment = "ALEXSAY_SMTP_USER"),
+    (name = "SMTP_PASSWORD", fromEnvironment = "ALEXSAY_SMTP_PASSWORD"),
+    (name = "EMAIL_FROM", fromEnvironment = "ALEXSAY_EMAIL_FROM"),
   ],
   durableObjectNamespaces = [
     (className = "D1Store", uniqueKey = "alexsay-d1", enableSql = true),
@@ -120,6 +125,9 @@ mod tests {
         for (key, _) in config.upstreams() {
             assert!(text.contains(&upstream_env(key)));
         }
+        assert!(
+            text.contains(r#"(name = "SMTP_PASSWORD", fromEnvironment = "ALEXSAY_SMTP_PASSWORD")"#)
+        );
         assert_eq!(socket_address("::1", 1), "[::1]:1");
         assert_eq!(quoted("a\"b"), r#""a\"b""#);
     }

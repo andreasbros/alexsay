@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { runCallTool } from "../src/call_agent";
+import { actingFor } from "../src/types";
 import {
   APP,
   addUser,
@@ -774,10 +775,10 @@ describe("twilio", () => {
       "0123456789abcdef0123456789abcdef",
     );
     expect(forAnna.status).toBe(200);
-    const stored = await env.DB.prepare("SELECT username FROM messages WHERE sid = 'SM-anna'").first<{
-      username: string;
+    const stored = await env.DB.prepare("SELECT home_id FROM messages WHERE sid = 'SM-anna'").first<{
+      home_id: string;
     }>();
-    expect(stored?.username).toBe("anna");
+    expect(stored?.home_id).toBe("anna");
     const forged = await twilioWebhook(
       "/v1/twilio/messages",
       { To: sandbox, From: "whatsapp:+447700900777", Body: "x", MessageSid: "SM-x" },
@@ -1013,7 +1014,7 @@ describe("twilio", () => {
     });
     const context = {
       env,
-      user: { username: "maria", role: "user" as const },
+      user: actingFor("maria"),
       origin: APP,
       voice: "browser" as const,
       onCall: true,

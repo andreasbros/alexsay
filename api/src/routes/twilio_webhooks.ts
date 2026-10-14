@@ -23,7 +23,7 @@ const SIP_USER = /^sip:([^@;]+)@/;
 type Params = Record<string, string>;
 
 interface Owner {
-  username: string;
+  home: string;
   connection: TwilioConnection;
 }
 
@@ -44,31 +44,31 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     const place = { env: c.env, origin: serverOrigin(c) };
     // The number calling itself is a speaker's host leg: answer with the stream to that speaker
     if (bareNumber(from) === bareNumber(params.To ?? "")) {
-      const bridge = await bridges.pending(c.env.DB, owner.username, Date.now() - BRIDGE_WINDOW_MS);
+      const bridge = await bridges.pending(c.env.DB, owner.home, Date.now() - BRIDGE_WINDOW_MS);
       if (!bridge) {
         return xml(c, rejectTwiml("No speaker is waiting for this call."));
       }
       await bridges.use(c.env.DB, bridge.token, Date.now());
-      const host = await calls.hostLeg(c.env.DB, owner.username, bridge.conference);
+      const host = await calls.hostLeg(c.env.DB, owner.home, bridge.conference);
       if (host) {
         await calls.setStatus(c.env.DB, host.sid ?? "", "in-progress");
         // The speaker is answered first: dialling everyone before the reply kept the host out of the
         // conference meanwhile (and risks Twilio's webhook timeout); the host's join retries it anyway
         c.executionCtx.waitUntil(hostAnswered(place, host));
       }
-      await logFor(place, owner.username, "info", `call ${bridge.conference}: streaming to the speaker`);
+      await logFor(place, owner.home, "info", `call ${bridge.conference}: streaming to the speaker`);
       return xml(c, streamTwiml(streamUrl(place, bridge.token), bridge.conference, "speaker"));
     }
     const speakers = settings.sip_domain
-      ? (await devices.list(c.env.DB, owner.username)).map((d) => `sip:${d.id}@${settings.sip_domain}`)
+      ? (await devices.list(c.env.DB, owner.home)).map((d) => `sip:${d.id}@${settings.sip_domain}`)
       : [];
     // The user's own mobile cannot take a call it is making itself, so it is left out when it is the caller
     const mobile = settings.my_number && settings.my_number !== from ? settings.my_number : null;
     const rang = ["app", ...speakers.map(() => "speaker"), ...(mobile ? ["mobile"] : [])];
-    const contact = await contacts.byPhone(c.env.DB, owner.username, from);
+    const contact = await contacts.byPhone(c.env.DB, owner.home, from);
     const now = Date.now();
     await calls.create(c.env.DB, {
-      username: owner.username,
+      home_id: owner.home,
       contact_id: contact?.id ?? null,
       direction: "in",
       kind: "call",
@@ -79,19 +79,19 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       status: params.CallStatus ?? "ringing",
       at: now,
     });
-    await contacts.stamp(c.env.DB, owner.username, from, "last_called_at", now);
-    await logFor(c, owner.username, "info", `incoming call from ${from}, ringing ${rang.join(", ")}`);
+    await contacts.stamp(c.env.DB, owner.home, from, "last_called_at", now);
+    await logFor(c, owner.home, "info", `incoming call from ${from}, ringing ${rang.join(", ")}`);
     return xml(c, ringTwiml(speakers, mobile, CLIENT_IDENTITY));
   })
   .post("/voice/outbound", async (c) => {
     const params = await form(c);
     const deviceId = SIP_USER.exec(params.From ?? "")?.[1] ?? "";
     const device = await devices.get(c.env.DB, deviceId);
-    const row = device?.owner ? await connections.get(c.env.DB, device.owner, "twilio") : null;
-    if (!device?.owner || !row) {
+    const row = device?.home_id ? await connections.get(c.env.DB, device.home_id, "twilio") : null;
+    if (!device?.home_id || !row) {
       return xml(c, rejectTwiml("This speaker is not set up for calls."), 404);
     }
-    const owner = { username: device.owner, connection: await twilioFromRow(c, row) };
+    const owner = { home: device.home_id, connection: await twilioFromRow(c, row) };
     if (!(await signed(c, owner, params))) {
       return c.text("forbidden", 403);
     }
@@ -100,10 +100,10 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     if (!to || !owner.connection.settings.from_number) {
       return xml(c, rejectTwiml("That number cannot be dialled."));
     }
-    const contact = await contacts.byPhone(c.env.DB, owner.username, to);
+    const contact = await contacts.byPhone(c.env.DB, owner.home, to);
     const now = Date.now();
     await calls.create(c.env.DB, {
-      username: owner.username,
+      home_id: owner.home,
       contact_id: contact?.id ?? null,
       direction: "out",
       kind: "call",
@@ -113,7 +113,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       status: params.CallStatus ?? "ringing",
       at: now,
     });
-    await contacts.stamp(c.env.DB, owner.username, to, "last_called_at", now);
+    await contacts.stamp(c.env.DB, owner.home, to, "last_called_at", now);
     return xml(c, dialOutTwiml(to, owner.connection.settings.from_number));
   })
   .post("/messages", async (c) => {
@@ -123,10 +123,10 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       return c.text("forbidden", 403);
     }
     const from = bareNumber(params.From ?? "");
-    const contact = await contacts.byPhone(c.env.DB, owner.username, from);
+    const contact = await contacts.byPhone(c.env.DB, owner.home, from);
     const now = Date.now();
     await messages.create(c.env.DB, {
-      username: owner.username,
+      home_id: owner.home,
       contact_id: contact?.id ?? null,
       channel: (params.From ?? "").startsWith(WHATSAPP_PREFIX) ? "whatsapp" : "sms",
       direction: "in",
@@ -136,25 +136,25 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       status: "received",
       at: now,
     });
-    await contacts.stamp(c.env.DB, owner.username, from, "last_messaged_at", now);
-    await logFor(c, owner.username, "info", `incoming message from ${from}`);
+    await contacts.stamp(c.env.DB, owner.home, from, "last_messaged_at", now);
+    await logFor(c, owner.home, "info", `incoming message from ${from}`);
     return xml(c, emptyTwiml());
   })
   .post("/status", async (c) => {
     const params = await form(c);
     const call = params.CallSid ? await calls.bySid(c.env.DB, params.CallSid) : null;
-    const row = call ? await connections.get(c.env.DB, call.username, "twilio") : null;
+    const row = call ? await connections.get(c.env.DB, call.home_id, "twilio") : null;
     if (!call || !row) {
       return c.text("not found", 404);
     }
-    const owner = { username: call.username, connection: await twilioFromRow(c, row) };
+    const owner = { home: call.home_id, connection: await twilioFromRow(c, row) };
     if (!(await signed(c, owner, params))) {
       return c.text("forbidden", 403);
     }
     const status = (params.CallStatus ?? "").slice(0, 32);
     const changed = await calls.setStatus(c.env.DB, call.sid ?? "", status);
     const place = { env: c.env, origin: serverOrigin(c) };
-    await logFor(place, call.username, "info", `twilio: ${call.role || call.kind} leg ${call.phone} is ${status}`);
+    await logFor(place, call.home_id, "info", `twilio: ${call.role || call.kind} leg ${call.phone} is ${status}`);
     if (status === "in-progress" && call.role === "host") {
       await hostAnswered(place, call);
     }
@@ -185,7 +185,7 @@ export const twilioStreamRoute = new Hono<AppEnv>().get("/stream/:token", async 
   const url = new URL("https://line/twilio");
   url.searchParams.set("conference", bridge.conference);
   url.searchParams.set("who", "speaker");
-  url.searchParams.set("username", bridge.username);
+  url.searchParams.set("home", bridge.home_id);
   return line.fetch(url.toString(), { headers: { upgrade: "websocket" } });
 });
 
@@ -199,11 +199,11 @@ export const twilioConferenceRoute = new Hono<AppEnv>().post("/conference", asyn
   const conference = (params.FriendlyName ?? "").slice(0, 64);
   const legs = conference ? await calls.legs(c.env.DB, conference) : [];
   const first = legs[0];
-  const row = first ? await connections.get(c.env.DB, first.username, "twilio") : null;
+  const row = first ? await connections.get(c.env.DB, first.home_id, "twilio") : null;
   if (!first || !row) {
     return c.text("not found", 404);
   }
-  const owner = { username: first.username, connection: await twilioFromRow(c, row) };
+  const owner = { home: first.home_id, connection: await twilioFromRow(c, row) };
   if (!(await signed(c, owner, params))) {
     return c.text("forbidden", 403);
   }
@@ -212,7 +212,7 @@ export const twilioConferenceRoute = new Hono<AppEnv>().post("/conference", asyn
   const place = { env: c.env, origin: serverOrigin(c) };
   await logFor(
     place,
-    first.username,
+    first.home_id,
     "info",
     `twilio: conference ${conference} ${event}${leg ? ` (${leg.role} ${leg.phone})` : ""}`,
   );
@@ -230,7 +230,7 @@ export const twilioConferenceRoute = new Hono<AppEnv>().post("/conference", asyn
   }
   if (event === "conference-end") {
     await calls.endConference(c.env.DB, conference);
-    await callEnded(place, first.username, conference, endedByFromLegs(await calls.legs(c.env.DB, conference)));
+    await callEnded(place, first.home_id, conference, endedByFromLegs(await calls.legs(c.env.DB, conference)));
   }
   return c.body(null, 204);
 });
@@ -251,7 +251,7 @@ async function form(c: Context<AppEnv>): Promise<Params> {
  */
 async function signedOwnerOfNumber(c: Context<AppEnv>, params: Params): Promise<Owner | null> {
   for (const row of await connections.twilioByNumber(c.env.DB, bareNumber(params.To ?? ""))) {
-    const owner = { username: row.username, connection: await twilioFromRow(c, row) };
+    const owner = { home: row.home_id, connection: await twilioFromRow(c, row) };
     if (await signed(c, owner, params)) {
       return owner;
     }

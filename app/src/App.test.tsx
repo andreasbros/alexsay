@@ -208,4 +208,106 @@ describe("App", () => {
     expect(screen.getByText("Pasta")).toBeDefined();
     expect(screen.getByText("missed")).toBeDefined();
   });
+
+  it("signs in with an emailed code from the Email tab when the server offers it", async () => {
+    mockApi({
+      "/api/session/me": json({ error: "unauthenticated" }, 401),
+      "/api/session/config": json({ email_login: true, registration: true }),
+      "/api/session/email/start": json({ sent: true }),
+      "/api/session/email/verify": json({ username: "sam", role: "user", home: "sam", homeRole: "admin" }),
+      "/api/devices": json([]),
+    });
+    renderApp();
+    expect(await screen.findByRole("tab", { name: /Password/ })).toBeDefined();
+    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "sam@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Email me a code" }));
+    fireEvent.change(await screen.findByLabelText("Code"), { target: { value: "12a3456" } });
+    expect((screen.getByLabelText("Code") as HTMLInputElement).value).toBe("123456");
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText(/No speakers yet/)).toBeDefined();
+  });
+
+  it("shows a home admin the people and the invitations with their status", async () => {
+    mockApi({
+      "/api/session/me": json({ username: "maria", role: "user", home: "maria", homeRole: "admin" }),
+      "/api/home": json({
+        id: "maria",
+        name: "Flat 4",
+        role: "admin",
+        creator: true,
+        can_invite: true,
+        members: [
+          { username: "maria", email: "maria@example.com", role: "admin", creator: true },
+          { username: "dad", email: "dad@example.com", role: "user", creator: false },
+        ],
+        invites: [
+          {
+            id: "6f1c1b2a-1d2e-4f5a-8b9c-0d1e2f3a4b5c",
+            email: "gran@example.com",
+            role: "user",
+            invited_by: "maria",
+            status: "expired",
+            created_at: 0,
+            expires_at: 1,
+            accepted_at: null,
+            accepted_by: null,
+          },
+        ],
+      }),
+    });
+    renderApp("/home");
+    expect(await screen.findByRole("heading", { name: "Flat 4" })).toBeDefined();
+    expect(screen.getByText("owner")).toBeDefined();
+    expect(screen.getByRole("combobox", { name: "Role of dad" })).toBeDefined();
+    expect(screen.getByText("gran@example.com")).toBeDefined();
+    expect(screen.getByText("expired")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Resend" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Invite" })).toBeDefined();
+  });
+
+  it("lets a member see the home and leave it, without the admin's controls", async () => {
+    mockApi({
+      "/api/session/me": json({ username: "dad", role: "user", home: "maria", homeRole: "user" }),
+      "/api/home": json({
+        id: "maria",
+        name: "Flat 4",
+        role: "user",
+        creator: false,
+        can_invite: false,
+        members: [
+          { username: "maria", email: null, role: "admin", creator: true },
+          { username: "dad", email: null, role: "user", creator: false },
+        ],
+        invites: [],
+      }),
+    });
+    renderApp("/home");
+    expect(await screen.findByText("You are a member of Flat 4.")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Leave" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+  });
+
+  it("opens an invitation link, names the home and joins it in one click", async () => {
+    window.history.replaceState(null, "", `/invite#token=${"a".repeat(43)}`);
+    mockApi({
+      "/api/session/me": json({ error: "unauthenticated" }, 401),
+      "/api/invites/lookup": json({ home: "Flat 4", invited_by: "maria", email: "dad@example.com", role: "user" }),
+      "/api/invites/accept": json({ username: "dad", role: "user", home: "maria", homeRole: "user" }),
+      "/api/home": json({
+        id: "maria",
+        name: "Flat 4",
+        role: "user",
+        creator: false,
+        can_invite: false,
+        members: [],
+        invites: [],
+      }),
+    });
+    renderApp("/invite");
+    expect(await screen.findByText("maria invited you to join Flat 4.")).toBeDefined();
+    expect(window.location.hash).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Join Flat 4" }));
+    expect(await screen.findByText("You are a member of Flat 4.")).toBeDefined();
+  });
 });

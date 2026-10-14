@@ -30,7 +30,7 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
       }
       throw err;
     });
-    await logFor(c, me.username, "info", `assistant session ${session.sessionId}${resume_from ? " (resumed)" : ""}`);
+    await logFor(c, me.home, "info", `assistant session ${session.sessionId}${resume_from ? " (resumed)" : ""}`);
     return c.json({
       session_id: session.sessionId,
       sdp: session.sdp,
@@ -46,7 +46,7 @@ export const assistantRoutes = new Hono<AppEnv>().post("/sessions", async (c) =>
 export const lightwaveRoutes = new Hono<AppEnv>()
   .get("/lights", async (c) => {
     try {
-      const token = await lightwaveToken(c, c.get("user").username);
+      const token = await lightwaveToken(c, c.get("user").home);
       if (!token) {
         return c.json({ error: "no_lightwave_connection" }, 412);
       }
@@ -58,7 +58,7 @@ export const lightwaveRoutes = new Hono<AppEnv>()
   .post("/features", async (c) => {
     const { features } = await jsonBody(c, schemas.featureWrites);
     try {
-      const token = await lightwaveToken(c, c.get("user").username);
+      const token = await lightwaveToken(c, c.get("user").home);
       if (!token) {
         return c.json({ error: "no_lightwave_connection" }, 412);
       }
@@ -75,7 +75,7 @@ export const lightwaveRoutes = new Hono<AppEnv>()
     }
     const { value } = await jsonBody(c, schemas.featureValue);
     try {
-      const token = await lightwaveToken(c, c.get("user").username);
+      const token = await lightwaveToken(c, c.get("user").home);
       if (!token) {
         return c.json({ error: "no_lightwave_connection" }, 412);
       }

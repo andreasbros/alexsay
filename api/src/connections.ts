@@ -19,8 +19,8 @@ export interface OpenAiConnection {
 }
 
 /** The user's OpenAI key and settings, or null when they have not connected one. */
-export async function openaiConnection(c: Scope, username: string): Promise<OpenAiConnection | null> {
-  const row = await connections.get(c.env.DB, username, "openai");
+export async function openaiConnection(c: Scope, home: string): Promise<OpenAiConnection | null> {
+  const row = await connections.get(c.env.DB, home, "openai");
   if (!row) {
     return null;
   }
@@ -44,27 +44,27 @@ export function lightwaveUrls(c: Scope): LightwaveUrls {
  * A valid Lightwave access token; a refresh stores the rotated refresh token before anything else runs.
  * Refresh tokens are single use, so when two requests race the loser re-reads what the winner stored.
  */
-export async function lightwaveToken(c: Scope, username: string): Promise<string | null> {
-  const row = await connections.get(c.env.DB, username, "lightwave");
+export async function lightwaveToken(c: Scope, home: string): Promise<string | null> {
+  const row = await connections.get(c.env.DB, home, "lightwave");
   if (!row) {
     return null;
   }
   try {
-    return await refreshAndStore(c, username, row.secret);
+    return await refreshAndStore(c, home, row.secret);
   } catch (err) {
-    const latest = await connections.get(c.env.DB, username, "lightwave");
+    const latest = await connections.get(c.env.DB, home, "lightwave");
     if (err instanceof ProviderError && latest && latest.secret !== row.secret) {
-      return refreshAndStore(c, username, latest.secret);
+      return refreshAndStore(c, home, latest.secret);
     }
     throw err;
   }
 }
 
-async function refreshAndStore(c: Scope, username: string, sealed: string): Promise<string> {
+async function refreshAndStore(c: Scope, home: string, sealed: string): Promise<string> {
   const secret = await open<LightwaveSecret>(c.env.SECRETS_KEY, sealed);
   const result = await accessToken(lightwaveUrls(c), secret);
   if (result.refreshed) {
-    await connections.setSecret(c.env.DB, username, "lightwave", await seal(c.env.SECRETS_KEY, result.secret));
+    await connections.setSecret(c.env.DB, home, "lightwave", await seal(c.env.SECRETS_KEY, result.secret));
   }
   return result.token;
 }
@@ -80,8 +80,8 @@ export interface TwilioConnection {
 }
 
 /** The user's Twilio account and telephony settings, or null when they have not connected one. */
-export async function twilioConnection(c: Scope, username: string): Promise<TwilioConnection | null> {
-  const row = await connections.get(c.env.DB, username, "twilio");
+export async function twilioConnection(c: Scope, home: string): Promise<TwilioConnection | null> {
+  const row = await connections.get(c.env.DB, home, "twilio");
   return row ? twilioFromRow(c, row) : null;
 }
 
@@ -96,15 +96,15 @@ export async function twilioFromRow(c: Scope, row: ConnectionRow): Promise<Twili
 const DEFAULT_COUNTRY_CODE = "+44";
 
 /** The dialling code assumed for local numbers: the Twilio setting when there is one. */
-export async function countryCode(c: Scope, username: string): Promise<string> {
-  const row = await connections.get(c.env.DB, username, "twilio");
+export async function countryCode(c: Scope, home: string): Promise<string> {
+  const row = await connections.get(c.env.DB, home, "twilio");
   return row ? twilioSettings.parse(JSON.parse(row.settings)).country_code : DEFAULT_COUNTRY_CODE;
 }
 
 /** The API key that signs browser voice tokens, created and sealed on first use. */
 export async function twilioSigningKey(
   c: Scope,
-  username: string,
+  home: string,
   connection: TwilioConnection,
 ): Promise<Required<Pick<TwilioSecret, "account_sid" | "api_key_sid" | "api_key_secret">>> {
   const { secret } = connection.client;
@@ -113,6 +113,6 @@ export async function twilioSigningKey(
   }
   const key = await createApiKey(connection.client);
   const next: TwilioSecret = { ...secret, api_key_sid: key.sid, api_key_secret: key.secret };
-  await connections.setSecret(c.env.DB, username, "twilio", await seal(c.env.SECRETS_KEY, next));
+  await connections.setSecret(c.env.DB, home, "twilio", await seal(c.env.SECRETS_KEY, next));
   return { account_sid: secret.account_sid, api_key_sid: key.sid, api_key_secret: key.secret };
 }

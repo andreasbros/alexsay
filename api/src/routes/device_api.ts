@@ -3,11 +3,11 @@ import { createMiddleware } from "hono/factory";
 import { alarmsForDevice, recordEvents } from "../alarms";
 import { addTurns, endConversation, runToolFor, sessionFor, startConversation } from "../assistant_api";
 import { openaiConnection, twilioConnection } from "../connections";
-import { devices, users } from "../db";
+import { devices, homes } from "../db";
 import { serverOrigin } from "../origin";
 import * as schemas from "../schemas";
 import { callReport, speakerOnline, TelephonyError } from "../telephony";
-import type { AppEnv } from "../types";
+import { type AppEnv, actingFor } from "../types";
 import { jsonBody, parse } from "../validate";
 
 /** A claimed speaker acts as its owner: the UUID in the header is the credential. */
@@ -17,11 +17,11 @@ const requireClaimedDevice = createMiddleware<AppEnv>(async (c, next) => {
     return c.json({ error: "device_id" }, 400);
   }
   const row = await devices.get(c.env.DB, parsed.data);
-  const owner = row?.owner ? await users.get(c.env.DB, row.owner) : null;
-  if (!row?.owner || !owner) {
+  const home = row?.home_id ? await homes.get(c.env.DB, row.home_id) : null;
+  if (!row || !home) {
     return c.json({ error: "unclaimed" }, 403);
   }
-  c.set("user", { username: owner.username, role: owner.role });
+  c.set("user", actingFor(home.id));
   c.set("device", { id: row.id, name: row.name });
   await next();
 });
@@ -47,13 +47,13 @@ export const deviceApiRoutes = new Hono<AppEnv>()
     });
     await devices.touch(c.env.DB, id, now, report.firmware ?? null, meta);
     const row = await devices.get(c.env.DB, id);
-    if (!row?.owner) {
+    if (!row?.home_id) {
       return c.json({ claimed: false, time: now, poll_s: 30 });
     }
     const [connection, twilio, account] = await Promise.all([
-      openaiConnection(c, row.owner),
-      twilioConnection(c, row.owner),
-      users.locale(c.env.DB, row.owner),
+      openaiConnection(c, row.home_id),
+      twilioConnection(c, row.home_id),
+      homes.locale(c.env.DB, row.home_id),
     ]);
     const telephony =
       twilio?.settings.sip_domain && twilio.settings.from_number
@@ -104,7 +104,7 @@ export const deviceApiRoutes = new Hono<AppEnv>()
   .get("/conferences/:name/report", async (c) => {
     const name = parse(schemas.conferenceName, c.req.param("name"));
     try {
-      return c.json(await callReport(c, c.get("user").username, name));
+      return c.json(await callReport(c, c.get("user").home, name));
     } catch (err) {
       if (err instanceof TelephonyError) {
         return c.json({ error: err.code, detail: err.message }, 412);
@@ -134,17 +134,17 @@ export const deviceApiRoutes = new Hono<AppEnv>()
     return c.json({ output: await runToolFor(context, name, args, conversation_id ?? null) });
   })
   .post("/conversations", async (c) => {
-    const id = await startConversation(c.env, c.get("user").username, "device", c.get("device").id);
+    const id = await startConversation(c.env, c.get("user").home, "device", c.get("device").id);
     return c.json({ id }, 201);
   })
   .post("/conversations/:id/turns", async (c) => {
     const id = parse(schemas.memoryId, c.req.param("id"));
     const { turns } = await jsonBody(c, schemas.addTurns);
-    const ok = await addTurns(c.env, c.get("user").username, id, turns);
+    const ok = await addTurns(c.env, c.get("user").home, id, turns);
     return ok ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
   })
   .post("/conversations/:id/end", async (c) => {
     const id = parse(schemas.memoryId, c.req.param("id"));
-    const ok = await endConversation(c.env, c.executionCtx, c.get("user").username, id);
+    const ok = await endConversation(c.env, c.executionCtx, c.get("user").home, id);
     return ok ? c.body(null, 204) : c.json({ error: "not_found" }, 404);
   });

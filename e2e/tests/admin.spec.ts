@@ -14,7 +14,7 @@ test("the signed-in pages fit the viewport width", async ({ page }) => {
   const horizontalOverflow = () =>
     page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(await horizontalOverflow()).toBe(0);
-  for (const name of [/Assistant/, /Connections/]) {
+  for (const name of [/Assistant/, /Connections/, /Home/]) {
     await openTab(page, name);
     expect(await horizontalOverflow()).toBe(0);
   }

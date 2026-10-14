@@ -10,7 +10,7 @@ const CHECK_EVERY_MS = 2_000;
 interface StreamAttachment {
   conference?: string;
   who?: string;
-  username?: string;
+  home?: string;
   streamSid?: string;
 }
 
@@ -67,7 +67,7 @@ export class LineBridge extends DurableObject<Env> {
       pair[1].serializeAttachment({
         conference: url.searchParams.get("conference") ?? "",
         who: url.searchParams.get("who") ?? "",
-        username: url.searchParams.get("username") ?? "",
+        home: url.searchParams.get("home") ?? "",
       } satisfies StreamAttachment);
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
@@ -196,21 +196,21 @@ export class LineBridge extends DurableObject<Env> {
       }
       const attachment = (twilio.deserializeAttachment() as StreamAttachment | null) ?? {};
       twilio.close(1000, "the speaker went offline");
-      if (attachment.username) {
-        this.ctx.waitUntil(this.hangUp(attachment.username, attachment.conference ?? ""));
+      if (attachment.home) {
+        this.ctx.waitUntil(this.hangUp(attachment.home, attachment.conference ?? ""));
       }
     }
   }
 
   /** The stream closing alone can leave the conference up; ending the host leg takes it down. */
-  private async hangUp(username: string, conference: string): Promise<void> {
+  private async hangUp(home: string, conference: string): Promise<void> {
     const scope = { env: this.env };
-    await logFor(scope, username, "warn", `call ${conference}: the speaker's line dropped, hanging up`);
+    await logFor(scope, home, "warn", `call ${conference}: the speaker's line dropped, hanging up`);
     try {
-      await endCall(scope, username, "user");
+      await endCall(scope, home, "user");
     } catch (err) {
       if (!(err instanceof TelephonyError)) {
-        await logFor(scope, username, "error", `call ${conference}: hanging up failed: ${String(err)}`);
+        await logFor(scope, home, "error", `call ${conference}: hanging up failed: ${String(err)}`);
       }
     }
   }

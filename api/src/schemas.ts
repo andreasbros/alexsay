@@ -251,3 +251,29 @@ export const alarmEvents = z.object({
     )
     .max(100),
 });
+
+export const email = z.string().trim().toLowerCase().max(254).pipe(z.email());
+export const emailCode = z
+  .string()
+  .trim()
+  .regex(/^\d{6}$/, "six digits");
+/** A 32-byte random token, base64url without padding. */
+export const linkToken = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export const emailStart = z.object({ email });
+export const emailVerify = z.object({ email, code: emailCode });
+export const emailLink = z.object({ token: linkToken });
+export const emailConfirm = z.object({ code: emailCode });
+
+export const homeRole = z.enum(["admin", "user"]);
+export const homeName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[^\p{Cc}]*$/u, "no control characters");
+export const renameHome = z.object({ name: homeName });
+export const changeMember = z.object({ role: homeRole });
+export const invite = z.object({ email, role: homeRole.default("user") });
+export const inviteId = z.string().uuid();
+
+export const updateServerSettings = z.object({ email_login: z.boolean() });

@@ -5,4 +5,11 @@ interface Env {
   PUBLIC_URL?: string;
   /** Optional: "closed" stops sign-ups; accounts are then added by an admin (alexsay-server add-user). */
   REGISTRATION?: string;
+  /** Optional, all four needed for email: the SMTP relay (465 is TLS from the start, 587 uses STARTTLS). */
+  SMTP_HOST?: string;
+  SMTP_PORT?: string;
+  SMTP_USER?: string;
+  SMTP_PASSWORD?: string;
+  /** `alexsay <hello@alexsay.com>`: the sender every email goes out as. */
+  EMAIL_FROM?: string;
 }

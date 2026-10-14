@@ -1,5 +1,5 @@
 import { openaiConnection } from "./connections";
-import { connections, conversations, type NewTurn, users } from "./db";
+import { connections, conversations, homes, type NewTurn } from "./db";
 import { logFor } from "./log";
 import { contextInstructions, digestConversation, loadContext } from "./memory";
 import { ProviderError, sessionConfig } from "./providers/openai";
@@ -23,18 +23,18 @@ export interface BuiltSession {
 /** The GPT-Live session body for this user, exactly as the web page gets it, or null without an OpenAI key. */
 export async function sessionFor(caller: Caller): Promise<BuiltSession | null> {
   const { env, user } = caller;
-  const connection = await openaiConnection({ env }, user.username);
+  const connection = await openaiConnection({ env }, user.home);
   if (!connection) {
     return null;
   }
   const [hasLights, hasPhone, logAccess, callTest, skillsOn] = await Promise.all([
-    connections.get(env.DB, user.username, "lightwave").then((row) => row !== null),
-    connections.get(env.DB, user.username, "twilio").then((row) => row !== null),
-    users.logAccess(env.DB, user.username),
-    users.callTest(env.DB, user.username),
-    skills.enabled(env.DB, user.username),
+    connections.get(env.DB, user.home, "lightwave").then((row) => row !== null),
+    connections.get(env.DB, user.home, "twilio").then((row) => row !== null),
+    homes.logAccess(env.DB, user.home),
+    homes.callTest(env.DB, user.home),
+    skills.enabled(env.DB, user.home),
   ]);
-  const context = contextInstructions(await loadContext(env.DB, user.username));
+  const context = contextInstructions(await loadContext(env.DB, user.home));
   return {
     apiKey: connection.apiKey,
     session: sessionConfig(
@@ -58,7 +58,7 @@ export async function runToolFor(
   if (!tool) {
     return { error: `unknown tool ${name}` };
   }
-  if (tool.skill && !(await skills.enabled(context.env.DB, context.user.username)).has(tool.skill)) {
+  if (tool.skill && !(await skills.enabled(context.env.DB, context.user.home)).has(tool.skill)) {
     return { error: `the user switched the ${tool.skill} skill off under Skills` };
   }
   const scope = { env: context.env };
@@ -67,18 +67,13 @@ export async function runToolFor(
     if (name !== "read_log") {
       const summary = JSON.stringify(output);
       const failed = summary.includes('"error"');
-      await logFor(
-        scope,
-        context.user.username,
-        failed ? "warn" : "info",
-        `tool ${name} ${summarise(args)} -> ${summary}`,
-      );
+      await logFor(scope, context.user.home, failed ? "warn" : "info", `tool ${name} ${summarise(args)} -> ${summary}`);
     }
     return output;
   } catch (err) {
     const detail = err instanceof ProviderError ? err.detail : err instanceof Error ? err.message : "tool failed";
-    console.warn(JSON.stringify({ tool: name, user: context.user.username, error: detail }));
-    await logFor(scope, context.user.username, "error", `tool ${name} ${summarise(args)} failed: ${detail}`);
+    console.warn(JSON.stringify({ tool: name, user: context.user.home, error: detail }));
+    await logFor(scope, context.user.home, "error", `tool ${name} ${summarise(args)} failed: ${detail}`);
     return { error: detail };
   }
 }
@@ -87,17 +82,17 @@ const summarise = (args: Record<string, unknown>) => JSON.stringify(args).slice(
 
 export async function startConversation(
   env: Env,
-  username: string,
+  home: string,
   source: ConversationSource,
   deviceId: string | null,
 ): Promise<string> {
   const id = crypto.randomUUID();
-  await conversations.create(env.DB, { id, username, source, device_id: deviceId });
+  await conversations.create(env.DB, { id, home_id: home, source, device_id: deviceId });
   return id;
 }
 
-export async function addTurns(env: Env, username: string, id: string, turns: NewTurn[]): Promise<boolean> {
-  const row = await conversations.get(env.DB, username, id);
+export async function addTurns(env: Env, home: string, id: string, turns: NewTurn[]): Promise<boolean> {
+  const row = await conversations.get(env.DB, home, id);
   if (!row) {
     return false;
   }
@@ -109,21 +104,21 @@ export async function addTurns(env: Env, username: string, id: string, turns: Ne
 export async function endConversation(
   env: Env,
   executionCtx: Pick<ExecutionContext, "waitUntil">,
-  username: string,
+  home: string,
   id: string,
 ): Promise<boolean> {
-  const row = await conversations.get(env.DB, username, id);
+  const row = await conversations.get(env.DB, home, id);
   if (!row) {
     return false;
   }
   await conversations.end(env.DB, row.id, Date.now());
-  const connection = await openaiConnection({ env }, username);
+  const connection = await openaiConnection({ env }, home);
   if (connection && row.summary === null) {
     executionCtx.waitUntil(
       digestConversation(
         env.DB,
         { baseUrl: env.OPENAI_BASE_URL, apiKey: connection.apiKey, model: connection.settings.backend_model },
-        username,
+        home,
         row.id,
       ).catch((err: unknown) => console.warn(JSON.stringify({ digest: row.id, error: String(err) }))),
     );

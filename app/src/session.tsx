@@ -33,6 +33,22 @@ export function useRegister() {
   });
 }
 
+/** Any way of signing in that ends with the server's answer about who you are now. */
+export function useSignIn<Args>(signIn: (args: Args) => Promise<User>) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: signIn,
+    onSuccess: (user) => {
+      client.removeQueries({ predicate: (query) => query.queryKey[0] !== "session" });
+      client.setQueryData(["session"], user);
+    },
+  });
+}
+
+export function useAuthConfig() {
+  return useQuery({ queryKey: ["auth-config"], queryFn: api.authConfig, staleTime: 60_000 });
+}
+
 export function useLogout() {
   const client = useQueryClient();
   return useMutation({

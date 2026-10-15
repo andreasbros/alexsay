@@ -4,8 +4,78 @@ All notable changes to alexsay. The format follows
 [Keep a Changelog](https://keepachangelog.com), versions follow
 [SemVer](https://semver.org).
 
+## [0.1.4] - 2026-10-15
+
+
+### Added
+
+- Ship the stop and snooze command models (0212bfef)
+- Homes, email sign-in and home invitations (81fa7dcd)
+
+### Documentation
+
+- Train the wake word with your voice (8b01f5d9)
+- Skills, scheduler and alarms in the handover (c0977125)
+
+### Changes
+
+- Website Development section, README hero from the live site, draft releases (e7a1c87d)
+- Website terminal demo: the user is Robin (82cd8b48)
+- Website terminal: no scrollbar, half-size type and no timestamps on phones (b10b020b)
+- Website terminal: log lines start flush at INFO, typing twice as fast (c396c2c9)
+- No Node.js either (5847983a)
+- Blog with scheduled posts, Development in the menu, SEO (b7eeb896)
+- Install line on one row on phones, blog in the README, integrations fit 320 px (21240169)
+- Speaker calls: the call owns the speaker, lines print when spoken, the report gets its reply (3f0260a1)
+- Debug logging for playback, the phone line, reply gaps, the wake word and tools (8777c8f3)
+- The wake word hears the raw microphone, echo cancelling only for conversations and calls (8190207b)
+- Bounded live playback, no blocking waits, calls close the conversation (d8ef2709)
+- Answer the speaker first, dial once, brief the assistant before it joins, tell it who answered (472c7766)
+- Asking to end closes after the reply, and a goodbye answered with bye ends it (c40a7bf4)
+- Revert "Speaker: asking to end closes after the reply, and a goodbye answered with bye ends it" (7f05845a)
+- Ending goes through end_conversation, and the instructions say so (3bfdeb9b)
+- End the conversation the way the web app does (e1e3960d)
+- Lock-free, allocation-free audio callbacks (25dcb9d6)
+- Hang up the call when the speaker's line drops (65494e20)
+- Ping every 5 s during a call; a dead line is noticed in 12 s (59fe08d7)
+- Admin-made test accounts; wait until the deploy has settled (70fdbe5a)
+- Say why an account could not be created, whatever the code (a944bcee)
+- Wake word: one model loader for every command; no listening in the refractory (ceb748cb)
+- Wake word: LiveKit's models beside rustpotter, the owner's model and takes (a6820823)
+- Wake word training pipeline for the LiveKit engine (168d0457)
+- Wake word: first LiveKit model at 10,000 clips per class (a laptop CPU's night) (92237d4e)
+- Wake word training: everything from the Nix shell, pinned and checked (b18a014f)
+- Wake word training: the hand-picked near-misses actually get trained on (2b43882b)
+- Listen through connected AirPods, not the iPhone's microphone (97721f53)
+- Wake word: the first LiveKit classifier ships (85c7c046)
+- Pi bring-up tools and a reproducible Flex reflash (d420785d)
+- Match dfu-util's device list and accept the reset exit (4ddeab4d)
+- Static speaker finds ALSA's config on machines without the Nix store (ee187605)
+- Bench results: Pi, Flex capture, speaker and echo cancelling (7c33c75f)
+- Wake word training takes the owner's own recordings (2a9279c6)
+- Flex build listens on the finished voice channel (54aa8a48)
+- Skills, a general scheduler and the Alarms skill on the server (0e92b8c4)
+- Speaker rings alarms from its own clock (0e41763f)
+- Skills tab with the Alarms page (4e3fee50)
+- Send email through Cloudflare Email Service binding on Cloudflare (3c4a0e46)
+- Email sign-in: Turnstile check, Alexsay sender, alexsay.com subjects (7daa2096)
+- Home first; Devices and Connections live on the Home page (9a48eb1e)
+- Drop the tab bar's own underline under the header (2ca9f8f3)
+- Invitation email: Link expires in 3 days (cdaba119)
+- Home page: Link expires in 3 days (8446b332)
+- Version icon URLs so browsers drop the cached old favicon (3c7dda31)
+- BIMI logo for mail clients (f0d8e41a)
+- Forgiving set_alarm: blank fields ignored, any timing form; spoken confirmation and ISO time in the user's zone; LLM e2e tests (aa8d7cb4)
+- Memory category reminders becomes notes; remind me always sets an alarm (69b616d2)
+- Turnstile on every sign-in and registration, with a bypass header for the e2e suite; email-only account creation when email sign-in is on; real-model alarm tests in CI (11108889)
+- Drop in on a speaker from the app: two-way audio over the line bridge, announced and accepted by voice on the speaker (a8c24644)
+
 ## [0.1.3] - 2026-10-12
 
+
+### Internal
+
+- V0.1.3 (e754ccba)
 
 ### Changes
 

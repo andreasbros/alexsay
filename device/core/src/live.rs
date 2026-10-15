@@ -44,6 +44,17 @@ pub fn session_with_audio_format(mut session: Value, rate: u32) -> Value {
     session
 }
 
+/// The session with tools of the speaker's own added (ones it answers itself, never the server),
+/// next to the server's under the Responses delegation.
+pub fn session_with_tools(mut session: Value, tools: &[Value]) -> Value {
+    let responses = &mut session["delegation"]["responses"];
+    match responses.get_mut("tools") {
+        Some(Value::Array(existing)) => existing.extend(tools.iter().cloned()),
+        _ => responses["tools"] = Value::Array(tools.to_vec()),
+    }
+    session
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Item {
@@ -298,6 +309,25 @@ mod tests {
         );
         let bare = session_with_audio_format(json!({"model": "m"}), 24_000);
         assert_eq!(bare["audio"]["format"]["rate"], 24_000);
+    }
+
+    #[test]
+    fn the_speakers_own_tools_join_the_servers() {
+        let server = json!({"delegation": {"responses": {"tools": [{"type": "function", "name": "set_light"}]}}});
+        let mine = [json!({"type": "function", "name": "accept_drop_in"})];
+        let joined = session_with_tools(server, &mine);
+        let names: Vec<&str> = joined["delegation"]["responses"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["set_light", "accept_drop_in"]);
+        let bare = session_with_tools(json!({"model": "m"}), &mine);
+        assert_eq!(
+            bare["delegation"]["responses"]["tools"][0]["name"],
+            "accept_drop_in"
+        );
     }
 
     #[test]

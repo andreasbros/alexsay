@@ -18,6 +18,32 @@ export function ago(timestamp: number | null, now = Date.now()): string {
   return `${Math.round(hours / 24)} days ago`;
 }
 
+/** The speaker software that first takes drop-ins from the app. */
+export const DROP_IN_SINCE = "0.1.4";
+
+/** True when `version` (as the speaker reports it, "0.1.4") is `min` or newer; unknown versions are not. */
+export function atLeastVersion(version: string | null | undefined, min: string): boolean {
+  const parse = (text: string) =>
+    text
+      .trim()
+      .replace(/^v/, "")
+      .split(".")
+      .map((part) => Number.parseInt(part, 10));
+  const have = version ? parse(version) : [];
+  const want = parse(min);
+  if (have.length === 0 || have.some(Number.isNaN)) {
+    return false;
+  }
+  for (let i = 0; i < Math.max(have.length, want.length); i += 1) {
+    const a = have[i] ?? 0;
+    const b = want[i] ?? 0;
+    if (a !== b) {
+      return a > b;
+    }
+  }
+  return true;
+}
+
 export const isUuid = (value: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
 

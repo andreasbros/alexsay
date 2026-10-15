@@ -62,6 +62,26 @@ export const deviceRoutes = new Hono<AppEnv>()
     await devices.update(c.env.DB, id, { name: changes.name, home_id: home });
     return c.body(null, 204);
   })
+  /**
+   * Drop in on a speaker: the app's side of the two-way channel, a WebSocket to the speaker's line
+   * bridge. The bridge offers it to the speaker, which announces who it is and asks before opening.
+   */
+  .get("/:id/drop-in", async (c) => {
+    const id = parse(schemas.deviceId, c.req.param("id"));
+    const me = c.get("user");
+    const row = await devices.get(c.env.DB, id);
+    if (!row || row.home_id !== me.home) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
+      return c.json({ error: "expected a websocket" }, 426);
+    }
+    const bridge = c.env.LINE_BRIDGE.get(c.env.LINE_BRIDGE.idFromName(id));
+    const guest = new URL("https://line/guest");
+    guest.searchParams.set("id", crypto.randomUUID());
+    guest.searchParams.set("from", me.username);
+    return bridge.fetch(guest, { headers: { upgrade: "websocket" } });
+  })
   .delete("/:id", async (c) => {
     const id = parse(schemas.deviceId, c.req.param("id"));
     const me = c.get("user");

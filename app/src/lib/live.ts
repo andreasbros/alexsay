@@ -1,7 +1,7 @@
 import { api, type VoiceClient } from "../api";
 import { brief, debugLog } from "./debug";
 import { openMicrophone } from "./microphone";
-import { functionCallOf, runTool } from "./tools";
+import { dropInFrom, functionCallOf, runTool } from "./tools";
 
 export type LiveStatus = "connecting" | "listening" | "thinking" | "speaking" | "lost" | "closed" | "error";
 export type ActivityKind = "info" | "tool" | "result" | "error";
@@ -13,6 +13,8 @@ export interface LiveHandlers {
   onActivity: (kind: ActivityKind, text: string) => void;
   /** Whether this page can take phone calls itself right now; tells the server where a call should ring. */
   voiceClient?: () => VoiceClient;
+  /** The assistant's `drop_in` tool picked a speaker: the page opens the drop-in, since only it has the microphone. */
+  onDropIn?: (speaker: { id: string; name: string }) => void;
 }
 
 export interface LiveSession {
@@ -347,6 +349,10 @@ class ToolRunner {
         output.includes('"error"') ? "error" : "result",
         `${call.name}: ${output.slice(0, 160)}`,
       );
+      const speaker = dropInFrom(call.name, output);
+      if (speaker) {
+        this.handlers.onDropIn?.(speaker);
+      }
       send(this.channel, {
         type: "response.item.create",
         item: { type: "function_call_output", call_id: call.call_id, output },

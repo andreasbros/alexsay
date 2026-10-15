@@ -47,6 +47,22 @@ export async function runTool(
   }
 }
 
+/** The speaker a successful `drop_in` call named, which the page then drops in on; null for anything else. */
+export function dropInFrom(name: string, output: string): { id: string; name: string } | null {
+  if (name !== "drop_in") {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(output);
+    if (isRecord(parsed) && parsed.ok === true && typeof parsed.device_id === "string") {
+      return { id: parsed.device_id, name: typeof parsed.speaker === "string" ? parsed.speaker : "the speaker" };
+    }
+  } catch {
+    // Not JSON: nothing to drop in on
+  }
+  return null;
+}
+
 function parseArguments(text: string): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(text);

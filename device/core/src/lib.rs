@@ -2,6 +2,7 @@
 
 pub mod alarm;
 pub mod config;
+pub mod drop_in;
 pub mod duplex;
 pub mod endpoint;
 pub mod heartbeat;

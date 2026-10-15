@@ -70,13 +70,11 @@ export async function openTab(page: Page, name: RegExp): Promise<void> {
 }
 
 /** Adds a speaker through the dialog and waits for it to appear in the table. */
-export async function addDevice(page: Page, id: string, name = ""): Promise<void> {
+export async function addDevice(page: Page, id: string, name = "Test speaker"): Promise<void> {
   await page.getByRole("button", { name: "Add device" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("UUID").fill(id);
-  if (name) {
-    await dialog.getByLabel("Name").fill(name);
-  }
+  await dialog.getByLabel("Name").fill(name);
   await dialog.getByRole("button", { name: "Add", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText(id)).toBeVisible();

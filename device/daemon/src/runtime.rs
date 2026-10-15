@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use alexsay_core::alarm::Command as RingCommand;
 use alexsay_core::config::{Config, Paths};
+use alexsay_core::drop_in::{self, Decision};
 use alexsay_core::heartbeat::HeartbeatReply;
 use alexsay_core::identity::DeviceId;
 use alexsay_core::live::{ClientEvent, Item};
@@ -79,9 +80,11 @@ pub struct Runtime {
     pub latest: Arc<Mutex<Option<HeartbeatReply>>>,
     pub call: CallState,
     pub line: Option<LineSender>,
-    /// Call reports: each opens a conversation of its own, read by the listening loop.
-    notes: Mutex<Option<mpsc::UnboundedReceiver<String>>>,
-    notes_tx: mpsc::UnboundedSender<String>,
+    /// Conversations the line asks for (a call's report, a drop-in to announce), read by the listening loop.
+    openings: Mutex<Option<mpsc::UnboundedReceiver<Opening>>>,
+    openings_tx: mpsc::UnboundedSender<Opening>,
+    /// A drop-in offer withdrawn while the speaker was still asking.
+    cancelled_offer: Mutex<Option<String>>,
     /// A conversation is open: the microphone goes to GPT-Live (echo-cancelled), not to the wake word.
     in_session: Arc<AtomicBool>,
     /// The alarms: their schedule (on disk too), whether one rings, and signals for them.
@@ -98,7 +101,7 @@ impl Runtime {
             alexsay_core::duplex::Echo::from_config(&config.audio.echo, cfg!(feature = "flex"));
         let player = Player::open_with(&config.audio, echo.needs_software())
             .context("opening the speaker")?;
-        let (notes_tx, notes_rx) = mpsc::unbounded_channel();
+        let (openings_tx, openings_rx) = mpsc::unbounded_channel();
         let (alarms, alarm_signals) = AlarmHandle::new();
         *alarms
             .schedule
@@ -117,8 +120,9 @@ impl Runtime {
             latest: Arc::new(Mutex::new(None)),
             call,
             line: None,
-            notes: Mutex::new(Some(notes_rx)),
-            notes_tx,
+            openings: Mutex::new(Some(openings_rx)),
+            openings_tx,
+            cancelled_offer: Mutex::new(None),
             in_session: Arc::new(AtomicBool::new(false)),
             alarms,
             alarm_signals: Mutex::new(Some(alarm_signals)),
@@ -161,7 +165,9 @@ impl Runtime {
         open_wake_word(&self.paths, &self.config)
     }
 
-    /// The microphone during a phone call goes to the line (unless muted) and nowhere else.
+    /// The microphone during a call goes to the line (unless muted); on a phone call nowhere else,
+    /// on a drop-in the wake word and the assistant still hear it, and the assistant's reply goes
+    /// out with it (echo cancellation keeps the reply out of the microphone itself).
     pub(crate) fn route_to_call(&self, chunk: &[i16]) -> bool {
         if !self.call.on_call() {
             return false;
@@ -169,9 +175,38 @@ impl Runtime {
         if !self.call.muted()
             && let Some(line) = &self.line
         {
-            line.send_audio(chunk);
+            if self.call.drop_in() {
+                let mut mixed = chunk.to_vec();
+                self.call
+                    .mixer
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .mix_into(&mut mixed);
+                line.send_audio(&mixed);
+            } else {
+                line.send_audio(chunk);
+            }
         }
         true
+    }
+
+    /// The drop-in keeps the speaker open for the wake word: a phone call takes it over entirely.
+    fn call_takes_the_speaker(&self) -> bool {
+        self.call.on_call() && !self.call.drop_in()
+    }
+
+    /// Whether the offer being asked about has been withdrawn (consumed once).
+    fn offer_withdrawn(&self, id: &str) -> bool {
+        let mut cancelled = self
+            .cancelled_offer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cancelled.as_deref() == Some(id) {
+            *cancelled = None;
+            true
+        } else {
+            false
+        }
     }
 
     /// Runs until Ctrl-C (or SIGTERM from the service manager).
@@ -234,13 +269,25 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
     let mut heard = CallAudio::default();
     while let Some(signal) = signals.recv().await {
         match signal {
-            LineSignal::CallStart { conference, who } => {
-                info!(conference = %conference, who = %who, "on a call");
-                runtime.player.clear();
-                runtime.call.begin(&conference);
+            LineSignal::CallStart {
+                conference,
+                who,
+                kind,
+            } => {
+                let drop_in = kind == "drop_in";
+                info!(conference = %conference, who = %who, kind = if drop_in { "drop-in" } else { "phone" }, "on a call");
+                // The drop-in opens while the assistant is still saying so: that is heard out
+                if !drop_in {
+                    runtime.player.clear();
+                }
+                runtime.call.begin(&conference, &kind, &who);
                 heard = CallAudio::default();
             }
             LineSignal::Audio(samples) => {
+                // While the assistant answers in the room the far side waits (they still hear the room)
+                if runtime.call.drop_in() && runtime.in_session.load(Ordering::Relaxed) {
+                    continue;
+                }
                 if heard.samples == 0 {
                     tracing::debug!(rms = pcm::rms(&samples), "first call audio from the line");
                 }
@@ -248,6 +295,7 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
                 runtime.player.play_live(&samples);
             }
             LineSignal::CallEnd => {
+                let drop_in = runtime.call.drop_in();
                 let Some(conference) = runtime.call.end() else {
                     continue;
                 };
@@ -260,8 +308,27 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
                 );
                 runtime.player.clear();
                 runtime.play_clip(sounds::END);
-                let handed = Arc::clone(&runtime);
-                tokio::spawn(async move { hand_back(&handed, &conference).await });
+                // A phone call leaves a report for the assistant; a drop-in leaves nothing to tell
+                if !drop_in {
+                    let handed = Arc::clone(&runtime);
+                    tokio::spawn(async move { hand_back(&handed, &conference).await });
+                }
+            }
+            LineSignal::DropInOffer { id, from } => {
+                if runtime.call.on_call() || runtime.alarms.ringing() {
+                    info!(from = %from, "drop-in offered while busy: declined");
+                    if let Some(line) = &runtime.line {
+                        line.answer_drop_in(&id, false);
+                    }
+                } else {
+                    let _ = runtime.openings_tx.send(Opening::DropIn { id, from });
+                }
+            }
+            LineSignal::DropInCancel { id } => {
+                *runtime
+                    .cancelled_offer
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(id);
             }
             LineSignal::AlarmsChanged => runtime.alarms.send(AlarmSignal::Changed),
             LineSignal::AlarmStop { id } => runtime.alarms.send(AlarmSignal::Stop(id)),
@@ -315,7 +382,9 @@ async fn hand_back(runtime: &Runtime, conference: &str) {
         tracing::debug!(conference, "polling the call report");
         match runtime.server.call_report(conference).await {
             Ok(report) if report["ready"] == true || Instant::now() > deadline => {
-                let _ = runtime.notes_tx.send(alexsay_core::report::note(&report));
+                let _ = runtime
+                    .openings_tx
+                    .send(Opening::Report(alexsay_core::report::note(&report)));
                 return;
             }
             Ok(_) => {}
@@ -471,8 +540,8 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
         .checked_sub(Duration::from_secs(3_600))
         .unwrap_or_else(Instant::now);
     let mut listening = Listening::default();
-    let mut reports = runtime
-        .notes
+    let mut openings = runtime
+        .openings
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take()
@@ -498,7 +567,7 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
                 if Instant::now() < warm_up_until {
                     continue;
                 }
-                if runtime.route_to_call(&chunk) {
+                if runtime.route_to_call(&chunk) && runtime.call_takes_the_speaker() {
                     preroll.clear();
                     continue;
                 }
@@ -522,11 +591,13 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
                 runtime.play_clip(sounds::READY);
                 Opening::Wake(preroll.drain(..).collect())
             }
-            Some(report) = reports.recv() => {
-                if runtime.call.on_call() {
-                    continue;
+            Some(opening) = openings.recv() => {
+                match &opening {
+                    Opening::Report(_) if runtime.call.on_call() => continue,
+                    Opening::DropIn { .. } => runtime.play_clip(sounds::DROP_IN),
+                    _ => {}
                 }
-                Opening::Report(report)
+                opening
             }
             _ = alarm_clock.tick() => {
                 // A call is not interrupted: the alarm waits for it (within its three minutes)
@@ -616,12 +687,14 @@ fn after_conversation(
     }
 }
 
-/// What opens a conversation: the wake word (with the audio just before it), a call's report, or
-/// "Alexsay, snooze" while an alarm rang (with what was said and a note on what rang).
+/// What opens a conversation: the wake word (with the audio just before it), a call's report,
+/// "Alexsay, snooze" while an alarm rang (with what was said and a note on what rang), or a
+/// drop-in offer to announce and decide.
 pub enum Opening {
     Wake(Vec<i16>),
     Report(String),
     Snooze { preroll: Vec<i16>, note: String },
+    DropIn { id: String, from: String },
 }
 
 /// What the wake word heard over the last second, logged at debug: the level, the gain the detector
@@ -675,11 +748,29 @@ pub async fn converse(
     opening: Opening,
 ) -> anyhow::Result<Outcome> {
     let ring_session = matches!(opening, Opening::Snooze { .. });
+    let offer = match &opening {
+        Opening::DropIn { id, .. } => Some(id.clone()),
+        _ => None,
+    };
     let (preroll, mut report) = match opening {
         Opening::Wake(preroll) => (preroll, None),
         Opening::Report(report) => (Vec::new(), Some(report)),
         Opening::Snooze { preroll, note } => (preroll, Some(note)),
+        Opening::DropIn { from, .. } => (Vec::new(), Some(drop_in::offer_note(&from))),
     };
+    // Said nothing about until the user speaks: a drop-in is on, and who is on it
+    let mut context = runtime
+        .call
+        .drop_in()
+        .then(|| drop_in::open_note(&runtime.call.who()));
+    let own_tools = if offer.is_some() {
+        drop_in::offer_tools()
+    } else if runtime.call.drop_in() {
+        drop_in::call_tools()
+    } else {
+        Vec::new()
+    };
+    let mut decided = false;
     let Some(device_session) = runtime
         .server
         .session()
@@ -688,8 +779,10 @@ pub async fn converse(
     else {
         return Ok(Outcome::NotConnected);
     };
-    let session_body =
-        alexsay_core::live::session_with_audio_format(device_session.session, LIVE_RATE);
+    let session_body = alexsay_core::live::session_with_tools(
+        alexsay_core::live::session_with_audio_format(device_session.session, LIVE_RATE),
+        &own_tools,
+    );
     let fetched = Instant::now();
     tracing::debug!("session fetched");
     let mut live = Live::connect(
@@ -723,7 +816,7 @@ pub async fn converse(
         tokio::select! {
             chunk = mic.recv() => {
                 let Some(chunk) = chunk else { anyhow::bail!("the microphone stopped") };
-                if runtime.route_to_call(&chunk) {
+                if runtime.route_to_call(&chunk) && runtime.call_takes_the_speaker() {
                     // A muted GPT-Live holds its unfinished reply and plays it after the call; closed, it cannot
                     info!("a call started: closing the conversation");
                     live.send(ClientEvent::SessionClose);
@@ -775,18 +868,24 @@ pub async fn converse(
                                 live.send(ClientEvent::InputAudioAppend { audio: pcm::encode(piece) });
                             }
                             backlog.clear();
+                            if let Some(note) = context.take() {
+                                live.send(ClientEvent::ResponseItemCreate { item: Item::note(&note) });
+                            }
                             if let Some(note) = report.take() {
-                                info!("handing the call report to the assistant");
+                                info!("handing the note to the assistant");
                                 live.send(ClientEvent::ResponseItemCreate { item: Item::note(&note) });
                                 live.send(ClientEvent::ResponseCreate);
                             }
                         }
                         Action::PlayAudio(delta) => {
                             // GPT-Live streams silence all session long; queued behind the call it would bury the call's audio
-                            if runtime.call.on_call() {
+                            if runtime.call_takes_the_speaker() {
                                 continue;
                             }
                             let samples = pcm::decode(&delta);
+                            if runtime.call.drop_in() {
+                                runtime.call.mixer.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(&samples);
+                            }
                             // Reply audio must arrive at least as fast as it plays, or the listener hears gaps
                             let gap = last_delta.elapsed();
                             last_delta = Instant::now();
@@ -806,6 +905,25 @@ pub async fn converse(
                                 *runtime.ring_command.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(command);
                                 session.close_after_reply(now_ms());
                                 live.send(ClientEvent::ResponseItemCreate { item: Item::FunctionCallOutput { call_id: call.call_id, output: r#"{"ok":true}"#.to_owned() } });
+                                live.send(ClientEvent::ResponseCreate);
+                                session.tool_finished();
+                                continue;
+                            }
+                            if let Some(decision) = drop_in::decision(&call.name)
+                                && let Some(line) = &runtime.line
+                                && let Some(reply) = drop_in_reply(decision, offer.as_deref(), runtime.call.drop_in())
+                            {
+                                info!(?decision, "drop-in");
+                                match (decision, &offer) {
+                                    (Decision::End, _) => line.hangup(),
+                                    (_, Some(id)) => {
+                                        decided = true;
+                                        line.answer_drop_in(id, decision == Decision::Accept);
+                                    }
+                                    (_, None) => {}
+                                }
+                                session.close_after_reply(now_ms());
+                                live.send(ClientEvent::ResponseItemCreate { item: Item::FunctionCallOutput { call_id: call.call_id, output: reply.to_owned() } });
                                 live.send(ClientEvent::ResponseCreate);
                                 session.tool_finished();
                                 continue;
@@ -846,6 +964,12 @@ pub async fn converse(
                 session.tool_finished();
             }
             _ = ticker.tick() => {
+                // The app gave up (or the server did) while the speaker was still asking
+                if let Some(id) = &offer && runtime.offer_withdrawn(id) {
+                    info!("the drop-in offer was withdrawn");
+                    live.send(ClientEvent::SessionClose);
+                    break;
+                }
                 // An alarm going off ends the conversation, so the listening loop can ring it
                 if !ring_session && !runtime.alarms.due(alarms::now_ms()).is_empty() {
                     info!("an alarm is due: closing the conversation");
@@ -891,6 +1015,13 @@ pub async fn converse(
             }
         }
     }
+    // Asked and not answered (nothing said, the session timed out): that is a no
+    if let Some(id) = &offer
+        && !decided
+        && let Some(line) = &runtime.line
+    {
+        line.answer_drop_in(id, false);
+    }
     if let Some(id) = conversation {
         let server = runtime.server.clone();
         tokio::spawn(async move {
@@ -922,11 +1053,26 @@ async fn finish_playing(
         let Some(chunk) = mic.recv().await else {
             anyhow::bail!("the microphone stopped");
         };
-        if runtime.route_to_call(&chunk) {
+        if runtime.route_to_call(&chunk) && runtime.call_takes_the_speaker() {
             return Ok(());
         }
     }
     Ok(())
+}
+
+/// What a drop-in tool answers, when it applies: accept or reject while an offer is being asked
+/// about, end while a drop-in is on. Otherwise the server answers that there is none.
+fn drop_in_reply(
+    decision: Decision,
+    offer: Option<&str>,
+    on_drop_in: bool,
+) -> Option<&'static str> {
+    match decision {
+        Decision::Accept if offer.is_some() => Some(r#"{"ok":true,"note":"connecting now"}"#),
+        Decision::Reject if offer.is_some() => Some(r#"{"ok":true,"note":"declined"}"#),
+        Decision::End if on_drop_in => Some(r#"{"ok":true,"note":"hanging up"}"#),
+        _ => None,
+    }
 }
 
 /// `snooze_alarm` or `stop_alarm` from the snooze conversation, as the ring understands them.
@@ -976,6 +1122,16 @@ mod tests {
         );
         assert_eq!(ring_command("stop_alarm", "{}"), Some(RingCommand::Stop));
         assert_eq!(ring_command("set_alarm", "{}"), None);
+    }
+
+    #[test]
+    fn drop_in_tools_apply_only_while_asked_or_on_a_drop_in() {
+        assert!(drop_in_reply(Decision::Accept, Some("d-1"), false).is_some());
+        assert!(drop_in_reply(Decision::Reject, Some("d-1"), false).is_some());
+        assert_eq!(drop_in_reply(Decision::End, Some("d-1"), false), None);
+        assert_eq!(drop_in_reply(Decision::Accept, None, true), None);
+        assert!(drop_in_reply(Decision::End, None, true).is_some());
+        assert_eq!(drop_in_reply(Decision::End, None, false), None);
     }
 
     #[test]

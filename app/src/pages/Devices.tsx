@@ -1,9 +1,27 @@
-import { PlusIcon } from "@radix-ui/react-icons";
-import { AlertDialog, Badge, Button, Card, Dialog, Flex, Heading, Table, Text, TextField } from "@radix-ui/themes";
+import { EnterIcon, PlusIcon } from "@radix-ui/react-icons";
+import {
+  AlertDialog,
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  Flex,
+  Heading,
+  IconButton,
+  Table,
+  Text,
+  TextField,
+} from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { ApiError, api, type Device, type User } from "../api";
-import { ago, isUuid } from "../format";
+import { useDropIn } from "../drop_in";
+import { ago, atLeastVersion, DROP_IN_SINCE, isUuid } from "../format";
+import { dropInSupported } from "../lib/drop_in";
+
+/** A speaker the browser can drop in on: online, running software that takes drop-ins, from a browser that can carry one. */
+export const canDropIn = (device: Pick<Device, "online" | "firmware">, browser = dropInSupported()): boolean =>
+  browser && device.online && atLeastVersion(device.firmware, DROP_IN_SINCE);
 
 const ERRORS: Record<string, string> = {
   claimed: "Another account already owns this speaker.",
@@ -78,7 +96,12 @@ function DeviceRow({
 }) {
   return (
     <Table.Row align="center">
-      <Table.RowHeaderCell>{device.name || <Text color="gray">unnamed</Text>}</Table.RowHeaderCell>
+      <Table.RowHeaderCell>
+        <Flex align="center" gap="2">
+          {canDropIn(device) && <DropInButton device={device} />}
+          {device.name || <Text color="gray">unnamed</Text>}
+        </Flex>
+      </Table.RowHeaderCell>
       <Table.Cell>
         <span className="mono">{device.id}</span>
       </Table.Cell>
@@ -119,6 +142,40 @@ function DeviceRow({
         )}
       </Table.Cell>
     </Table.Row>
+  );
+}
+
+/** Asks before dropping in: the speaker will announce the caller to whoever is in the room. */
+function DropInButton({ device }: { device: Device }) {
+  const dropIn = useDropIn();
+  const name = device.name || "this speaker";
+  return (
+    <AlertDialog.Root>
+      <AlertDialog.Trigger>
+        <IconButton size="1" variant="soft" aria-label={`Drop in on ${name}`} title="Drop in">
+          <EnterIcon />
+        </IconButton>
+      </AlertDialog.Trigger>
+      <AlertDialog.Content maxWidth="420px">
+        <AlertDialog.Title>Drop in on {name}?</AlertDialog.Title>
+        <AlertDialog.Description size="2">
+          The speaker announces you and asks whoever is there whether to accept. Once accepted you hear the room and the
+          room hears you, until either side hangs up or 40 seconds pass in silence.
+        </AlertDialog.Description>
+        <Flex gap="3" mt="4" justify="end">
+          <AlertDialog.Cancel>
+            <Button variant="soft" color="gray">
+              Cancel
+            </Button>
+          </AlertDialog.Cancel>
+          <AlertDialog.Action>
+            <Button onClick={() => dropIn.start({ id: device.id, name })}>
+              <EnterIcon /> Drop in
+            </Button>
+          </AlertDialog.Action>
+        </Flex>
+      </AlertDialog.Content>
+    </AlertDialog.Root>
   );
 }
 
@@ -166,10 +223,11 @@ function AddDevice() {
               required
             />
             <TextField.Root
-              placeholder="Name (optional)"
+              placeholder="Name, such as Kitchen"
               aria-label="Name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              required
             />
             {error && (
               <Text color="red" size="2">
@@ -182,7 +240,7 @@ function AddDevice() {
                   Cancel
                 </Button>
               </Dialog.Close>
-              <Button type="submit" loading={add.isPending} disabled={!isUuid(id)}>
+              <Button type="submit" loading={add.isPending} disabled={!isUuid(id) || !name.trim()}>
                 Add
               </Button>
             </Flex>

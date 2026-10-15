@@ -1,6 +1,7 @@
 import { Flex, Spinner } from "@radix-ui/themes";
 import { Navigate, Route, Routes } from "react-router";
 import { Layout } from "./components/Layout";
+import { DropInProvider } from "./drop_in";
 import { Assistant } from "./pages/Assistant";
 import { EmailLink } from "./pages/EmailLink";
 import { HomePage } from "./pages/Home";
@@ -36,19 +37,21 @@ export function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/sign-in/email" element={<EmailLink />} />
-      <Route path="/invite" element={<Invite />} />
-      <Route element={<Layout user={user} />}>
-        <Route index element={<HomePage user={user} />} />
-        <Route path="assistant" element={<Assistant />} />
-        <Route path="connections" element={<Navigate to="/#connections" replace />} />
-        <Route path="memory" element={<MemoryPage />} />
-        <Route path="skills" element={<Skills />} />
-        <Route path="settings" element={<Settings user={user} />} />
-        {user.role === "admin" && <Route path="users" element={<Users user={user} />} />}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <DropInProvider>
+      <Routes>
+        <Route path="/sign-in/email" element={<EmailLink />} />
+        <Route path="/invite" element={<Invite />} />
+        <Route element={<Layout user={user} />}>
+          <Route index element={<HomePage user={user} />} />
+          <Route path="assistant" element={<Assistant />} />
+          <Route path="connections" element={<Navigate to="/#connections" replace />} />
+          <Route path="memory" element={<MemoryPage />} />
+          <Route path="skills" element={<Skills />} />
+          <Route path="settings" element={<Settings user={user} />} />
+          {user.role === "admin" && <Route path="users" element={<Users user={user} />} />}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </DropInProvider>
   );
 }

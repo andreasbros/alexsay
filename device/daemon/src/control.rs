@@ -19,6 +19,12 @@ pub struct CallState {
     pub on_call: Arc<AtomicBool>,
     pub muted: Arc<AtomicBool>,
     pub conference: Arc<std::sync::Mutex<Option<String>>>,
+    /// The call is a drop-in from the app, not a phone call: the wake word and the assistant stay on.
+    pub drop_in: Arc<AtomicBool>,
+    /// Who is on the line: the app user's name on a drop-in, "speaker" on a phone call.
+    pub who: Arc<std::sync::Mutex<String>>,
+    /// The assistant's voice on its way to the far side of a drop-in.
+    pub mixer: Arc<std::sync::Mutex<alexsay_core::drop_in::Mixer>>,
     /// `alexsay alarm list|stop|snooze` (and the future hardware button) reach the alarms through it.
     pub alarms: crate::alarms::AlarmHandle,
 }
@@ -33,15 +39,35 @@ impl CallState {
     pub fn set_muted(&self, muted: bool) {
         self.muted.store(muted, Ordering::Relaxed);
     }
-    pub fn begin(&self, conference: &str) {
+    pub fn drop_in(&self) -> bool {
+        self.drop_in.load(Ordering::Relaxed)
+    }
+    pub fn who(&self) -> String {
+        self.who
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+    /// `kind` is `phone` or `drop_in`, as the bridge's `call.start` says.
+    pub fn begin(&self, conference: &str, kind: &str, who: &str) {
         *self
             .conference
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(conference.to_owned());
+        self.who
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone_from(&who.to_owned());
+        self.drop_in.store(kind == "drop_in", Ordering::Relaxed);
         self.on_call.store(true, Ordering::Relaxed);
     }
     pub fn end(&self) -> Option<String> {
         self.on_call.store(false, Ordering::Relaxed);
+        self.drop_in.store(false, Ordering::Relaxed);
+        self.mixer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         self.conference
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -108,6 +134,8 @@ pub fn reply(state: &CallState, line: Option<&LineSender>, command: &str) -> Str
             "on_call": state.on_call(),
             "muted": state.muted(),
             "conference": state.conference.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone(),
+            "kind": if state.on_call() { if state.drop_in() { "drop_in" } else { "phone" } } else { "" },
+            "who": state.who(),
             "line": line.is_some_and(LineSender::connected),
         })
         .to_string(),
@@ -228,15 +256,27 @@ mod tests {
         assert_eq!(status["line"], false);
         reply(&state, None, "mute\n");
         assert!(state.muted());
-        state.begin("ay-1");
+        state.begin("ay-1", "phone", "speaker");
         let status: serde_json::Value =
             serde_json::from_str(&reply(&state, None, "status")).unwrap();
         assert_eq!(status["conference"], "ay-1");
         assert_eq!(status["on_call"], true);
+        assert_eq!(status["kind"], "phone");
+        assert!(!state.drop_in());
         reply(&state, None, "unmute");
         assert!(!state.muted());
         assert_eq!(state.end(), Some("ay-1".to_owned()));
         assert!(!state.on_call());
+        state.begin("d-1", "drop_in", "maria");
+        assert!(state.drop_in());
+        state.mixer.lock().unwrap().push(&[1, 2, 3]);
+        let status: serde_json::Value =
+            serde_json::from_str(&reply(&state, None, "status")).unwrap();
+        assert_eq!(status["kind"], "drop_in");
+        assert_eq!(status["who"], "maria");
+        assert_eq!(state.end(), Some("d-1".to_owned()));
+        assert!(!state.drop_in());
+        assert_eq!(state.mixer.lock().unwrap().queued(), 0);
         let bad: serde_json::Value = serde_json::from_str(&reply(&state, None, "dance")).unwrap();
         assert_eq!(bad["ok"], false);
     }

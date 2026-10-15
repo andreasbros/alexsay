@@ -136,6 +136,7 @@ describe("assistant sessions", () => {
       "favourite_contact",
       "update_contact",
       "add_contact",
+      "drop_in",
     ]);
     expect(config.instructions).not.toMatch(/search the web/);
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { functionCallOf, runTool } from "./tools";
+import { dropInFrom, functionCallOf, runTool } from "./tools";
 
 const envelope = (item: unknown) => ({
   type: "response.event",
@@ -24,6 +24,20 @@ describe("tools", () => {
     );
     expect(JSON.parse(output)).toEqual({ ok: true, light: "Kitchen" });
     expect(api.callTool).toHaveBeenCalledWith("set_light", { name: "kitchen", on: true }, "conv-1", undefined);
+  });
+
+  it("spots the speaker a drop_in result names, and nothing else", () => {
+    expect(dropInFrom("drop_in", JSON.stringify({ ok: true, device_id: "d-1", speaker: "Kitchen" }))).toEqual({
+      id: "d-1",
+      name: "Kitchen",
+    });
+    expect(dropInFrom("drop_in", JSON.stringify({ ok: true, device_id: "d-1" }))).toEqual({
+      id: "d-1",
+      name: "the speaker",
+    });
+    expect(dropInFrom("drop_in", JSON.stringify({ error: "offline" }))).toBeNull();
+    expect(dropInFrom("drop_in", "not json")).toBeNull();
+    expect(dropInFrom("set_alarm", JSON.stringify({ ok: true, device_id: "d-1" }))).toBeNull();
   });
 
   it("turns a failed relay into an error the model can read", async () => {

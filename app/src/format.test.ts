@@ -1,4 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { atLeastVersion } from "./format";
+
+describe("atLeastVersion", () => {
+  it("compares speaker versions numerically and treats unknown ones as too old", () => {
+    expect(atLeastVersion("0.1.4", "0.1.4")).toBe(true);
+    expect(atLeastVersion("0.1.10", "0.1.4")).toBe(true);
+    expect(atLeastVersion("v1.0.0", "0.1.4")).toBe(true);
+    expect(atLeastVersion("0.1.3", "0.1.4")).toBe(false);
+    expect(atLeastVersion("0.1", "0.1.4")).toBe(false);
+    expect(atLeastVersion(null, "0.1.4")).toBe(false);
+    expect(atLeastVersion("dev", "0.1.4")).toBe(false);
+  });
+});
+
 import { ago, alarmTitle, isUuid } from "./format";
 
 describe("format", () => {

@@ -112,6 +112,58 @@ describe("App", () => {
     ]);
   });
 
+  it("offers to drop in on an online speaker that takes it, after asking, from a browser that can", async () => {
+    vi.stubGlobal("AudioContext", class {});
+    vi.stubGlobal("WebSocket", class {});
+    const getUserMedia = vi.fn(async () => {
+      throw new Error("no microphone here");
+    });
+    Object.defineProperty(navigator, "mediaDevices", { value: { getUserMedia }, configurable: true });
+    const older = { ...device, id: "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", name: "Hall", firmware: "0.1.3" };
+    const offline = { ...device, id: "2a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", name: "Shed", online: false };
+    mockApi({
+      "/api/session/me": json({ username: "maria", role: "user", home: "maria", homeRole: "user" }),
+      "/api/devices": json([{ ...device, firmware: "0.1.4" }, older, offline]),
+      "/api/connections": json([]),
+    });
+    renderApp();
+    expect(await screen.findByText("Kitchen")).toBeDefined();
+    // The button sits before the name, and only where it would work
+    const row = screen.getByRole("row", { name: /Kitchen/ });
+    const button = within(row).getByRole("button", { name: "Drop in on Kitchen" });
+    expect(row.textContent?.indexOf("Kitchen")).toBeGreaterThan(-1);
+    expect(within(row).getAllByRole("button")[0]).toBe(button);
+    expect(screen.queryByRole("button", { name: "Drop in on Hall" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Drop in on Shed" })).toBeNull();
+
+    fireEvent.click(button);
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByText("Drop in on Kitchen?")).toBeDefined();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Drop in" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Drop in on Kitchen")).toBeDefined();
+    expect(await within(dialog).findByText(/Could not start\. no microphone here/)).toBeDefined();
+    expect(getUserMedia).toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("needs a name as well as the UUID to add a speaker", async () => {
+    mockApi({
+      "/api/session/me": json({ username: "maria", role: "user", home: "maria", homeRole: "admin" }),
+      "/api/devices": json([]),
+      "/api/connections": json([]),
+    });
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Add device" }));
+    const dialog = await screen.findByRole("dialog");
+    const add = within(dialog).getByRole("button", { name: "Add" });
+    fireEvent.change(within(dialog).getByLabelText("UUID"), { target: { value: device.id } });
+    expect(add.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Kitchen" } });
+    expect(add.hasAttribute("disabled")).toBe(false);
+  });
+
   it("keeps the Add device dialog open when the home finishes loading", async () => {
     let homeArrives: (response: Response) => void = () => undefined;
     const routes: Record<string, () => Response> = {

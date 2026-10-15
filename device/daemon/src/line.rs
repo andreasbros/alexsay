@@ -53,6 +53,14 @@ impl LineSender {
     pub fn mute(&self, muted: bool) {
         let _ = self.tx.send(LineCommand::Mute { muted });
     }
+
+    /// Yes or no to a drop-in offer.
+    pub fn answer_drop_in(&self, id: &str, accept: bool) {
+        let _ = self.tx.send(LineCommand::DropInAnswer {
+            id: id.to_owned(),
+            accept,
+        });
+    }
 }
 
 /// What the bridge tells the speaker, decoded: call audio arrives as 16 kHz PCM ready to play.
@@ -61,6 +69,8 @@ pub enum LineSignal {
     CallStart {
         conference: String,
         who: String,
+        /// `phone` or `drop_in` (the app talking through this speaker).
+        kind: String,
     },
     Audio(Vec<i16>),
     CallEnd,
@@ -72,6 +82,14 @@ pub enum LineSignal {
     AlarmSnooze {
         id: Option<String>,
         minutes: u32,
+    },
+    /// Someone in the app wants to drop in: announce them, ask, answer with `LineSender::answer_drop_in`.
+    DropInOffer {
+        id: String,
+        from: String,
+    },
+    DropInCancel {
+        id: String,
     },
 }
 
@@ -215,7 +233,15 @@ async fn connect_once(
 /// A bridge message as the runtime wants it; audio is decoded and brought up to 16 kHz here.
 pub fn decode(text: &str) -> Option<LineSignal> {
     match LineEvent::parse(text)? {
-        LineEvent::CallStart { conference, who } => Some(LineSignal::CallStart { conference, who }),
+        LineEvent::CallStart {
+            conference,
+            who,
+            kind,
+        } => Some(LineSignal::CallStart {
+            conference,
+            who,
+            kind,
+        }),
         LineEvent::Audio { payload } => Some(LineSignal::Audio(mulaw::double(&mulaw::decode(
             &pcm::decode_bytes(&payload),
         )))),
@@ -224,6 +250,8 @@ pub fn decode(text: &str) -> Option<LineSignal> {
         LineEvent::AlarmsChanged => Some(LineSignal::AlarmsChanged),
         LineEvent::AlarmStop { id } => Some(LineSignal::AlarmStop { id }),
         LineEvent::AlarmSnooze { id, minutes } => Some(LineSignal::AlarmSnooze { id, minutes }),
+        LineEvent::DropInOffer { id, from } => Some(LineSignal::DropInOffer { id, from }),
+        LineEvent::DropInCancel { id } => Some(LineSignal::DropInCancel { id }),
     }
 }
 
@@ -249,6 +277,13 @@ mod tests {
         assert!(samples[2] > 800 && samples[2] < 1100);
         assert_eq!(decode(r#"{"type":"pong"}"#), None);
         assert_eq!(decode(r#"{"type":"call.end"}"#), Some(LineSignal::CallEnd));
+        assert_eq!(
+            decode(r#"{"type":"drop_in.offer","id":"d-1","from":"maria"}"#),
+            Some(LineSignal::DropInOffer {
+                id: "d-1".to_owned(),
+                from: "maria".to_owned()
+            })
+        );
         assert_eq!(
             decode(r#"{"type":"alarm.snooze","minutes":5}"#),
             Some(LineSignal::AlarmSnooze {
@@ -311,7 +346,8 @@ mod tests {
             signals.recv().await,
             Some(LineSignal::CallStart {
                 conference: "ay-9".to_owned(),
-                who: "speaker".to_owned()
+                who: "speaker".to_owned(),
+                kind: String::new()
             })
         );
         assert!(sender.connected());

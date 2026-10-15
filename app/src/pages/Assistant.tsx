@@ -8,6 +8,7 @@ import { Activity, type ActivityEntry } from "../components/Activity";
 import { Bars } from "../components/Bars";
 import { DebugPanel } from "../components/DebugPanel";
 import { appendTurn, Transcript, type Turn } from "../components/Transcript";
+import { useDropIn } from "../drop_in";
 import { callReportNote } from "../lib/call_report";
 import { debugLog, isDebug, subscribeDebug } from "../lib/debug";
 import { startDemo } from "../lib/demo";
@@ -64,6 +65,15 @@ export function Assistant() {
   // The conference the page is in, so its report can be fetched the moment the leg drops
   const conferenceRef = useRef<string | null>(null);
   const [lineStatus, setLineStatus] = useState<LineStatus>("off");
+  const dropIn = useDropIn();
+  // A drop-in has the microphone and the speaker: the page's assistant stays quiet until it ends
+  useEffect(() => {
+    applyMuteState(
+      { muted: mutedRef.current, onCall: lineStatusRef.current === "connected" || dropIn.active },
+      session.current,
+      line.current,
+    );
+  }, [dropIn.active]);
   const [lineError, setLineError] = useState<string | null>(null);
   const [resumeAudio, setResumeAudio] = useState<(() => void) | null>(null);
   const [caller, setCaller] = useState<string | null>(null);
@@ -134,6 +144,7 @@ export function Assistant() {
     const handlers = {
       onActivity: log,
       voiceClient: () => (line.current && line.current.status() !== "off" ? ("browser" as const) : ("mobile" as const)),
+      onDropIn: dropIn.start,
       onStatus: (next: LiveStatus, info?: string) => {
         debugLog(`status ${next}${info ? ` (${info})` : ""}`);
         if (next !== "connecting") {

@@ -61,6 +61,11 @@ pub const REMINDER: (&[Note], f32) = (
     ],
     1.4,
 );
+/// Someone is dropping in from the app: a doorbell before the assistant says who.
+pub const DROP_IN: (&[Note], f32) = (
+    &[note(659.25, 0.0, 0.25, 0.9), note(523.25, 0.3, 0.4, 0.9)],
+    0.8,
+);
 /// Something failed: a low double buzz.
 pub const ERROR: (&[Note], f32) = (
     &[note(220.0, 0.0, 0.12, 0.8), note(220.0, 0.18, 0.12, 0.8)],

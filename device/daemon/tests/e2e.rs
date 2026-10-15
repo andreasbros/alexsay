@@ -84,6 +84,7 @@ async fn the_binary_is_claimed_and_every_server_check_passes() {
     );
 
     let after = smoke(bin, home.path(), audio);
+    drop_in_round_trip(&app, &id, &cookie).await;
     let remove = http
         .delete(format!("{app}/api/devices/{id}"))
         .header("cookie", &cookie)
@@ -138,6 +139,122 @@ async fn the_binary_is_claimed_and_every_server_check_passes() {
         .unwrap();
     let status: Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(status["claimed"], false, "removed again: {status}");
+}
+
+/// The next JSON text frame on a socket, within 10 s.
+async fn next_json<S>(stream: &mut S, what: &str) -> Value
+where
+    S: futures_util::StreamExt<
+            Item = Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin,
+{
+    let deadline = tokio::time::Duration::from_secs(10);
+    loop {
+        let message = tokio::time::timeout(deadline, stream.next())
+            .await
+            .unwrap_or_else(|_| panic!("no {what} within 10 s"))
+            .unwrap_or_else(|| panic!("socket closed before {what}"))
+            .unwrap();
+        if let tokio_tungstenite::tungstenite::Message::Text(text) = message {
+            return serde_json::from_str(&text).unwrap();
+        }
+    }
+}
+
+/// A drop-in from the app to this speaker, end to end over the real server: the line is opened as
+/// the binary does, the app's socket as the page does; the offer, the answer, audio both ways, the
+/// hang up. The speaker side is played here rather than by the binary, which has no sound card in CI.
+async fn drop_in_round_trip(app: &str, id: &str, cookie: &str) {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let ws_base = app.replacen("http", "ws", 1);
+    let mut line_request = format!("{ws_base}/v1/device/line")
+        .into_client_request()
+        .unwrap();
+    line_request
+        .headers_mut()
+        .insert("x-device-id", id.parse().unwrap());
+    let (line, _) = tokio_tungstenite::connect_async(line_request)
+        .await
+        .expect("the speaker's line");
+    let (mut line_tx, mut line_rx) = line.split();
+
+    let mut guest_request = format!("{ws_base}/api/devices/{id}/drop-in")
+        .into_client_request()
+        .unwrap();
+    guest_request
+        .headers_mut()
+        .insert("cookie", cookie.parse().unwrap());
+    let (guest, _) = tokio_tungstenite::connect_async(guest_request)
+        .await
+        .expect("the app's drop-in socket");
+    let (mut guest_tx, mut guest_rx) = guest.split();
+
+    assert_eq!(next_json(&mut guest_rx, "ringing").await["type"], "ringing");
+    let offer = next_json(&mut line_rx, "the offer").await;
+    assert_eq!(offer["type"], "drop_in.offer", "{offer}");
+    assert_eq!(offer["from"], std::env::var("E2E_USER_USERNAME").unwrap());
+    line_tx
+        .send(Message::Text(
+            serde_json::json!({ "type": "drop_in.answer", "id": offer["id"], "accept": true })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_json(&mut guest_rx, "accepted").await["type"],
+        "accepted"
+    );
+    let start = next_json(&mut line_rx, "call.start").await;
+    assert_eq!(start["type"], "call.start", "{start}");
+    assert_eq!(start["kind"], "drop_in");
+    assert_eq!(start["conference"], offer["id"]);
+
+    // A loud frame each way: the bridge relays it unchanged
+    let frame = alexsay_core::pcm::encode_bytes(
+        &(0..160)
+            .map(|i| if i % 2 == 0 { 0x00u8 } else { 0x80 })
+            .collect::<Vec<u8>>(),
+    );
+    guest_tx
+        .send(Message::Text(
+            serde_json::json!({ "type": "audio", "payload": frame })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let heard = next_json(&mut line_rx, "audio at the speaker").await;
+    assert_eq!(heard["type"], "audio");
+    assert_eq!(heard["payload"], frame);
+    line_tx
+        .send(Message::Text(
+            serde_json::json!({ "type": "audio", "payload": frame })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let heard = next_json(&mut guest_rx, "audio in the app").await;
+    assert_eq!(heard["type"], "audio");
+    assert_eq!(heard["payload"], frame);
+
+    guest_tx
+        .send(Message::Text(r#"{"type":"hangup"}"#.into()))
+        .await
+        .unwrap();
+    assert_eq!(next_json(&mut guest_rx, "ended").await["reason"], "left");
+    assert_eq!(
+        next_json(&mut line_rx, "call.end").await["type"],
+        "call.end"
+    );
+    let _ = line_tx.send(Message::Close(None)).await;
 }
 
 fn smoke(bin: &str, home: &std::path::Path, audio: bool) -> Value {

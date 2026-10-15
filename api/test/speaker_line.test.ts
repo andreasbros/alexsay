@@ -150,6 +150,7 @@ describe("speaker phone line", () => {
       type: "call.start",
       conference: placed.output.conference,
       who: "speaker",
+      kind: "phone",
     });
     twilio.send(JSON.stringify({ event: "media", media: { track: "inbound", payload: "AAAA" } }));
     expect(await nextMessage(line)).toEqual({ type: "audio", payload: "AAAA" });

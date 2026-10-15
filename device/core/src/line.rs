@@ -12,6 +12,9 @@ pub enum LineEvent {
         conference: String,
         #[serde(default)]
         who: String,
+        /// `phone` (a Twilio call) or `drop_in` (the app talking through this speaker); phone when missing.
+        #[serde(default)]
+        kind: String,
     },
     /// 8 kHz mu-law, base64, as Twilio sends it.
     #[serde(rename = "audio")]
@@ -35,6 +38,16 @@ pub enum LineEvent {
         id: Option<String>,
         minutes: u32,
     },
+    /// Someone wants to drop in from the app: announce them and answer with `DropInAnswer`.
+    #[serde(rename = "drop_in.offer")]
+    DropInOffer {
+        id: String,
+        #[serde(default)]
+        from: String,
+    },
+    /// The offer is off: they gave up waiting, or the server did.
+    #[serde(rename = "drop_in.cancel")]
+    DropInCancel { id: String },
 }
 
 /// Speaker to server.
@@ -49,6 +62,8 @@ pub enum LineCommand {
     Mute { muted: bool },
     #[serde(rename = "ping")]
     Ping,
+    #[serde(rename = "drop_in.answer")]
+    DropInAnswer { id: String, accept: bool },
 }
 
 impl LineEvent {
@@ -68,8 +83,40 @@ mod tests {
             LineEvent::parse(r#"{"type":"call.start","conference":"ay-1","who":"speaker"}"#),
             Some(LineEvent::CallStart {
                 conference: "ay-1".to_owned(),
-                who: "speaker".to_owned()
+                who: "speaker".to_owned(),
+                kind: String::new()
             })
+        );
+        assert_eq!(
+            LineEvent::parse(
+                r#"{"type":"call.start","conference":"d-1","who":"maria","kind":"drop_in"}"#
+            ),
+            Some(LineEvent::CallStart {
+                conference: "d-1".to_owned(),
+                who: "maria".to_owned(),
+                kind: "drop_in".to_owned()
+            })
+        );
+        assert_eq!(
+            LineEvent::parse(r#"{"type":"drop_in.offer","id":"d-1","from":"maria"}"#),
+            Some(LineEvent::DropInOffer {
+                id: "d-1".to_owned(),
+                from: "maria".to_owned()
+            })
+        );
+        assert_eq!(
+            LineEvent::parse(r#"{"type":"drop_in.cancel","id":"d-1"}"#),
+            Some(LineEvent::DropInCancel {
+                id: "d-1".to_owned()
+            })
+        );
+        assert_eq!(
+            serde_json::to_string(&LineCommand::DropInAnswer {
+                id: "d-1".to_owned(),
+                accept: true
+            })
+            .unwrap(),
+            r#"{"type":"drop_in.answer","id":"d-1","accept":true}"#
         );
         assert_eq!(
             LineEvent::parse(r#"{"type":"audio","payload":"AAAA"}"#),

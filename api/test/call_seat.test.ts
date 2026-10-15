@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { base64ToBytes, base64ToPcm16, bytesToBase64, pcm16ToBase64 } from "../src/mulaw";
+import { base64ToBytes, bytesToBase64 } from "../src/mulaw";
 import {
   APP,
   addUser,
@@ -289,24 +289,25 @@ describe("the GPT-Live seat's bridge", () => {
     };
     expect(config.instructions).toContain("You have just joined a phone call");
     expect(config.instructions).toContain("Mum (+447700900123)");
-    expect(config.audio.format).toEqual({ type: "audio/pcm", rate: 16_000 });
+    expect(config.audio.format).toEqual({ type: "audio/pcmu", rate: 8_000 });
     const tools = config.delegation.responses.tools.map((t) => t.name);
     expect(tools).toContain("end_call");
     expect(tools).not.toContain("end_conversation");
 
-    // Five 20 ms frames from the line become one 100 ms append at 16 kHz
+    // Five 20 ms frames from the line become one 100 ms append of the same G.711 bytes
     for (let i = 0; i < 5; i += 1) {
       twilio.send({ event: "media", media: { track: "inbound", payload: QUIET_FRAME } });
     }
     const append = await session.next();
     expect(append.type).toBe("session.input_audio.append");
-    expect(base64ToPcm16(String(append.audio)).length).toBe(1_600);
+    expect(base64ToBytes(String(append.audio)).length).toBe(800);
+    expect(String(append.audio)).toBe(bytesToBase64(new Uint8Array(800).fill(0xff)));
 
-    // The assistant's audio goes back down the line as mu-law, half as many bytes
-    session.send({ type: "session.output_audio.delta", delta: pcm16ToBase64(new Int16Array(1_600)) });
+    // The assistant's G.711 goes back down the line untouched
+    const spoken = bytesToBase64(Uint8Array.from({ length: 800 }, (_, i) => (i % 2 ? 0x80 : 0x00)));
+    session.send({ type: "session.output_audio.delta", delta: spoken });
     const heard = await twilio.next();
-    expect(heard).toMatchObject({ event: "media", streamSid: "MZ-seat" });
-    expect(base64ToBytes(String((heard.media as { payload: string }).payload)).length).toBe(800);
+    expect(heard).toEqual({ event: "media", streamSid: "MZ-seat", media: { payload: spoken } });
 
     // What is said lands in the transcript, and the assistant's tools run as on any call
     session.send({ type: "session.input_transcript.delta", delta: "Hello " });

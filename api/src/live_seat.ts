@@ -2,8 +2,9 @@ import { DurableObject } from "cloudflare:workers";
 import { type CallNotice, realtimeFunctionCall, runCallTool } from "./call_agent";
 import { openaiConnection } from "./connections";
 import { calls, connections, homes } from "./db";
+import { frameLevel, SPEECH_RMS } from "./drop_in";
 import { logFor } from "./log";
-import { base64ToBytes, base64ToPcm16, liveToTwilio, muLawToPcm16k, pcm16ToBase64 } from "./mulaw";
+import { base64ToBytes, bytesToBase64 } from "./mulaw";
 import { liveCallSession, liveSocketUrl } from "./providers/openai";
 import { skills } from "./skills";
 import { agentBrief, endCall, notOnCalls, parseAgent } from "./telephony";
@@ -22,7 +23,8 @@ export interface SeatStart {
 
 /** Twilio's frames are 20 ms; GPT-Live is fed in 100 ms pieces, as the speaker does. */
 const FRAMES_PER_APPEND = 5;
-const LIVE_RATE = 16_000;
+/** G.711 at 8 kHz: one byte per sample, eight bytes per millisecond. */
+const BYTES_PER_MS = 8;
 
 /** What the caller says to end the call: the seat hangs up itself if the model forgets its tool. */
 export const USER_FAREWELL =
@@ -65,7 +67,7 @@ export class LiveSeat extends DurableObject<Env> {
   private start: SeatStart | null = null;
   private leg: CallRow | null = null;
   private agent = false;
-  private pending: Int16Array[] = [];
+  private pending: Uint8Array[] = [];
   private heard = { line: "", assistant: "" };
   private closed = false;
   private streamStartedAt = 0;
@@ -137,7 +139,7 @@ export class LiveSeat extends DurableObject<Env> {
       case "media":
         if (message.media?.payload && message.media.track !== "outbound") {
           this.framesIn += 1;
-          this.pending.push(muLawToPcm16k(base64ToBytes(message.media.payload)));
+          this.pending.push(base64ToBytes(message.media.payload));
           if (this.pending.length >= FRAMES_PER_APPEND) {
             this.flushAudio();
           }
@@ -157,14 +159,15 @@ export class LiveSeat extends DurableObject<Env> {
       return;
     }
     const total = this.pending.reduce((n, piece) => n + piece.length, 0);
-    const joined = new Int16Array(total);
+    const joined = new Uint8Array(total);
     let at = 0;
     for (const piece of this.pending) {
       joined.set(piece, at);
       at += piece.length;
     }
     this.pending = [];
-    this.toLive({ type: "session.input_audio.append", audio: pcm16ToBase64(joined) });
+    // The same G.711 bytes Twilio sent, untouched: GPT-Live speaks the line's own format
+    this.toLive({ type: "session.input_audio.append", audio: bytesToBase64(joined) });
   }
 
   /** Opens the GPT-Live session for this seat, with the briefing and tools its leg calls for. */
@@ -256,19 +259,19 @@ export class LiveSeat extends DurableObject<Env> {
         break;
       case "session.output_audio.delta":
         if (typeof event.delta === "string" && this.twilio && this.streamSid) {
-          const samples = base64ToPcm16(event.delta);
           // Silence streams all session long; only audible audio is the reply
-          if (isAudible(samples)) {
+          if (frameLevel(event.delta) > SPEECH_RMS / 2) {
             const now = Date.now();
             if (this.turn.replyStartedAt === null) {
               this.turn.replyStartedAt = now;
               this.turn.waitedMs = this.turn.callerStoppedAt > 0 ? now - this.turn.callerStoppedAt : null;
             }
             this.turn.lastAudibleAt = now;
-            this.turn.replyAudioMs += (samples.length * 1_000) / LIVE_RATE;
+            this.turn.replyAudioMs += (event.delta.length * 3) / 4 / BYTES_PER_MS;
           }
           this.framesOut += 1;
-          this.toTwilio({ event: "media", streamSid: this.streamSid, media: { payload: liveToTwilio(event.delta) } });
+          // GPT-Live's G.711 bytes go down the line as they are
+          this.toTwilio({ event: "media", streamSid: this.streamSid, media: { payload: event.delta } });
         }
         break;
       case "session.input_transcript.delta":
@@ -481,22 +484,3 @@ export class LiveSeat extends DurableObject<Env> {
     this.twilio = null;
   }
 }
-
-/** Audio above this RMS (0 to 1) is the assistant speaking rather than the silence GPT-Live streams between replies. */
-const AUDIBLE_RMS = 0.004;
-
-function isAudible(samples: Int16Array): boolean {
-  if (samples.length === 0) {
-    return false;
-  }
-  let sum = 0;
-  for (let i = 0; i < samples.length; i += 1) {
-    const s = (samples[i] ?? 0) / 32_768;
-    sum += s * s;
-  }
-  return Math.sqrt(sum / samples.length) > AUDIBLE_RMS;
-}
-
-/** The samples a Twilio frame carries, for the tests that check the bridge's arithmetic. */
-export const framePcm = (payload: string): Int16Array =>
-  base64ToPcm16(pcm16ToBase64(muLawToPcm16k(base64ToBytes(payload))));

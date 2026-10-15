@@ -216,8 +216,12 @@ export function turnDetection(turnTaking: TurnTaking): Record<string, unknown> {
 /** The call's audio is a phone line: a handset or a speakerphone close by, so near-field noise reduction fits. */
 export const NOISE_REDUCTION = { type: "near_field" } as const;
 
-/** The audio GPT-Live exchanges with the server's call seat: PCM16 at 16 kHz, as the speaker uses. */
-export const LIVE_CALL_RATE = 16_000;
+/**
+ * The audio GPT-Live exchanges with the server's call seat: G.711 mu-law at 8 kHz, exactly what Twilio's
+ * media stream carries, so the seat forwards each side's bytes untouched. Resampling to PCM and back
+ * folded everything above 4 kHz into the speech band as hiss (heard on 15 Oct 2026).
+ */
+export const LIVE_CALL_FORMAT = { type: "audio/pcmu", rate: 8_000 } as const;
 
 /**
  * The GPT-Live session for a seat on a phone call: the briefing alone as its instructions (the
@@ -232,7 +236,7 @@ export function liveCallSession(
   return {
     model: settings.model,
     instructions: briefing,
-    audio: { output: { voice }, format: { type: "audio/pcm", rate: LIVE_CALL_RATE } },
+    audio: { output: { voice }, format: LIVE_CALL_FORMAT },
     delegation: {
       type: "responses",
       responses: {

@@ -88,7 +88,13 @@ describe("alarms skill", () => {
 
   it("sets the alarm from the arguments that failed live on 14 Oct, every field filled in", async () => {
     const filled = { kind: "alarm", time: "", repeat: [], label: "9 pm", message: "", speaker: "" };
-    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    // Tomorrow in the user's zone, not UTC: late in the evening the two differ
+    const tomorrow = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/London",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(Date.now() + 86_400_000));
     const byClock = await tool(maria, "set_alarm", { ...filled, in_seconds: 0, at: `${tomorrow}T21:00` });
     expect(byClock).toMatchObject({
       ok: true,

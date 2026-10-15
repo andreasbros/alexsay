@@ -1,4 +1,4 @@
-import { expect, login, openTab, test } from "./helpers";
+import { expect, login, openSection, openTab, test } from "./helpers";
 
 test("stores an OpenAI key, tests it, and the assistant becomes available", async ({ page, account }) => {
   await login(page, account);
@@ -6,8 +6,9 @@ test("stores an OpenAI key, tests it, and the assistant becomes available", asyn
   await expect(page.getByRole("button", { name: "Start talking" })).toBeDisabled();
 
   await openTab(page, /Home/);
+  await openSection(page, "OpenAI");
   await page.getByLabel("OpenAI API key").fill("sk-e2e-not-a-real-key-0123456789");
-  await page.getByRole("button", { name: "Save" }).first().click();
+  await page.locator("#section-openai").getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("connected").first()).toBeVisible();
 
   // The key is fake, so OpenAI refuses it; the app shows that refusal rather than hiding it
@@ -21,16 +22,17 @@ test("stores an OpenAI key, tests it, and the assistant becomes available", asyn
   await openTab(page, /Home/);
   await page.getByRole("button", { name: "Change" }).click();
   await page.getByLabel("Backend model").fill("gpt-6.1-sol");
-  await page.getByRole("button", { name: "Save" }).first().click();
+  await page.locator("#section-openai").getByRole("button", { name: "Save" }).click();
   await expect(page.getByText(/via gpt-6\.1-sol/)).toBeVisible();
 });
 
 test("bad Lightwave tokens are refused when saved", async ({ page, account }) => {
   await login(page, account);
   await openTab(page, /Home/);
+  await openSection(page, "Lightwave");
   await page.getByLabel("Lightwave basic token").fill("e2e-basic-token-0123456789");
   await page.getByLabel("Lightwave refresh token").fill("e2e-refresh-token-0123456789");
-  await page.getByRole("button", { name: "Save" }).nth(1).click();
+  await page.locator("#section-lightwave").getByRole("button", { name: "Save" }).click();
   await expect(page.getByText(/Lightwave refused the tokens/)).toBeVisible();
   await expect(page.getByText("not connected")).toHaveCount(3);
 });
@@ -38,9 +40,10 @@ test("bad Lightwave tokens are refused when saved", async ({ page, account }) =>
 test("bad Twilio credentials are refused when saved", async ({ page, account }) => {
   await login(page, account);
   await openTab(page, /Home/);
+  await openSection(page, "Twilio");
   await page.getByLabel("Twilio account SID").fill("AC00000000000000000000000000000000");
   await page.getByLabel("Twilio auth token").fill("00000000000000000000000000000000");
-  await page.getByRole("button", { name: "Save" }).last().click();
+  await page.locator("#section-twilio").getByRole("button", { name: "Save" }).click();
   await expect(page.getByText(/Twilio refused the credentials/)).toBeVisible();
   await expect(page.getByText("not connected")).toHaveCount(3);
 });
@@ -48,6 +51,9 @@ test("bad Twilio credentials are refused when saved", async ({ page, account }) 
 test("each connection has a Help dialog with the steps to get its keys", async ({ page, account }) => {
   await login(page, account);
   await openTab(page, /Home/);
+  for (const name of ["OpenAI", "Lightwave", "Twilio"]) {
+    await openSection(page, name);
+  }
   await page.getByRole("button", { name: "Help" }).first().click();
   await expect(page.getByRole("heading", { name: "Get an OpenAI API key" })).toBeVisible();
   await expect(page.getByText(/Create new secret key/)).toBeVisible();

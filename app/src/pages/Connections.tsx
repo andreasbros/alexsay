@@ -1,16 +1,4 @@
-import {
-  Badge,
-  Button,
-  Callout,
-  Card,
-  Flex,
-  Heading,
-  Select,
-  Switch,
-  Text,
-  TextArea,
-  TextField,
-} from "@radix-ui/themes";
+import { Badge, Button, Callout, Flex, Heading, Select, Switch, Text, TextArea, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import {
@@ -26,7 +14,9 @@ import {
   type TwilioSettings,
   type User,
 } from "../api";
+import { ComingSoon } from "../components/ComingSoon";
 import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP, OPENAI_SIP_HELP, TWILIO_HELP } from "../components/HelpDialog";
+import { Section } from "../components/Section";
 import { ago } from "../format";
 import { toE164 } from "../lib/phone";
 import { DEFAULT_OPENAI as DEFAULTS, VOICES, voiceTypeOf } from "../voices";
@@ -51,12 +41,12 @@ export function ConnectionsSection({ user }: { user: User }) {
           <TwilioCard connection={byProvider.get("twilio")} />
         </Flex>
       </fieldset>
-      <Card size="3" style={{ opacity: 0.7 }}>
-        <Flex justify="between" align="center">
-          <Heading size="4">Apple Home, Google Home, Claude, Gemini</Heading>
-          <Badge color="gray">coming soon</Badge>
-        </Flex>
-      </Card>
+      <Section id="coming-soon" title="Coming soon">
+        <Text size="2" color="gray">
+          Tap a mark to see what it is. None of these connect yet.
+        </Text>
+        <ComingSoon />
+      </Section>
     </Flex>
   );
 }
@@ -150,150 +140,142 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
   };
   const open = editing || !connection;
   return (
-    <Card size="3">
-      <Flex direction="column" gap="3">
-        <Flex justify="between" align="center" wrap="wrap" gap="2">
-          <Heading size="4">OpenAI</Heading>
-          <Status connection={connection} provider="openai" />
+    <Section id="openai" title="OpenAI" actions={<Status connection={connection} provider="openai" />}>
+      <Text size="2" color="gray">
+        GPT-Live voice sessions for the Assistant tab and your speakers. Needs a paid OpenAI tier.
+      </Text>
+      {connection && !open && (
+        <Flex gap="3" align="center" wrap="wrap">
+          <Text size="2">
+            {connection.settings.model} via {connection.settings.backend_model}, voice {connection.settings.voice}
+            {connection.settings.web_search === false ? ", no web search" : ", web search on"}
+            {connection.settings.project_id ? ", joins phone calls" : ", not on phone calls"}
+          </Text>
+          <Button size="1" variant="soft" onClick={() => setEditing(true)}>
+            Change
+          </Button>
         </Flex>
-        <Text size="2" color="gray">
-          GPT-Live voice sessions for the Assistant tab and your speakers. Needs a paid OpenAI tier.
-        </Text>
-        {connection && !open && (
-          <Flex gap="3" align="center" wrap="wrap">
-            <Text size="2">
-              {connection.settings.model} via {connection.settings.backend_model}, voice {connection.settings.voice}
-              {connection.settings.web_search === false ? ", no web search" : ", web search on"}
-              {connection.settings.project_id ? ", joins phone calls" : ", not on phone calls"}
-            </Text>
-            <Button size="1" variant="soft" onClick={() => setEditing(true)}>
-              Change
-            </Button>
-          </Flex>
-        )}
-        {open && (
-          <form onSubmit={submit}>
-            <Flex direction="column" gap="3">
+      )}
+      {open && (
+        <form onSubmit={submit}>
+          <Flex direction="column" gap="3">
+            <TextField.Root
+              placeholder={connection ? "Leave empty to keep the current key" : "sk-..."}
+              aria-label="OpenAI API key"
+              type="password"
+              autoComplete="off"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              required={!connection}
+            />
+            <Flex gap="3" wrap="wrap">
               <TextField.Root
-                placeholder={connection ? "Leave empty to keep the current key" : "sk-..."}
-                aria-label="OpenAI API key"
-                type="password"
-                autoComplete="off"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                required={!connection}
-              />
-              <Flex gap="3" wrap="wrap">
-                <TextField.Root
-                  aria-label="Live model"
-                  value={settings.model}
-                  onChange={(e) => setSettings({ ...settings, model: e.target.value })}
-                  style={{ flex: 1, minWidth: 140 }}
-                />
-                <TextField.Root
-                  aria-label="Backend model"
-                  value={settings.backend_model}
-                  onChange={(e) => setSettings({ ...settings, backend_model: e.target.value })}
-                  style={{ flex: 1, minWidth: 140 }}
-                />
-                <Select.Root value={voiceType} onValueChange={chooseVoiceType}>
-                  <Select.Trigger aria-label="Voice type" />
-                  <Select.Content>
-                    <Select.Item value="male">Male</Select.Item>
-                    <Select.Item value="female">Female</Select.Item>
-                  </Select.Content>
-                </Select.Root>
-                <Select.Root value={settings.voice} onValueChange={(voice) => setSettings({ ...settings, voice })}>
-                  <Select.Trigger aria-label="Voice" />
-                  <Select.Content>
-                    {VOICES[voiceType].map((v) => (
-                      <Select.Item key={v} value={v}>
-                        {v}
-                      </Select.Item>
-                    ))}
-                  </Select.Content>
-                </Select.Root>
-              </Flex>
-              <Text as="label" size="2">
-                <Flex gap="2" align="center">
-                  <Switch
-                    checked={settings.web_search}
-                    onCheckedChange={(web_search) => setSettings({ ...settings, web_search })}
-                  />
-                  Web search (the assistant may look things up online; OpenAI bills each search)
-                </Flex>
-              </Text>
-              <Text as="label" size="2">
-                <Flex gap="2" align="center">
-                  <Switch
-                    checked={settings.respond_when_addressed}
-                    onCheckedChange={(respond_when_addressed) => setSettings({ ...settings, respond_when_addressed })}
-                  />
-                  Only answer when addressed as Alexsay (ignores the TV and other people in the room)
-                </Flex>
-              </Text>
-              <TextArea
-                aria-label="Extra instructions"
-                placeholder="Extra instructions for the assistant (optional)"
-                value={settings.instructions}
-                onChange={(e) => setSettings({ ...settings, instructions: e.target.value })}
-              />
-              <Flex align="center" justify="between" gap="2" mt="1">
-                <Text size="2" weight="medium">
-                  Phone calls
-                </Text>
-                <HelpDialog {...OPENAI_SIP_HELP} label="How to enable" size="1" />
-              </Flex>
-              <Text size="1" color="gray">
-                OpenAI&apos;s SIP endpoint lets the assistant join calls placed from the Assistant page: it needs the
-                project ID and the signing secret of a webhook for realtime.call.incoming. Twilio must be connected.
-              </Text>
-              <TextField.Root
-                aria-label="OpenAI project ID"
-                placeholder="Project ID, proj_..."
-                autoComplete="off"
-                value={settings.project_id}
-                onChange={(e) => setSettings({ ...settings, project_id: e.target.value })}
+                aria-label="Live model"
+                value={settings.model}
+                onChange={(e) => setSettings({ ...settings, model: e.target.value })}
+                style={{ flex: 1, minWidth: 140 }}
               />
               <TextField.Root
-                aria-label="OpenAI webhook secret"
-                placeholder={
-                  connection ? "Webhook secret, whsec_... (leave empty to keep)" : "Webhook secret, whsec_..."
-                }
-                type="password"
-                autoComplete="off"
-                value={webhookSecret}
-                onChange={(e) => setWebhookSecret(e.target.value)}
+                aria-label="Backend model"
+                value={settings.backend_model}
+                onChange={(e) => setSettings({ ...settings, backend_model: e.target.value })}
+                style={{ flex: 1, minWidth: 140 }}
               />
-              <TextField.Root
-                aria-label="Call model"
-                placeholder="Call model"
-                value={settings.call_model}
-                onChange={(e) => setSettings({ ...settings, call_model: e.target.value })}
-              />
-              {save.error && (
-                <Text size="2" color="red">
-                  {save.error instanceof ApiError && save.error.code === "bad_request"
-                    ? "That does not look like an OpenAI key."
-                    : errorText(save.error)}
-                </Text>
-              )}
-              <Flex gap="2" justify="end">
-                <HelpDialog {...OPENAI_HELP} />
-                {connection && (
-                  <Button type="button" variant="soft" color="gray" onClick={() => setEditing(false)}>
-                    Cancel
-                  </Button>
-                )}
-                <Button type="submit" loading={save.isPending}>
-                  Save
-                </Button>
-              </Flex>
+              <Select.Root value={voiceType} onValueChange={chooseVoiceType}>
+                <Select.Trigger aria-label="Voice type" />
+                <Select.Content>
+                  <Select.Item value="male">Male</Select.Item>
+                  <Select.Item value="female">Female</Select.Item>
+                </Select.Content>
+              </Select.Root>
+              <Select.Root value={settings.voice} onValueChange={(voice) => setSettings({ ...settings, voice })}>
+                <Select.Trigger aria-label="Voice" />
+                <Select.Content>
+                  {VOICES[voiceType].map((v) => (
+                    <Select.Item key={v} value={v}>
+                      {v}
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Root>
             </Flex>
-          </form>
-        )}
-      </Flex>
-    </Card>
+            <Text as="label" size="2">
+              <Flex gap="2" align="center">
+                <Switch
+                  checked={settings.web_search}
+                  onCheckedChange={(web_search) => setSettings({ ...settings, web_search })}
+                />
+                Web search (the assistant may look things up online; OpenAI bills each search)
+              </Flex>
+            </Text>
+            <Text as="label" size="2">
+              <Flex gap="2" align="center">
+                <Switch
+                  checked={settings.respond_when_addressed}
+                  onCheckedChange={(respond_when_addressed) => setSettings({ ...settings, respond_when_addressed })}
+                />
+                Only answer when addressed as Alexsay (ignores the TV and other people in the room)
+              </Flex>
+            </Text>
+            <TextArea
+              aria-label="Extra instructions"
+              placeholder="Extra instructions for the assistant (optional)"
+              value={settings.instructions}
+              onChange={(e) => setSettings({ ...settings, instructions: e.target.value })}
+            />
+            <Flex align="center" justify="between" gap="2" mt="1">
+              <Text size="2" weight="medium">
+                Phone calls
+              </Text>
+              <HelpDialog {...OPENAI_SIP_HELP} label="How to enable" size="1" />
+            </Flex>
+            <Text size="1" color="gray">
+              OpenAI&apos;s SIP endpoint lets the assistant join calls placed from the Assistant page: it needs the
+              project ID and the signing secret of a webhook for realtime.call.incoming. Twilio must be connected.
+            </Text>
+            <TextField.Root
+              aria-label="OpenAI project ID"
+              placeholder="Project ID, proj_..."
+              autoComplete="off"
+              value={settings.project_id}
+              onChange={(e) => setSettings({ ...settings, project_id: e.target.value })}
+            />
+            <TextField.Root
+              aria-label="OpenAI webhook secret"
+              placeholder={connection ? "Webhook secret, whsec_... (leave empty to keep)" : "Webhook secret, whsec_..."}
+              type="password"
+              autoComplete="off"
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+            />
+            <TextField.Root
+              aria-label="Call model"
+              placeholder="Call model"
+              value={settings.call_model}
+              onChange={(e) => setSettings({ ...settings, call_model: e.target.value })}
+            />
+            {save.error && (
+              <Text size="2" color="red">
+                {save.error instanceof ApiError && save.error.code === "bad_request"
+                  ? "That does not look like an OpenAI key."
+                  : errorText(save.error)}
+              </Text>
+            )}
+            <Flex gap="2" justify="end">
+              <HelpDialog {...OPENAI_HELP} />
+              {connection && (
+                <Button type="button" variant="soft" color="gray" onClick={() => setEditing(false)}>
+                  Cancel
+                </Button>
+              )}
+              <Button type="submit" loading={save.isPending}>
+                Save
+              </Button>
+            </Flex>
+          </Flex>
+        </form>
+      )}
+    </Section>
   );
 }
 
@@ -314,66 +296,59 @@ function LightwaveCard({ connection }: { connection: Connection | undefined }) {
   };
   const open = editing || !connection;
   return (
-    <Card size="3">
-      <Flex direction="column" gap="3">
-        <Flex justify="between" align="center" wrap="wrap" gap="2">
-          <Heading size="4">Lightwave</Heading>
-          <Status connection={connection} provider="lightwave" />
-        </Flex>
-        <Text size="2" color="gray">
-          Lights and dimmers through the Lightwave Link Plus API. Both tokens come from my.lightwaverf.com, Settings,
-          API.
-        </Text>
-        {connection && !open && (
-          <Button size="1" variant="soft" onClick={() => setEditing(true)} style={{ alignSelf: "flex-start" }}>
-            Replace tokens
-          </Button>
-        )}
-        {open && (
-          <form onSubmit={submit}>
-            <Flex direction="column" gap="3">
-              <TextField.Root
-                placeholder="Basic token"
-                aria-label="Lightwave basic token"
-                type="password"
-                autoComplete="off"
-                value={basic}
-                onChange={(e) => setBasic(e.target.value)}
-                required
-              />
-              <TextField.Root
-                placeholder="Refresh token"
-                aria-label="Lightwave refresh token"
-                type="password"
-                autoComplete="off"
-                value={refresh}
-                onChange={(e) => setRefresh(e.target.value)}
-                required
-              />
-              {save.error && (
-                <Text size="2" color="red">
-                  {save.error instanceof ApiError && save.error.code === "lightwave_rejected"
-                    ? `Lightwave refused the tokens (${save.error.detail ?? "no detail"}). A refresh token works once: open my.lightwaverf.com, Settings, API Integration, Get Token for a fresh pair and paste both again.`
-                    : errorText(save.error)}
-                </Text>
-              )}
-              <Flex gap="2" justify="end">
-                <HelpDialog {...LIGHTWAVE_HELP} />
-                {connection && (
-                  <Button type="button" variant="soft" color="gray" onClick={() => setEditing(false)}>
-                    Cancel
-                  </Button>
-                )}
-                <Button type="submit" loading={save.isPending}>
-                  Save
+    <Section id="lightwave" title="Lightwave" actions={<Status connection={connection} provider="lightwave" />}>
+      <Text size="2" color="gray">
+        Lights and dimmers through the Lightwave Link Plus API. Both tokens come from my.lightwaverf.com, Settings, API.
+      </Text>
+      {connection && !open && (
+        <Button size="1" variant="soft" onClick={() => setEditing(true)} style={{ alignSelf: "flex-start" }}>
+          Replace tokens
+        </Button>
+      )}
+      {open && (
+        <form onSubmit={submit}>
+          <Flex direction="column" gap="3">
+            <TextField.Root
+              placeholder="Basic token"
+              aria-label="Lightwave basic token"
+              type="password"
+              autoComplete="off"
+              value={basic}
+              onChange={(e) => setBasic(e.target.value)}
+              required
+            />
+            <TextField.Root
+              placeholder="Refresh token"
+              aria-label="Lightwave refresh token"
+              type="password"
+              autoComplete="off"
+              value={refresh}
+              onChange={(e) => setRefresh(e.target.value)}
+              required
+            />
+            {save.error && (
+              <Text size="2" color="red">
+                {save.error instanceof ApiError && save.error.code === "lightwave_rejected"
+                  ? `Lightwave refused the tokens (${save.error.detail ?? "no detail"}). A refresh token works once: open my.lightwaverf.com, Settings, API Integration, Get Token for a fresh pair and paste both again.`
+                  : errorText(save.error)}
+              </Text>
+            )}
+            <Flex gap="2" justify="end">
+              <HelpDialog {...LIGHTWAVE_HELP} />
+              {connection && (
+                <Button type="button" variant="soft" color="gray" onClick={() => setEditing(false)}>
+                  Cancel
                 </Button>
-              </Flex>
+              )}
+              <Button type="submit" loading={save.isPending}>
+                Save
+              </Button>
             </Flex>
-          </form>
-        )}
-        {connection && <Lights />}
-      </Flex>
-    </Card>
+          </Flex>
+        </form>
+      )}
+      {connection && <Lights />}
+    </Section>
   );
 }
 
@@ -511,174 +486,166 @@ function TwilioCard({ connection }: { connection: Connection | undefined }) {
   const open = editing || !connection;
   const set = (patch: Partial<TwilioSettings>) => setSettings({ ...settings, ...patch });
   return (
-    <Card size="3">
-      <Flex direction="column" gap="3">
-        <Flex justify="between" align="center" wrap="wrap" gap="2">
-          <Heading size="4">Twilio</Heading>
-          <Status connection={connection} provider="twilio" />
+    <Section id="twilio" title="Twilio" actions={<Status connection={connection} provider="twilio" />}>
+      <Text size="2" color="gray">
+        Calls, group calls, texts and WhatsApp from your own number, and incoming calls to the speaker.
+      </Text>
+      {connection && !open && (
+        <Flex gap="3" align="center" wrap="wrap">
+          <Text size="2">
+            {connection.settings.from_number
+              ? `Calls and texts from ${connection.settings.from_number}`
+              : "No number chosen yet"}
+            {connection.settings.my_number ? `, your phone ${connection.settings.my_number}` : ", your mobile not set"}
+            {connection.settings.whatsapp_from ? ", WhatsApp on" : ""}
+            {connection.settings.sip_domain ? ", speakers take calls" : ""}
+            {`. Incoming calls from ${POLICY_LABEL[connection.settings.incoming_calls ?? "everyone"]}, texts from ${POLICY_LABEL[connection.settings.incoming_messages ?? "everyone"]}.`}
+          </Text>
+          <Button size="1" variant="soft" onClick={() => setEditing(true)}>
+            Change
+          </Button>
         </Flex>
-        <Text size="2" color="gray">
-          Calls, group calls, texts and WhatsApp from your own number, and incoming calls to the speaker.
-        </Text>
-        {connection && !open && (
-          <Flex gap="3" align="center" wrap="wrap">
-            <Text size="2">
-              {connection.settings.from_number
-                ? `Calls and texts from ${connection.settings.from_number}`
-                : "No number chosen yet"}
-              {connection.settings.my_number
-                ? `, your phone ${connection.settings.my_number}`
-                : ", your mobile not set"}
-              {connection.settings.whatsapp_from ? ", WhatsApp on" : ""}
-              {connection.settings.sip_domain ? ", speakers take calls" : ""}
-              {`. Incoming calls from ${POLICY_LABEL[connection.settings.incoming_calls ?? "everyone"]}, texts from ${POLICY_LABEL[connection.settings.incoming_messages ?? "everyone"]}.`}
-            </Text>
-            <Button size="1" variant="soft" onClick={() => setEditing(true)}>
-              Change
-            </Button>
-          </Flex>
-        )}
-        {open && (
-          <form onSubmit={submit}>
-            <Flex direction="column" gap="3">
-              <TextField.Root
-                placeholder={connection ? "Account SID (leave empty to keep)" : "Account SID"}
-                aria-label="Twilio account SID"
-                autoComplete="off"
-                value={sid}
-                onChange={(e) => setSid(e.target.value)}
-                required={!connection}
-              />
-              <TextField.Root
-                placeholder={connection ? "Auth token (leave empty to keep)" : "Auth token"}
-                aria-label="Twilio auth token"
-                type="password"
-                autoComplete="off"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                required={!connection}
-              />
-              {connection && (
-                <>
-                  <Flex direction="column" gap="1">
-                    <Text size="2" weight="medium">
-                      Phone number
-                    </Text>
-                    <Select.Root
-                      value={settings.from_number || NO_NUMBER}
-                      onValueChange={(v) => set({ from_number: v === NO_NUMBER ? "" : v })}
-                    >
-                      <Select.Trigger aria-label="Twilio phone number" />
-                      <Select.Content>
-                        <Select.Item value={NO_NUMBER}>No number</Select.Item>
-                        {numbers.data?.map((n) => (
-                          <Select.Item key={n.sid} value={n.phone_number}>
-                            {n.phone_number} ({n.friendly_name || `${n.voice ? "voice" : ""}${n.sms ? " sms" : ""}`})
-                          </Select.Item>
-                        ))}
-                      </Select.Content>
-                    </Select.Root>
-                    {numbers.data?.length === 0 && (
-                      <Text size="1" color="gray">
-                        This account owns no numbers yet: buy one in the Twilio console (see Help).
-                      </Text>
-                    )}
-                    <TakeoverNote
-                      chosen={numbers.data?.find((n) => n.phone_number === settings.from_number)}
-                      current={connection.settings.from_number ?? ""}
-                    />
-                    {numbers.error && (
-                      <Text size="1" color="red">
-                        {errorText(numbers.error)}
-                      </Text>
-                    )}
-                  </Flex>
-                  <TextField.Root
-                    placeholder="Your mobile number, e.g. 07700 900123"
-                    aria-label="Your mobile number"
-                    type="tel"
-                    value={settings.my_number}
-                    onChange={(e) => set({ my_number: e.target.value })}
-                  />
-                  <TextField.Root
-                    placeholder="WhatsApp sender, e.g. +14155238886 for the sandbox"
-                    aria-label="WhatsApp sender"
-                    value={settings.whatsapp_from}
-                    onChange={(e) => set({ whatsapp_from: e.target.value })}
-                  />
-                  <TextField.Root
-                    placeholder="Speaker SIP domain, e.g. alexsay.sip.twilio.com"
-                    aria-label="Speaker SIP domain"
-                    value={settings.sip_domain}
-                    onChange={(e) => set({ sip_domain: e.target.value })}
-                  />
-                  <TextField.Root
-                    placeholder="Country code for local numbers"
-                    aria-label="Default country code"
-                    value={settings.country_code}
-                    onChange={(e) => set({ country_code: e.target.value })}
-                    style={{ maxWidth: 220 }}
-                  />
-                  <Flex gap="3" wrap="wrap">
-                    <PolicySelect
-                      label="Incoming calls from"
-                      value={settings.incoming_calls}
-                      onChange={(incoming_calls) => set({ incoming_calls })}
-                    />
-                    <PolicySelect
-                      label="Texts from"
-                      value={settings.incoming_messages}
-                      onChange={(incoming_messages) => set({ incoming_messages })}
-                    />
-                  </Flex>
-                  <Text size="1" color="gray">
-                    A caller hears the greeting and hold music while every speaker, the app and your mobile ring;
-                    whoever answers first takes the call, with the assistant listening in. After 40 seconds the caller
-                    hears the unanswered message. Texts are read out on the speakers and kept under Messages.
+      )}
+      {open && (
+        <form onSubmit={submit}>
+          <Flex direction="column" gap="3">
+            <TextField.Root
+              placeholder={connection ? "Account SID (leave empty to keep)" : "Account SID"}
+              aria-label="Twilio account SID"
+              autoComplete="off"
+              value={sid}
+              onChange={(e) => setSid(e.target.value)}
+              required={!connection}
+            />
+            <TextField.Root
+              placeholder={connection ? "Auth token (leave empty to keep)" : "Auth token"}
+              aria-label="Twilio auth token"
+              type="password"
+              autoComplete="off"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              required={!connection}
+            />
+            {connection && (
+              <>
+                <Flex direction="column" gap="1">
+                  <Text size="2" weight="medium">
+                    Phone number
                   </Text>
-                  <TextField.Root
-                    placeholder="Your name as callers hear it (default: your username)"
-                    aria-label="Owner name"
-                    value={settings.owner_name}
-                    onChange={(e) => set({ owner_name: e.target.value })}
+                  <Select.Root
+                    value={settings.from_number || NO_NUMBER}
+                    onValueChange={(v) => set({ from_number: v === NO_NUMBER ? "" : v })}
+                  >
+                    <Select.Trigger aria-label="Twilio phone number" />
+                    <Select.Content>
+                      <Select.Item value={NO_NUMBER}>No number</Select.Item>
+                      {numbers.data?.map((n) => (
+                        <Select.Item key={n.sid} value={n.phone_number}>
+                          {n.phone_number} ({n.friendly_name || `${n.voice ? "voice" : ""}${n.sms ? " sms" : ""}`})
+                        </Select.Item>
+                      ))}
+                    </Select.Content>
+                  </Select.Root>
+                  {numbers.data?.length === 0 && (
+                    <Text size="1" color="gray">
+                      This account owns no numbers yet: buy one in the Twilio console (see Help).
+                    </Text>
+                  )}
+                  <TakeoverNote
+                    chosen={numbers.data?.find((n) => n.phone_number === settings.from_number)}
+                    current={connection.settings.from_number ?? ""}
                   />
-                  <TextField.Root
-                    placeholder="Greeting: Hi, this is Alexsay, {name}'s assistant. Please stay on the line while I'm connecting you."
-                    aria-label="Caller greeting"
-                    value={settings.greeting}
-                    onChange={(e) => set({ greeting: e.target.value })}
+                  {numbers.error && (
+                    <Text size="1" color="red">
+                      {errorText(numbers.error)}
+                    </Text>
+                  )}
+                </Flex>
+                <TextField.Root
+                  placeholder="Your mobile number, e.g. 07700 900123"
+                  aria-label="Your mobile number"
+                  type="tel"
+                  value={settings.my_number}
+                  onChange={(e) => set({ my_number: e.target.value })}
+                />
+                <TextField.Root
+                  placeholder="WhatsApp sender, e.g. +14155238886 for the sandbox"
+                  aria-label="WhatsApp sender"
+                  value={settings.whatsapp_from}
+                  onChange={(e) => set({ whatsapp_from: e.target.value })}
+                />
+                <TextField.Root
+                  placeholder="Speaker SIP domain, e.g. alexsay.sip.twilio.com"
+                  aria-label="Speaker SIP domain"
+                  value={settings.sip_domain}
+                  onChange={(e) => set({ sip_domain: e.target.value })}
+                />
+                <TextField.Root
+                  placeholder="Country code for local numbers"
+                  aria-label="Default country code"
+                  value={settings.country_code}
+                  onChange={(e) => set({ country_code: e.target.value })}
+                  style={{ maxWidth: 220 }}
+                />
+                <Flex gap="3" wrap="wrap">
+                  <PolicySelect
+                    label="Incoming calls from"
+                    value={settings.incoming_calls}
+                    onChange={(incoming_calls) => set({ incoming_calls })}
                   />
-                  <TextField.Root
-                    placeholder="Unanswered: Sorry, nobody can take your call right now. Please try again later."
-                    aria-label="Unanswered message"
-                    value={settings.unanswered}
-                    onChange={(e) => set({ unanswered: e.target.value })}
+                  <PolicySelect
+                    label="Texts from"
+                    value={settings.incoming_messages}
+                    onChange={(incoming_messages) => set({ incoming_messages })}
                   />
-                </>
-              )}
-              {save.error && (
-                <Text size="2" color="red">
-                  {twilioError(save.error)}
+                </Flex>
+                <Text size="1" color="gray">
+                  A caller hears the greeting and hold music while every speaker, the app and your mobile ring; whoever
+                  answers first takes the call, with the assistant listening in. After 40 seconds the caller hears the
+                  unanswered message. Texts are read out on the speakers and kept under Messages.
                 </Text>
-              )}
-              <Flex gap="2" justify="end">
-                <HelpDialog {...TWILIO_HELP} />
-                {connection && (
-                  <Button type="button" variant="soft" color="gray" onClick={() => setEditing(false)}>
-                    Cancel
-                  </Button>
-                )}
-                <Button type="submit" loading={save.isPending}>
-                  Save
+                <TextField.Root
+                  placeholder="Your name as callers hear it (default: your username)"
+                  aria-label="Owner name"
+                  value={settings.owner_name}
+                  onChange={(e) => set({ owner_name: e.target.value })}
+                />
+                <TextField.Root
+                  placeholder="Greeting: Hi, this is Alexsay, {name}'s assistant. Please stay on the line while I'm connecting you."
+                  aria-label="Caller greeting"
+                  value={settings.greeting}
+                  onChange={(e) => set({ greeting: e.target.value })}
+                />
+                <TextField.Root
+                  placeholder="Unanswered: Sorry, nobody can take your call right now. Please try again later."
+                  aria-label="Unanswered message"
+                  value={settings.unanswered}
+                  onChange={(e) => set({ unanswered: e.target.value })}
+                />
+              </>
+            )}
+            {save.error && (
+              <Text size="2" color="red">
+                {twilioError(save.error)}
+              </Text>
+            )}
+            <Flex gap="2" justify="end">
+              <HelpDialog {...TWILIO_HELP} />
+              {connection && (
+                <Button type="button" variant="soft" color="gray" onClick={() => setEditing(false)}>
+                  Cancel
                 </Button>
-              </Flex>
+              )}
+              <Button type="submit" loading={save.isPending}>
+                Save
+              </Button>
             </Flex>
-          </form>
-        )}
-        {connection && <NumberRouting from={connection.settings.from_number ?? ""} numbers={numbers.data} />}
-        {connection && <RecentCalls />}
-      </Flex>
-    </Card>
+          </Flex>
+        </form>
+      )}
+      {connection && <NumberRouting from={connection.settings.from_number ?? ""} numbers={numbers.data} />}
+      {connection && <RecentCalls />}
+    </Section>
   );
 }
 

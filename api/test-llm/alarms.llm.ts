@@ -225,9 +225,12 @@ describe.skipIf(!KEY)("the model sets alarms through our tools", () => {
   it("confirms with the day and time the server worked out", async () => {
     const turn = await (await fromSpeaker()).say("Set an alarm for 9pm");
     const set = turn.calls.find((c) => c.name === "set_alarm")?.output as { say: string };
-    expect(set.say).toMatch(/^(today|tomorrow) at 21:00$/);
+    // Within the hour the server says "in 50 minutes (today at 21:00)", so the day may sit in brackets
+    expect(set.say).toMatch(/(^|\()(today|tomorrow) at 21:00\)?$/);
     expect(turn.reply).toMatch(/\b(9|21)[:. ]?(00)?\s*(pm|p\.m\.)?/i);
-    expect(turn.reply.toLowerCase()).toContain(set.say.split(" ")[0] as string);
+    const day = /(today|tomorrow)/.exec(set.say)?.[1] ?? "today";
+    const reply = turn.reply.toLowerCase();
+    expect(reply.includes(day) || /\bin \d+ minutes?\b/.test(reply) || reply.includes("tonight")).toBe(true);
   });
 
   it("asks which speaker from the web when the home has two, then sets it on the one named", async () => {

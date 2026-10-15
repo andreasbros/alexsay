@@ -69,6 +69,14 @@ export async function openTab(page: Page, name: RegExp): Promise<void> {
   await page.getByRole("navigation").getByRole("link", { name }).first().click();
 }
 
+/** Home sections fold closed until opened (and stay open in that browser): opens one by its title. */
+export async function openSection(page: Page, name: string): Promise<void> {
+  const toggle = page.getByRole("button", { name, exact: true });
+  if ((await toggle.getAttribute("aria-expanded")) === "false") {
+    await toggle.click();
+  }
+}
+
 /** Adds a speaker through the dialog and waits for it to appear in the table. */
 export async function addDevice(page: Page, id: string, name = "Test speaker"): Promise<void> {
   await page.getByRole("button", { name: "Add device" }).click();

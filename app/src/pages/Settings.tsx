@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiError, api, type User } from "../api";
 import { BUILD } from "../build";
+import { HomeNameCard } from "../components/HomeName";
 import { isDebug, setDebug, subscribeDebug } from "../lib/debug";
 import { deviceLocale, LOCALES, TIMEZONES } from "../lib/locale";
 import { setSoundsEnabled, soundsEnabled } from "../lib/sounds";
@@ -40,6 +41,7 @@ export function Settings({ user }: { user: User }) {
     <Flex direction="column" gap="5">
       <Heading size="7">Settings</Heading>
       <EmailCard user={user} />
+      <HomeNameCard />
       <Card size="3">
         <Flex direction="column" gap="3">
           <Heading size="4">Where you are</Heading>

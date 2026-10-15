@@ -1,20 +1,9 @@
 import { EnterIcon, PlusIcon } from "@radix-ui/react-icons";
-import {
-  AlertDialog,
-  Badge,
-  Button,
-  Card,
-  Dialog,
-  Flex,
-  Heading,
-  IconButton,
-  Table,
-  Text,
-  TextField,
-} from "@radix-ui/themes";
+import { AlertDialog, Badge, Button, Dialog, Flex, IconButton, Table, Text, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { ApiError, api, type Device, type User } from "../api";
+import { Section, useSection } from "../components/Section";
 import { useDropIn } from "../drop_in";
 import { ago, atLeastVersion, DROP_IN_SINCE, isUuid } from "../format";
 import { dropInSupported } from "../lib/drop_in";
@@ -41,45 +30,39 @@ export function DevicesSection({ user }: { user: User }) {
   const canChange = admin || user.homeRole === "admin";
 
   return (
-    <Card size="3">
-      <Flex direction="column" gap="3">
-        <Flex align="center" justify="between">
-          <Heading size="4">Devices</Heading>
-          {canChange && <AddDevice />}
-        </Flex>
-        {devices.data?.length === 0 && (
-          <Text size="2" color="gray">
-            No speakers yet. Add one with the UUID it prints on its console, then it will show up here as soon as it
-            calls home.
-          </Text>
-        )}
-        {devices.data && devices.data.length > 0 && (
-          <Table.Root>
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeaderCell>Name</Table.ColumnHeaderCell>
-                <Table.ColumnHeaderCell>UUID</Table.ColumnHeaderCell>
-                {admin && <Table.ColumnHeaderCell>Home</Table.ColumnHeaderCell>}
-                <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
-                <Table.ColumnHeaderCell>Last seen</Table.ColumnHeaderCell>
-                <Table.ColumnHeaderCell />
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {devices.data.map((d) => (
-                <DeviceRow
-                  key={d.id}
-                  device={d}
-                  admin={admin}
-                  canChange={canChange}
-                  onRemove={() => remove.mutate(d.id)}
-                />
-              ))}
-            </Table.Body>
-          </Table.Root>
-        )}
-      </Flex>
-    </Card>
+    <Section id="devices" title="Devices" actions={canChange && <AddDevice />}>
+      {devices.data?.length === 0 && (
+        <Text size="2" color="gray">
+          No speakers yet. Add one with the UUID it prints on its console, then it will show up here as soon as it calls
+          home.
+        </Text>
+      )}
+      {devices.data && devices.data.length > 0 && (
+        <Table.Root>
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeaderCell>Name</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>UUID</Table.ColumnHeaderCell>
+              {admin && <Table.ColumnHeaderCell>Home</Table.ColumnHeaderCell>}
+              <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>Last seen</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell />
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {devices.data.map((d) => (
+              <DeviceRow
+                key={d.id}
+                device={d}
+                admin={admin}
+                canChange={canChange}
+                onRemove={() => remove.mutate(d.id)}
+              />
+            ))}
+          </Table.Body>
+        </Table.Root>
+      )}
+    </Section>
   );
 }
 
@@ -181,6 +164,7 @@ function DropInButton({ device }: { device: Device }) {
 
 function AddDevice() {
   const client = useQueryClient();
+  const section = useSection();
   const [open, setOpen] = useState(false);
   const [id, setId] = useState("");
   const [name, setName] = useState("");
@@ -188,6 +172,8 @@ function AddDevice() {
     mutationFn: () => api.addDevice(id.trim().toLowerCase(), name.trim()),
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ["devices"] });
+      // The new speaker is inside the section: show it
+      section.open();
       setOpen(false);
       setId("");
       setName("");

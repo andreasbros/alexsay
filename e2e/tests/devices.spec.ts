@@ -1,5 +1,5 @@
 import { request } from "@playwright/test";
-import { addDevice, apiSession, env, expect, heartbeat, login, test } from "./helpers";
+import { addDevice, apiSession, env, expect, heartbeat, login, openSection, test } from "./helpers";
 
 test("a speaker that calls home can be claimed, then receives its owner's settings", async ({ page, deviceId }) => {
   const anonymous = await request.newContext();
@@ -36,6 +36,7 @@ test("the admin sees every speaker with its owner", async ({ page, deviceId }) =
   await user.post("/api/devices", { data: { id: deviceId, name: "Owned by user" } });
   await user.dispose();
   await login(page, env.admin());
+  await openSection(page, "Devices");
   const row = page.getByRole("row", { name: /Owned by user/ });
   await expect(row.getByText(env.user().username)).toBeVisible();
 });

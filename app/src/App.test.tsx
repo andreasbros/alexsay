@@ -41,10 +41,16 @@ function renderApp(path = "/") {
   );
 }
 
+/** Home sections fold closed until opened; this opens one by its title. */
+async function openSection(name: string): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name, expanded: false }));
+}
+
 describe("App", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    localStorage.clear();
   });
 
   it("asks for credentials without a session", async () => {
@@ -101,6 +107,7 @@ describe("App", () => {
       "/api/devices": json([device]),
     });
     renderApp();
+    await openSection("Devices");
     expect(await screen.findByText("Kitchen")).toBeDefined();
     expect(screen.getByText("online")).toBeDefined();
     const tabs = screen.getAllByRole("navigation").flatMap((nav) => within(nav).queryAllByRole("link"));
@@ -128,6 +135,7 @@ describe("App", () => {
       "/api/connections": json([]),
     });
     renderApp();
+    await openSection("Devices");
     expect(await screen.findByText("Kitchen")).toBeDefined();
     // The button sits before the name, and only where it would work
     const row = screen.getByRole("row", { name: /Kitchen/ });
@@ -315,12 +323,12 @@ describe("App", () => {
     const scrolled = vi.fn();
     Element.prototype.scrollIntoView = scrolled;
     renderApp("/connections");
+    await openSection("Devices");
     expect(await screen.findByText("Kitchen")).toBeDefined();
     expect(scrolled).toHaveBeenCalled();
     expect(await screen.findByRole("heading", { name: "Flat 4" })).toBeDefined();
     const order = screen.getAllByRole("heading").map((h) => h.textContent);
     const at = (name: string) => order.indexOf(name);
-    expect(at("Name")).toBeLessThan(at("Devices"));
     expect(at("Devices")).toBeLessThan(at("People"));
     expect(at("People")).toBeLessThan(at("Connections"));
     expect(at("Connections")).toBeLessThan(at("OpenAI"));
@@ -332,6 +340,9 @@ describe("App", () => {
       "/api/connections": json([]),
     });
     renderApp("/");
+    for (const provider of ["OpenAI", "Lightwave", "Twilio"]) {
+      await openSection(provider);
+    }
     const help = await screen.findAllByRole("button", { name: "Help" });
     expect(help).toHaveLength(3);
     fireEvent.click(help[0] as HTMLElement);
@@ -444,6 +455,7 @@ describe("App", () => {
     fireEvent.change(await screen.findByLabelText("Code"), { target: { value: "12a3456" } });
     expect((screen.getByLabelText("Code") as HTMLInputElement).value).toBe("123456");
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await openSection("Devices");
     expect(await screen.findByText(/No speakers yet/)).toBeDefined();
   });
 
@@ -528,6 +540,8 @@ describe("App", () => {
     });
     renderApp("/");
     expect(await screen.findByRole("heading", { name: "Flat 4" })).toBeDefined();
+    await openSection("People");
+    await openSection("Invitations");
     expect(screen.getByText("owner")).toBeDefined();
     expect(screen.getByRole("combobox", { name: "Role of dad" })).toBeDefined();
     expect(screen.getByText("gran@example.com")).toBeDefined();
@@ -553,9 +567,13 @@ describe("App", () => {
         invites: [],
       }),
     });
-    renderApp("/");
+    renderApp("/settings");
     expect(await screen.findByText("You are a member of Flat 4.")).toBeDefined();
-    expect(screen.getByRole("button", { name: "Leave" })).toBeDefined();
+    expect(screen.queryByLabelText("Home name")).toBeNull();
+    cleanup();
+    renderApp("/");
+    await openSection("People");
+    expect(await screen.findByRole("button", { name: "Leave" })).toBeDefined();
     expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
   });
@@ -580,6 +598,49 @@ describe("App", () => {
     expect(await screen.findByText("maria invited you to join Flat 4.")).toBeDefined();
     expect(window.location.hash).toBe("");
     fireEvent.click(screen.getByRole("button", { name: "Join Flat 4" }));
-    expect(await screen.findByText("You are a member of Flat 4.")).toBeDefined();
+    expect(await screen.findByRole("heading", { name: "Flat 4" })).toBeDefined();
+  });
+
+  it("folds the Home sections closed, remembers the ones opened, and lights up a coming-soon mark on a tap", async () => {
+    const routes = {
+      "/api/session/me": json({ username: "maria", role: "user", home: "maria", homeRole: "admin" }),
+      "/api/home": json({
+        id: "maria",
+        name: "Flat 4",
+        role: "admin",
+        creator: true,
+        can_invite: false,
+        members: [],
+        invites: [],
+      }),
+      "/api/devices": json([device]),
+      "/api/connections": json([]),
+    };
+    mockApi(routes);
+    renderApp("/");
+    expect(await screen.findByRole("button", { name: "Devices", expanded: false })).toBeDefined();
+    expect(screen.queryByText("Kitchen")).toBeNull();
+    // Add device stays reachable while the section is closed
+    expect(screen.getByRole("button", { name: "Add device" })).toBeDefined();
+    await openSection("Devices");
+    expect(await screen.findByText("Kitchen")).toBeDefined();
+    expect(localStorage.getItem("section-open:devices")).toBe("1");
+
+    await openSection("Coming soon");
+    const claude = screen.getByRole("button", { name: "Claude: coming soon" });
+    expect(claude.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByText("Coming soon", { selector: "span, p" })).toBeNull();
+    fireEvent.click(claude);
+    expect(claude.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("Coming soon", { selector: "span, p" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Gemini: coming soon" }));
+    expect(claude.getAttribute("aria-pressed")).toBe("false");
+
+    // A fresh render keeps Devices open and the rest closed
+    cleanup();
+    mockApi(routes);
+    renderApp("/");
+    expect(await screen.findByText("Kitchen")).toBeDefined();
+    expect(screen.getByRole("button", { name: "People", expanded: false })).toBeDefined();
   });
 });

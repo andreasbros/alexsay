@@ -1,8 +1,9 @@
-import { AlertDialog, Badge, Button, Card, Flex, Heading, Select, Table, Text, TextField } from "@radix-ui/themes";
+import { AlertDialog, Badge, Button, Flex, Heading, Select, Table, Text, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
 import { useLocation } from "react-router";
 import { ApiError, api, type HomeRole, type Invite, type InviteStatus, type User } from "../api";
+import { Section } from "../components/Section";
 import { ConnectionsSection } from "./Connections";
 import { DevicesSection } from "./Devices";
 
@@ -54,9 +55,6 @@ function HomeDetails({ user }: { user: User }) {
   const client = useQueryClient();
   const home = useQuery({ queryKey: ["home"], queryFn: api.home });
   const refresh = () => client.invalidateQueries({ queryKey: ["home"] });
-  const [name, setName] = useState("");
-  useEffect(() => setName(home.data?.name ?? ""), [home.data?.name]);
-  const rename = useMutation({ mutationFn: api.renameHome, onSuccess: refresh });
   const setRole = useMutation({
     mutationFn: ({ username, role }: { username: string; role: HomeRole }) => api.setMemberRole(username, role),
     onSuccess: refresh,
@@ -76,7 +74,6 @@ function HomeDetails({ user }: { user: User }) {
     return (
       <Flex direction="column" gap="5">
         <Heading size="7">Home</Heading>
-        {null}
         <DevicesSection user={user} />
       </Flex>
     );
@@ -87,114 +84,77 @@ function HomeDetails({ user }: { user: User }) {
   return (
     <Flex direction="column" gap="5">
       <Heading size="7">{data.name}</Heading>
-      <Card size="3">
-        <Flex direction="column" gap="3">
-          <Heading size="4">Name</Heading>
-          <Text size="2" color="gray">
-            Everything here belongs to the home: its speakers, connections, memories, contacts, alarms and
-            conversations. Everyone in it shares them.
-          </Text>
-          {admin ? (
-            <form
-              onSubmit={(event: FormEvent) => {
-                event.preventDefault();
-                rename.mutate(name.trim());
-              }}
-            >
-              <Flex gap="3" align="end" wrap="wrap">
-                <TextField.Root
-                  aria-label="Home name"
-                  value={name}
-                  maxLength={64}
-                  onChange={(e) => setName(e.target.value)}
-                  style={{ minWidth: 220 }}
-                />
-                <Button type="submit" variant="soft" loading={rename.isPending} disabled={!name.trim()}>
-                  Rename
-                </Button>
-              </Flex>
-            </form>
-          ) : (
-            <Text size="2">
-              You are {data.role === "admin" ? "an admin" : "a member"} of {data.name}.
-            </Text>
-          )}
-        </Flex>
-      </Card>
 
       <DevicesSection user={user} />
 
-      <Card size="3">
-        <Flex direction="column" gap="3">
-          <Heading size="4">People</Heading>
-          {memberError && (
-            <Text color="red" size="2">
-              {memberError}
-            </Text>
-          )}
-          <Table.Root>
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeaderCell>Name</Table.ColumnHeaderCell>
-                <Table.ColumnHeaderCell>Role</Table.ColumnHeaderCell>
-                <Table.ColumnHeaderCell />
+      <Section id="people" title="People">
+        {memberError && (
+          <Text color="red" size="2">
+            {memberError}
+          </Text>
+        )}
+        <Table.Root>
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeaderCell>Name</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>Role</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell />
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {data.members.map((m) => (
+              <Table.Row key={m.username} align="center">
+                <Table.RowHeaderCell>
+                  <Flex direction="column">
+                    <Text>{m.username}</Text>
+                    {m.email && (
+                      <Text size="1" color="gray">
+                        {m.email}
+                      </Text>
+                    )}
+                  </Flex>
+                </Table.RowHeaderCell>
+                <Table.Cell>
+                  {admin && !m.creator && m.username !== user.username ? (
+                    <Select.Root
+                      value={m.role}
+                      onValueChange={(role) =>
+                        setRole.mutate({ username: m.username, role: role === "admin" ? "admin" : "user" })
+                      }
+                    >
+                      <Select.Trigger variant="soft" aria-label={`Role of ${m.username}`} />
+                      <Select.Content>
+                        <Select.Item value="user">user</Select.Item>
+                        <Select.Item value="admin">admin</Select.Item>
+                      </Select.Content>
+                    </Select.Root>
+                  ) : (
+                    <Badge color={m.role === "admin" ? "indigo" : "gray"}>{m.creator ? "owner" : m.role}</Badge>
+                  )}
+                </Table.Cell>
+                <Table.Cell justify="end">
+                  {admin && !m.creator && m.username !== user.username && (
+                    <Confirm
+                      label="Remove"
+                      title={`Remove ${m.username}?`}
+                      detail="They go back to their own home and lose access to this one."
+                      onConfirm={() => removeMember.mutate(m.username)}
+                    />
+                  )}
+                  {!data.creator && m.username === user.username && (
+                    <Confirm
+                      label="Leave"
+                      title={`Leave ${data.name}?`}
+                      detail="You go back to your own home. Someone has to invite you again to come back."
+                      onConfirm={() => leave.mutate()}
+                    />
+                  )}
+                </Table.Cell>
               </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {data.members.map((m) => (
-                <Table.Row key={m.username} align="center">
-                  <Table.RowHeaderCell>
-                    <Flex direction="column">
-                      <Text>{m.username}</Text>
-                      {m.email && (
-                        <Text size="1" color="gray">
-                          {m.email}
-                        </Text>
-                      )}
-                    </Flex>
-                  </Table.RowHeaderCell>
-                  <Table.Cell>
-                    {admin && !m.creator && m.username !== user.username ? (
-                      <Select.Root
-                        value={m.role}
-                        onValueChange={(role) =>
-                          setRole.mutate({ username: m.username, role: role === "admin" ? "admin" : "user" })
-                        }
-                      >
-                        <Select.Trigger variant="soft" aria-label={`Role of ${m.username}`} />
-                        <Select.Content>
-                          <Select.Item value="user">user</Select.Item>
-                          <Select.Item value="admin">admin</Select.Item>
-                        </Select.Content>
-                      </Select.Root>
-                    ) : (
-                      <Badge color={m.role === "admin" ? "indigo" : "gray"}>{m.creator ? "owner" : m.role}</Badge>
-                    )}
-                  </Table.Cell>
-                  <Table.Cell justify="end">
-                    {admin && !m.creator && m.username !== user.username && (
-                      <Confirm
-                        label="Remove"
-                        title={`Remove ${m.username}?`}
-                        detail="They go back to their own home and lose access to this one."
-                        onConfirm={() => removeMember.mutate(m.username)}
-                      />
-                    )}
-                    {!data.creator && m.username === user.username && (
-                      <Confirm
-                        label="Leave"
-                        title={`Leave ${data.name}?`}
-                        detail="You go back to your own home. Someone has to invite you again to come back."
-                        onConfirm={() => leave.mutate()}
-                      />
-                    )}
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </Table.Root>
-        </Flex>
-      </Card>
+            ))}
+          </Table.Body>
+        </Table.Root>
+      </Section>
 
       {admin && <Invitations canInvite={data.can_invite} invites={data.invites} onChange={refresh} />}
     </Flex>
@@ -224,109 +184,106 @@ function Invitations({
   const error = errorText(invite.error ?? resend.error ?? remove.error);
 
   return (
-    <Card size="3">
-      <Flex direction="column" gap="3">
-        <Heading size="4">Invitations</Heading>
-        {canInvite ? (
-          <>
-            <Text size="2" color="gray">
-              The link in the email signs them in (making an account if they have none) and puts them in this home. Link
-              expires in 3 days.
-            </Text>
-            <form
-              onSubmit={(event: FormEvent) => {
-                event.preventDefault();
-                invite.mutate();
-              }}
-            >
-              <Flex gap="3" align="end" wrap="wrap">
-                <TextField.Root
-                  type="email"
-                  aria-label="Email to invite"
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  style={{ minWidth: 240 }}
-                />
-                <Select.Root value={role} onValueChange={(r) => setRole(r === "admin" ? "admin" : "user")}>
-                  <Select.Trigger aria-label="Role" />
-                  <Select.Content>
-                    <Select.Item value="user">user</Select.Item>
-                    <Select.Item value="admin">admin</Select.Item>
-                  </Select.Content>
-                </Select.Root>
-                <Button type="submit" loading={invite.isPending}>
-                  Invite
-                </Button>
-              </Flex>
-            </form>
-          </>
-        ) : (
+    <Section id="invitations" title="Invitations">
+      {canInvite ? (
+        <>
           <Text size="2" color="gray">
-            Invitations go by email, which this server has switched off. A server admin can switch it on under Users.
+            The link in the email signs them in (making an account if they have none) and puts them in this home. Link
+            expires in 3 days.
           </Text>
-        )}
-        {error && (
-          <Text color="red" size="2">
-            {error}
-          </Text>
-        )}
-        {invites.length > 0 && (
-          <Table.Root>
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeaderCell>Email</Table.ColumnHeaderCell>
-                <Table.ColumnHeaderCell>Role</Table.ColumnHeaderCell>
-                <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
-                <Table.ColumnHeaderCell />
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {invites.map((i) => (
-                <Table.Row key={i.id} align="center">
-                  <Table.RowHeaderCell>
-                    <Flex direction="column">
-                      <Text>{i.email}</Text>
-                      <Text size="1" color="gray">
-                        by {i.invited_by}, {when(i.created_at)}
-                      </Text>
-                    </Flex>
-                  </Table.RowHeaderCell>
-                  <Table.Cell>{i.role}</Table.Cell>
-                  <Table.Cell>
-                    <Flex direction="column" gap="1">
-                      <Badge color={STATUS_COLORS[i.status]} style={{ width: "fit-content" }}>
-                        {i.status}
-                      </Badge>
-                      <Text size="1" color="gray">
-                        {i.status === "accepted" && i.accepted_at
-                          ? `${i.accepted_by ?? ""}, ${when(i.accepted_at)}`
-                          : i.status === "pending"
-                            ? `until ${when(i.expires_at)}`
-                            : ""}
-                      </Text>
-                    </Flex>
-                  </Table.Cell>
-                  <Table.Cell justify="end">
-                    <Flex gap="3" justify="end">
-                      {(i.status === "pending" || i.status === "expired") && canInvite && (
-                        <Button size="1" variant="ghost" loading={resend.isPending} onClick={() => resend.mutate(i.id)}>
-                          Resend
-                        </Button>
-                      )}
-                      <Button size="1" variant="ghost" color="red" onClick={() => remove.mutate(i.id)}>
-                        Delete
+          <form
+            onSubmit={(event: FormEvent) => {
+              event.preventDefault();
+              invite.mutate();
+            }}
+          >
+            <Flex gap="3" align="end" wrap="wrap">
+              <TextField.Root
+                type="email"
+                aria-label="Email to invite"
+                placeholder="name@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                style={{ minWidth: 240 }}
+              />
+              <Select.Root value={role} onValueChange={(r) => setRole(r === "admin" ? "admin" : "user")}>
+                <Select.Trigger aria-label="Role" />
+                <Select.Content>
+                  <Select.Item value="user">user</Select.Item>
+                  <Select.Item value="admin">admin</Select.Item>
+                </Select.Content>
+              </Select.Root>
+              <Button type="submit" loading={invite.isPending}>
+                Invite
+              </Button>
+            </Flex>
+          </form>
+        </>
+      ) : (
+        <Text size="2" color="gray">
+          Invitations go by email, which this server has switched off. A server admin can switch it on under Users.
+        </Text>
+      )}
+      {error && (
+        <Text color="red" size="2">
+          {error}
+        </Text>
+      )}
+      {invites.length > 0 && (
+        <Table.Root>
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeaderCell>Email</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>Role</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell />
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {invites.map((i) => (
+              <Table.Row key={i.id} align="center">
+                <Table.RowHeaderCell>
+                  <Flex direction="column">
+                    <Text>{i.email}</Text>
+                    <Text size="1" color="gray">
+                      by {i.invited_by}, {when(i.created_at)}
+                    </Text>
+                  </Flex>
+                </Table.RowHeaderCell>
+                <Table.Cell>{i.role}</Table.Cell>
+                <Table.Cell>
+                  <Flex direction="column" gap="1">
+                    <Badge color={STATUS_COLORS[i.status]} style={{ width: "fit-content" }}>
+                      {i.status}
+                    </Badge>
+                    <Text size="1" color="gray">
+                      {i.status === "accepted" && i.accepted_at
+                        ? `${i.accepted_by ?? ""}, ${when(i.accepted_at)}`
+                        : i.status === "pending"
+                          ? `until ${when(i.expires_at)}`
+                          : ""}
+                    </Text>
+                  </Flex>
+                </Table.Cell>
+                <Table.Cell justify="end">
+                  <Flex gap="3" justify="end">
+                    {(i.status === "pending" || i.status === "expired") && canInvite && (
+                      <Button size="1" variant="ghost" loading={resend.isPending} onClick={() => resend.mutate(i.id)}>
+                        Resend
                       </Button>
-                    </Flex>
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </Table.Root>
-        )}
-      </Flex>
-    </Card>
+                    )}
+                    <Button size="1" variant="ghost" color="red" onClick={() => remove.mutate(i.id)}>
+                      Delete
+                    </Button>
+                  </Flex>
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table.Root>
+      )}
+    </Section>
   );
 }
 

@@ -131,7 +131,7 @@ describe("incoming calls and messages", () => {
   });
 
   it("greets the caller, parks them with music, rings the speakers, the app and the mobile, and times out after 40 s", async () => {
-    await connectTwilio(maria, { incoming_calls: "contacts", owner_name: "Maria" });
+    await connectTwilio(maria, { incoming_calls: "contacts", owner_name: "Maria", voice: "Polly.Brian-Neural" });
     const line = await openLine();
     const participants: Record<string, string>[] = [];
     const completed: string[] = [];
@@ -155,6 +155,7 @@ describe("incoming calls and messages", () => {
     const res = await ring();
     const twiml = await res.text();
     expect(twiml).toContain("Hi, this is Alexsay, Maria&apos;s assistant.");
+    expect(twiml).toContain('<Say voice="Polly.Brian-Neural" language="en-GB">');
     expect(twiml).toContain('startConferenceOnEnter="false"');
     const conference = /<Conference[^>]*>(in-[a-z0-9]+)<\/Conference>/.exec(twiml)?.[1] ?? "";
     expect(conference).toMatch(/^in-[a-z0-9]{20}$/);

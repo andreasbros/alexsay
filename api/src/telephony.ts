@@ -209,7 +209,7 @@ async function announce(
   const sent = await createCall(connection.client, {
     to: recipient.phone,
     from: connection.from,
-    twiml: announceTwiml(message),
+    twiml: announceTwiml(message, connection.settings.voice),
     statusCallback: statusCallbackUrl(c),
   });
   await calls.create(c.env.DB, {

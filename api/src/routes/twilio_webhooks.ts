@@ -46,7 +46,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     if (bareNumber(from) === bareNumber(params.To ?? "")) {
       const bridge = await bridges.pending(c.env.DB, owner.home, Date.now() - BRIDGE_WINDOW_MS);
       if (!bridge) {
-        return xml(c, rejectTwiml("No speaker is waiting for this call."));
+        return xml(c, rejectTwiml("No speaker is waiting for this call.", owner.connection.settings.voice));
       }
       await bridges.use(c.env.DB, bridge.token, Date.now());
       const host = await calls.hostLeg(c.env.DB, owner.home, bridge.conference);
@@ -83,7 +83,7 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     const dialled = SIP_USER.exec(params.To ?? "")?.[1] ?? "";
     const to = normalisePhone(decodeSafe(dialled), owner.connection.settings.country_code);
     if (!to || !owner.connection.settings.from_number) {
-      return xml(c, rejectTwiml("That number cannot be dialled."));
+      return xml(c, rejectTwiml("That number cannot be dialled.", owner.connection.settings.voice));
     }
     const contact = await contacts.byPhone(c.env.DB, owner.home, to);
     const now = Date.now();

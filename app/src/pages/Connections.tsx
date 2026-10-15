@@ -442,7 +442,20 @@ const DEFAULT_TWILIO: TwilioSettings = {
   owner_name: "",
   greeting: "",
   unanswered: "",
+  voice: "Polly.Arthur-Neural",
 };
+
+/** Twilio's natural voices for what callers hear; all British English. */
+const CALLER_VOICES: [string, string][] = [
+  ["Polly.Arthur-Neural", "Arthur (male)"],
+  ["Polly.Brian-Neural", "Brian (male)"],
+  ["Polly.Amy-Neural", "Amy (female)"],
+  ["Polly.Emma-Neural", "Emma (female)"],
+  ["Google.en-GB-Neural2-B", "Google B (male)"],
+  ["Google.en-GB-Neural2-D", "Google D (male)"],
+  ["Google.en-GB-Neural2-A", "Google A (female)"],
+  ["Google.en-GB-Neural2-C", "Google C (female)"],
+];
 
 const POLICY_LABEL: Record<IncomingPolicy, string> = {
   off: "nobody",
@@ -616,6 +629,24 @@ function TwilioCard({ connection }: { connection: Connection | undefined }) {
                   value={settings.greeting}
                   onChange={(e) => set({ greeting: e.target.value })}
                 />
+                <Flex direction="column" gap="1">
+                  <Text size="1" color="gray">
+                    Voice callers hear
+                  </Text>
+                  <Select.Root
+                    value={settings.voice ?? "Polly.Arthur-Neural"}
+                    onValueChange={(voice) => set({ voice })}
+                  >
+                    <Select.Trigger aria-label="Caller voice" />
+                    <Select.Content>
+                      {CALLER_VOICES.map(([id, label]) => (
+                        <Select.Item key={id} value={id}>
+                          {label}
+                        </Select.Item>
+                      ))}
+                    </Select.Content>
+                  </Select.Root>
+                </Flex>
                 <TextField.Root
                   placeholder="Unanswered: Sorry, nobody can take your call right now. Please try again later."
                   aria-label="Unanswered message"

@@ -1,6 +1,6 @@
 import { type Page, request } from "@playwright/test";
 import { bypassHeaders } from "../playwright.config";
-import { apiSession, env, expect, test } from "./helpers";
+import { apiSession, env, expect, openSection, test } from "./helpers";
 
 /** With email sign-in on, the page offers only an address (the code makes the account); otherwise the password form. */
 async function openRegister(page: Page): Promise<"email" | "password"> {
@@ -33,6 +33,7 @@ test("a new account: by email when email sign-in is on, else with a username and
       await page.getByLabel("Repeat password").fill("battery staple");
       await page.getByRole("button", { name: "Create account" }).click();
       await expect(page.getByRole("heading", { name: "Devices" })).toBeVisible();
+      await openSection(page, "Devices");
       await expect(page.getByText("No speakers yet")).toBeVisible();
       // Plain users have no Users page
       await page.getByRole("button", { name: "Account" }).click();

@@ -1,6 +1,16 @@
 /** The call scripts Twilio runs for us; everything user-provided is escaped before it enters the XML. */
 
-const SAY_VOICE = 'voice="Polly.Amy" language="en-GB"';
+/** A British male neural voice: natural, and ready on every Twilio account without setup. */
+export const DEFAULT_VOICE = "Polly.Arthur-Neural";
+
+/**
+ * The attributes of a `<Say>`: the voice, and the language it speaks (Google voices carry their
+ * locale in the name; the Polly voices offered are all British English).
+ */
+export function sayAttrs(voice: string = DEFAULT_VOICE): string {
+  const locale = /^Google\.([a-z]{2}-[A-Z]{2})-/.exec(voice)?.[1] ?? "en-GB";
+  return `voice="${escapeXml(voice)}" language="${locale}"`;
+}
 
 export const escapeXml = (text: string) =>
   text.replace(
@@ -15,8 +25,8 @@ export const bridgeTwiml = (to: string, callerId: string) =>
   response(`<Dial callerId="${escapeXml(callerId)}"><Number>${escapeXml(to)}</Number></Dial>`);
 
 /** A call that only delivers a spoken message, read twice so a late pick-up still hears it. */
-export const announceTwiml = (message: string) => {
-  const say = `<Say ${SAY_VOICE}>${escapeXml(message)}</Say>`;
+export const announceTwiml = (message: string, voice?: string) => {
+  const say = `<Say ${sayAttrs(voice)}>${escapeXml(message)}</Say>`;
   return response(`${say}<Pause length="1"/>${say}`);
 };
 
@@ -25,9 +35,9 @@ export const announceTwiml = (message: string) => {
  * whatever the assistant is doing) and wait in a conference of their own with hold music until
  * whoever answers joins as host and starts it.
  */
-export const incomingTwiml = (greeting: string, conference: string, conferenceStatusCallback: string) =>
+export const incomingTwiml = (greeting: string, conference: string, conferenceStatusCallback: string, voice?: string) =>
   response(
-    `<Say ${SAY_VOICE}>${escapeXml(greeting)}</Say>` +
+    `<Say ${sayAttrs(voice)}>${escapeXml(greeting)}</Say>` +
       `<Dial><Conference beep="false" startConferenceOnEnter="false" endConferenceOnExit="false" ` +
       `statusCallback="${escapeXml(conferenceStatusCallback)}" statusCallbackEvent="start end join leave">` +
       `${escapeXml(conference)}</Conference></Dial>`,
@@ -58,7 +68,8 @@ export const streamTwiml = (url: string, conference: string, who: string) =>
 /** A speaker dialled out through the SIP domain: place the real call with the user's Twilio number. */
 export const dialOutTwiml = (to: string, callerId: string) => bridgeTwiml(to, callerId);
 
-export const rejectTwiml = (reason: string) => response(`<Say ${SAY_VOICE}>${escapeXml(reason)}</Say><Hangup/>`);
+export const rejectTwiml = (reason: string, voice?: string) =>
+  response(`<Say ${sayAttrs(voice)}>${escapeXml(reason)}</Say><Hangup/>`);
 
 export const emptyTwiml = () => response("");
 

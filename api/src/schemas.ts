@@ -177,6 +177,12 @@ export const twilioSettings = z.object({
   greeting: z.string().trim().max(300).default(""),
   /** What a caller hears when nobody picks up in time. Empty: the built-in message. */
   unanswered: z.string().trim().max(300).default(""),
+  /** The Twilio voice that reads the greeting and the messages: an Amazon Polly or Google voice name. */
+  voice: z
+    .string()
+    .trim()
+    .regex(/^(Polly|Google)\.[A-Za-z0-9-]+$/)
+    .default("Polly.Arthur-Neural"),
   /** How the chosen number routed calls before this app took it; put back when the user moves on. */
   number_backup: numberRouting.nullable().default(null),
 });

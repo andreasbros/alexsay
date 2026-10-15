@@ -6,12 +6,15 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import { App } from "./App";
+import { healStyles } from "./lib/styles";
 import { AppearanceProvider } from "./theme";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: true } } });
 const root = document.getElementById("root");
 
 if (root) {
+  // A stylesheet cached wrongly during a deploy leaves the app bare: fetch it afresh and reload, once
+  window.addEventListener("load", () => void healStyles());
   createRoot(root).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>

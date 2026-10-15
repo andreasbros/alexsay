@@ -83,6 +83,8 @@ export interface TwilioSettings {
   owner_name: string;
   greeting: string;
   unanswered: string;
+  /** The Twilio voice callers hear: a Polly or Google voice name. */
+  voice: string;
   /** Set by the server: how the chosen number routed calls before this app took it. */
   number_backup?: NumberRouting | null;
 }

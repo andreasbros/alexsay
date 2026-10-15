@@ -111,7 +111,7 @@ export async function incomingCall(
     });
     const why = settings.incoming_calls === "off" ? "incoming calls are off" : "not a contact";
     await logFor(place, home, "info", `incoming call from ${params.from} refused: ${why}`);
-    return settings.incoming_calls === "off" ? hangupTwiml() : rejectTwiml(CONTACTS_ONLY);
+    return settings.incoming_calls === "off" ? hangupTwiml() : rejectTwiml(CONTACTS_ONLY, settings.voice);
   }
   const conference = `in-${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
   const caller: CallerInfo = { phone: params.from, name: contact?.name ?? null, contact_id: contact?.id ?? null };
@@ -138,7 +138,7 @@ export async function incomingCall(
     rule: { kind: "at", at: now + RING_MS },
   });
   await logFor(place, home, "info", `incoming call from ${label} (${params.from}): ${conference}, ringing ${rang}`);
-  return incomingTwiml(greetingFor(settings, home), conference, conferenceStatusCallbackUrl(place));
+  return incomingTwiml(greetingFor(settings, home), conference, conferenceStatusCallbackUrl(place), settings.voice);
 }
 
 /** Rings the speakers (by push), the app and the mobile; what was reached, for the log. */
@@ -289,7 +289,11 @@ export async function unansweredCall(scope: Scope, job: JobRow): Promise<void> {
   }
   const connection = await twilioConnection(scope, home);
   if (connection) {
-    await redirectCall(connection.client, sid, rejectTwiml(unansweredFor(connection.settings))).catch(() => undefined);
+    await redirectCall(
+      connection.client,
+      sid,
+      rejectTwiml(unansweredFor(connection.settings), connection.settings.voice),
+    ).catch(() => undefined);
   }
   await calls.setStatus(scope.env.DB, sid, "no-answer");
   await cancelOtherRinging(scope, home, conference, null);

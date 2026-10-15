@@ -16,6 +16,7 @@ import { toolRoutes } from "./routes/tools";
 import { twilioRoutes } from "./routes/twilio";
 import { twilioConferenceRoute, twilioStreamRoute, twilioWebhookRoutes } from "./routes/twilio_webhooks";
 import { userRoutes } from "./routes/users";
+import { guardBundle } from "./static_assets";
 import type { AppEnv } from "./types";
 import { BadRequest } from "./validate";
 
@@ -74,7 +75,7 @@ export const app = new Hono<AppEnv>()
   .route("/api/server", serverRoutes)
   .all("/api/*", (c) => c.json({ error: "not_found" }, 404))
   .all("/v1/*", (c) => c.json({ error: "not_found" }, 404))
-  .all("*", (c) => c.env.ASSETS.fetch(c.req.raw))
+  .all("*", async (c) => guardBundle(new URL(c.req.url).pathname, await c.env.ASSETS.fetch(c.req.raw)))
   .onError((err, c) => {
     if (err instanceof BadRequest) {
       return c.json({ error: "bad_request", issues: err.issues }, 400);

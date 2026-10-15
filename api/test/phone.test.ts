@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bareNumber, normalisePhone, searchName, toWhatsapp } from "../src/phone";
-import { announceTwiml, bridgeTwiml, escapeXml, hangupTwiml, incomingTwiml } from "../src/twiml";
+import { announceTwiml, bridgeTwiml, escapeXml, hangupTwiml, incomingTwiml, sayAttrs } from "../src/twiml";
 
 describe("phone numbers", () => {
   it("turns the ways people write a UK number into E.164", () => {
@@ -54,7 +54,15 @@ describe("TwiML", () => {
   it("greets a caller and parks them in their own conference until someone joins as host", () => {
     const twiml = incomingTwiml("Hi, it's Andreas's assistant & co", "in-abc", "https://app/v1/twilio/conference");
     expect(twiml).toContain(
-      '<Say voice="Polly.Amy" language="en-GB">Hi, it&apos;s Andreas&apos;s assistant &amp; co</Say>',
+      '<Say voice="Polly.Arthur-Neural" language="en-GB">Hi, it&apos;s Andreas&apos;s assistant &amp; co</Say>',
+    );
+    expect(incomingTwiml("Hi", "in-abc", "https://app/x", "Google.en-GB-Neural2-B")).toContain(
+      '<Say voice="Google.en-GB-Neural2-B" language="en-GB">Hi</Say>',
+    );
+    expect(sayAttrs("Google.en-US-Neural2-D")).toBe('voice="Google.en-US-Neural2-D" language="en-US"');
+    expect(sayAttrs("Polly.Brian-Neural")).toBe('voice="Polly.Brian-Neural" language="en-GB"');
+    expect(announceTwiml("Hello", "Polly.Amy-Neural")).toContain(
+      '<Say voice="Polly.Amy-Neural" language="en-GB">Hello</Say>',
     );
     expect(twiml).toContain('startConferenceOnEnter="false" endConferenceOnExit="false"');
     expect(twiml).toContain('statusCallback="https://app/v1/twilio/conference"');

@@ -12,6 +12,7 @@ import {
   CLIENT_IDENTITY,
   completeCall,
   createCall,
+  endConferenceOnExit,
   getCall,
   redirectCall,
   type Sent,
@@ -380,8 +381,21 @@ export async function hostAnswered(place: Place, hostLeg: CallRow): Promise<void
     return;
   }
   if (brief.incoming) {
-    // The caller is already on: the other ringing sides stop and the assistant joins quietly
+    // The caller is already on: the other ringing sides stop, this side's hang-up now ends the call, the assistant joins quietly
     await cancelOtherRinging(place, hostLeg.home_id, hostLeg.conference, hostLeg.sid);
+    if (hostLeg.sid) {
+      const connection = await twilioConnection(place, hostLeg.home_id);
+      if (connection) {
+        await endConferenceOnExit(connection.client, hostLeg.conference, hostLeg.sid).catch(async (err: unknown) => {
+          await logFor(
+            place,
+            hostLeg.home_id,
+            "warn",
+            `call ${hostLeg.conference}: could not pin the end to the host: ${errorText(err)}`,
+          );
+        });
+      }
+    }
     await seatAssistant(place, hostLeg.home_id, hostLeg.conference, brief).catch(async (err: unknown) => {
       await logFor(
         place,

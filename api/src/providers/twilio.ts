@@ -212,6 +212,8 @@ export interface ParticipantOptions {
   from: string;
   label: string;
   host: boolean;
+  /** Whether this leg leaving ends the conference; the host's does unless said otherwise (a leg only ringing must not). */
+  endOnExit?: boolean;
   statusCallback: string;
   /** Conference events (join, leave, end): the stages' second trigger when leg callbacks go missing. */
   conferenceStatusCallback: string;
@@ -234,7 +236,7 @@ export async function addParticipant(
       To: participant.to,
       From: participant.from,
       Label: participant.label,
-      EndConferenceOnExit: participant.host ? "true" : "false",
+      EndConferenceOnExit: (participant.endOnExit ?? participant.host) ? "true" : "false",
       StartConferenceOnEnter: participant.host ? "true" : "false",
       Beep: "onEnter",
       StatusCallback: participant.statusCallback,
@@ -313,6 +315,15 @@ export async function getCall(client: TwilioClient, callSid: string): Promise<Ca
     `/Calls/${encodeURIComponent(callSid)}.json`,
   );
   return { status: body.status, seconds: Number(body.duration ?? 0) || 0 };
+}
+
+/** From now on this participant hanging up ends the conference: set once a ringing side has answered. */
+export async function endConferenceOnExit(client: TwilioClient, conference: string, callSid: string): Promise<void> {
+  await request(
+    client,
+    `/Conferences/${encodeURIComponent(conference)}/Participants/${encodeURIComponent(callSid)}.json`,
+    { EndConferenceOnExit: "true" },
+  );
 }
 
 export async function completeCall(client: TwilioClient, callSid: string): Promise<void> {

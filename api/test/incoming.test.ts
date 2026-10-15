@@ -169,7 +169,8 @@ describe("incoming calls and messages", () => {
       say: "Call from Mum",
     });
     expect(participants.map((p) => p.To)).toEqual([`client:alexsay-app?incoming=${conference}&from=Mum`, MY_NUMBER]);
-    expect(participants.every((p) => p.StartConferenceOnEnter === "true" && p.EndConferenceOnExit === "true")).toBe(
+    // They start the conference when answered, but one failing (the app not open) must not end it for the caller
+    expect(participants.every((p) => p.StartConferenceOnEnter === "true" && p.EndConferenceOnExit === "false")).toBe(
       true,
     );
     const legs = await env.DB.prepare(
@@ -220,9 +221,14 @@ describe("incoming calls and messages", () => {
     const line = await openLine();
     const participants: Record<string, string>[] = [];
     const completed: string[] = [];
+    const pinned: string[] = [];
     let selfCall: Record<string, string> | null = null;
     const upstream = mockUpstream({
-      [`POST ${TWILIO}/Conferences/*`]: (_req, body) => {
+      [`POST ${TWILIO}/Conferences/*`]: (req, body) => {
+        if (/\/Participants\/[^/]+\.json$/.test(req.url)) {
+          pinned.push(req.url.split("/").pop()?.replace(".json", "") ?? "");
+          return reply(200, {});
+        }
         participants.push(formOf(body));
         return reply(201, { call_sid: `CA-p${participants.length}`, status: "ringing" });
       },
@@ -259,6 +265,7 @@ describe("incoming calls and messages", () => {
     expect(await stream.text()).toContain("<Connect><Stream");
     // The host's answer runs after the reply to Twilio, so the rest follows a moment later
     await vi.waitFor(() => expect(completed.sort()).toEqual(["CA-p1", "CA-p2"]));
+    expect(pinned).toEqual(["CA-self"]);
     expect(await line.next()).toEqual({ type: "call.incoming.cancel", conference });
     await vi.waitFor(() => expect(participants.some((p) => p.Label === "assistant")).toBe(true));
     const assistant = participants.find((p) => p.Label === "assistant");
@@ -341,6 +348,34 @@ describe("incoming calls and messages", () => {
     // Hanging up ends the assistant's own seat, since it hosts this conference
     expect(await tool(maria, "end_call", {})).toMatchObject({ ok: true, conference });
     expect(completed.at(-1)).toBe("CA-p3");
+    upstream.done();
+  });
+
+  it("still tells a waiting caller to try later when a ringing leg failed and ended the first conference instance", async () => {
+    await connectTwilio(maria);
+    let redirected: string | null = null;
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: "CA-app", status: "ringing" }),
+      [`GET ${TWILIO}/Calls/CA-in.json`]: () => reply(200, { status: "in-progress", duration: null }),
+      [`POST ${TWILIO}/Calls/*`]: (req, body) => {
+        if (req.url.endsWith("CA-in.json")) {
+          redirected = formOf(body).Twiml ?? null;
+        }
+        return reply(200, {});
+      },
+    });
+    const twiml = await (await ring()).text();
+    const conference = /<Conference[^>]*>(in-[a-z0-9]+)<\/Conference>/.exec(twiml)?.[1] ?? "";
+    // The app is not open: its leg drops at once and Twilio ends that conference instance before the caller joins
+    await twilioWebhook("/v1/twilio/conference", {
+      FriendlyName: conference,
+      StatusCallbackEvent: "conference-end",
+    });
+    expect(await env.DB.prepare("SELECT status FROM calls WHERE sid = 'CA-in'").first()).toEqual({
+      status: "completed",
+    });
+    expect(await runDue({ env }, "maria", Date.now() + RING_MS + 1_000)).toBe(1);
+    expect(redirected).toContain("try again later");
     upstream.done();
   });
 

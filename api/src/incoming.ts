@@ -3,7 +3,7 @@ import { type CallRow, calls, contacts, notifications } from "./db";
 import { notifyHome } from "./device_channel";
 import { type JobRow, schedule } from "./jobs";
 import { logFor } from "./log";
-import { addParticipant, CLIENT_IDENTITY, redirectCall } from "./providers/twilio";
+import { addParticipant, CLIENT_IDENTITY, getCall, redirectCall } from "./providers/twilio";
 import type { TwilioSettings } from "./schemas";
 import {
   type CallerInfo,
@@ -169,11 +169,13 @@ async function ringHome(place: Place, owner: Owner, conference: string, caller: 
   }
   for (const target of targets) {
     try {
+      // Starts the conference when answered; while only ringing (or failing, the app not open) it must not end it
       const leg = await addParticipant(connection.client, conference, {
         to: target.to,
         from: connection.settings.from_number,
         label: target.what,
         host: true,
+        endOnExit: false,
         statusCallback: statusCallbackUrl(place),
         conferenceStatusCallback: conferenceStatusCallbackUrl(place),
       });
@@ -285,10 +287,18 @@ export async function unansweredCall(scope: Scope, job: JobRow): Promise<void> {
   const legs = await calls.legs(scope.env.DB, conference);
   const caller = legs.find((l) => l.sid === sid);
   const answered = legs.some((l) => (l.role === "host" || l.role === "assistant") && l.status === "in-progress");
-  if (!caller || answered || !isLiveLeg(caller, Date.now())) {
+  if (!caller || answered) {
     return;
   }
   const connection = await twilioConnection(scope, home);
+  // A conference instance can end and be recreated under the same name (a ringing leg failed before the
+  // caller joined), which marked the caller's row completed: Twilio knows whether they are still waiting
+  if (!isLiveLeg(caller, Date.now())) {
+    const live = connection ? await getCall(connection.client, sid).catch(() => null) : null;
+    if (live?.status !== "in-progress" && live?.status !== "ringing") {
+      return;
+    }
+  }
   if (connection) {
     await redirectCall(
       connection.client,

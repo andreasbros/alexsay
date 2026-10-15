@@ -10,6 +10,7 @@ import { validSignature } from "../providers/twilio";
 import {
   BRIDGE_WINDOW_MS,
   callEnded,
+  cancelOtherRinging,
   endedByFromLegs,
   guestAnswered,
   guestUnanswered,
@@ -240,7 +241,12 @@ export const twilioConferenceRoute = new Hono<AppEnv>().post("/conference", asyn
   }
   if (event === "conference-end") {
     await calls.endConference(c.env.DB, conference);
-    await callEnded(place, first.home_id, conference, endedByFromLegs(await calls.legs(c.env.DB, conference)));
+    const after = await calls.legs(c.env.DB, conference);
+    // A caller who gave up while the home was still ringing: the mobile, the app and the speakers stop
+    if (after.some((l) => l.direction === "in" && l.role === "guest")) {
+      await cancelOtherRinging(place, first.home_id, conference, null);
+    }
+    await callEnded(place, first.home_id, conference, endedByFromLegs(after));
   }
   return c.body(null, 204);
 });

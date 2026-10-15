@@ -4,8 +4,25 @@ All notable changes to alexsay. The format follows
 [Keep a Changelog](https://keepachangelog.com), versions follow
 [SemVer](https://semver.org).
 
+## [0.1.6] - 2026-10-15
+
+
+### Changes
+
+- Messages page: Reply and Call back send the number the way the call and message routes take it (583fcad2)
+- Wait for the host's end-on-exit pin, which follows the cancellations (b0bbdc0c)
+- A call to the user's own number rings their mobile once: no guest leg for it, the assistant joins them alone (71914d61)
+- The assistant hears speech, not room noise (VAD threshold 0.75, near-field noise reduction) and takes its turn sooner (e41228f1)
+- The assistant joins phone calls through GPT-Live: a seat the server bridges into the call's audio, full duplex; the Realtime API over SIP stays a setting away (b56a0295)
+- A call taken on the speaker keeps the speaker's own GPT-Live session as the assistant, present throughout (fb2234c4)
+- The server log's hundred-line case gets time on a loaded runner (6c7e358a)
+
 ## [0.1.5] - 2026-10-15
 
+
+### Internal
+
+- V0.1.5 (0bf7957e)
 
 ### Changes
 

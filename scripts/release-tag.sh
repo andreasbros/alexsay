@@ -72,8 +72,7 @@ irm https://alexsay.com/install.ps1 | iex          # Windows
 | Linux, aarch64 (static, any distro; Raspberry Pi 5 with the ReSpeaker Flex) | [alexsay-aarch64-linux-musl]($DL/alexsay-aarch64-linux-musl) |
 | macOS, Apple Silicon | [alexsay-aarch64-macos]($DL/alexsay-aarch64-macos) |
 | macOS, Intel | [alexsay-x86_64-macos]($DL/alexsay-x86_64-macos) |
-| Windows, x86_64 | [alexsay-x86_64-windows.zip]($DL/alexsay-x86_64-windows.zip) |
-| Windows, arm64 | [alexsay-aarch64-windows.zip]($DL/alexsay-aarch64-windows.zip) |
+| Windows, x86_64 (also runs on Windows on Arm through emulation) | [alexsay-x86_64-windows.zip]($DL/alexsay-x86_64-windows.zip) |
 
 ### Server
 

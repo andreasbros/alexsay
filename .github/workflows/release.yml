@@ -117,11 +117,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # No Windows on Arm build: tract-linalg 0.22 writes masm syntax for an msvc target on a Windows host and
+        # then hands it to a C compiler, so its arm64 kernels cannot be assembled there. The x86_64 build runs
+        # under emulation on Arm, and the updater and the installer both pick it.
         include:
           - arch: x86_64
             runner: windows-2025
-          - arch: aarch64
-            runner: windows-11-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -132,18 +133,6 @@ jobs:
         with:
           workspaces: device
           key: ${{ matrix.arch }}
-      # tract's arm64 kernels are GNU assembly, which MSVC's cl cannot assemble: Visual Studio's own clang does
-      - name: Clang for tract's arm64 assembly
-        if: matrix.arch == 'aarch64'
-        shell: pwsh
-        run: |
-          $clang = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\*\VC\Tools\Llvm\ARM64\bin\clang.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $clang) { $clang = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\*\VC\Tools\Llvm\x64\bin\clang.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 }
-          if (-not $clang) { $clang = Get-Command clang -ErrorAction SilentlyContinue | ForEach-Object { Get-Item $_.Source } }
-          if (-not $clang) { throw "no clang on this runner" }
-          & $clang.FullName --version
-          "CC_aarch64_pc_windows_msvc=$($clang.FullName)" | Out-File -Append $env:GITHUB_ENV
-          "CFLAGS_aarch64_pc_windows_msvc=--target=aarch64-pc-windows-msvc" | Out-File -Append $env:GITHUB_ENV
       - name: Build (static CRT, no redistributable needed)
         env:
           RUSTFLAGS: -C target-feature=+crt-static

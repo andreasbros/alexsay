@@ -3,7 +3,8 @@ $ErrorActionPreference = "Stop"
 $repo = if ($env:ALEXSAY_REPO) { $env:ALEXSAY_REPO } else { "andreasbros/alexsay" }
 $arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
   "X64" { "x86_64" }
-  "Arm64" { "aarch64" }
+  # One Windows build; it runs under emulation on Arm
+  "Arm64" { "x86_64" }
   default { throw "alexsay: no build for this Windows architecture yet" }
 }
 $asset = "alexsay-$arch-windows.zip"

@@ -21,7 +21,8 @@ pub const TARGET: &str = env!("ALEXSAY_TARGET");
 pub fn asset_name(target: &str) -> String {
     let arch = target.split('-').next().unwrap_or("x86_64");
     if target.contains("windows") {
-        format!("{BINARY}-{arch}-windows.zip")
+        // One Windows build: on Arm it runs under emulation (tract's arm64 kernels do not build for msvc)
+        format!("{BINARY}-x86_64-windows.zip")
     } else if target.contains("apple") {
         format!("{BINARY}-{arch}-macos")
     } else {
@@ -150,7 +151,7 @@ mod tests {
         );
         assert_eq!(
             asset_name("aarch64-pc-windows-msvc"),
-            "alexsay-aarch64-windows.zip"
+            "alexsay-x86_64-windows.zip"
         );
         assert!(is_newer("v0.2.0", "0.1.9"));
         assert!(!is_newer("v0.1.9", "0.1.9"));

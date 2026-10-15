@@ -105,6 +105,11 @@ impl Session {
         self.state
     }
 
+    /// When the user's words last arrived (their transcript), for reply latency in the log.
+    pub fn last_user_text_ms(&self) -> u64 {
+        self.last_user_text_ms
+    }
+
     /// The wake word fired and the socket is being opened.
     pub fn start(&mut self, now_ms: u64) {
         self.state = SessionState::Starting;

@@ -6,7 +6,7 @@ import { logFor } from "./log";
 import { base64ToBytes, base64ToPcm16, liveToTwilio, muLawToPcm16k, pcm16ToBase64 } from "./mulaw";
 import { liveCallSession, liveSocketUrl } from "./providers/openai";
 import { skills } from "./skills";
-import { agentBrief, notOnCalls, parseAgent } from "./telephony";
+import { agentBrief, endCall, notOnCalls, parseAgent } from "./telephony";
 import { agentToolDefinitions, toolDefinitions } from "./tools";
 import { actingFor, type CallRow, type CallSpeaker, type ToolContext } from "./types";
 
@@ -22,6 +22,22 @@ export interface SeatStart {
 
 /** Twilio's frames are 20 ms; GPT-Live is fed in 100 ms pieces, as the speaker does. */
 const FRAMES_PER_APPEND = 5;
+const LIVE_RATE = 16_000;
+
+/** What the caller says to end the call: the seat hangs up itself if the model forgets its tool. */
+export const USER_FAREWELL =
+  /\b(hang up|end (the |this )?call|good ?bye|bye( bye)?|see you( later| soon)?|good ?night|that'?s (all|it)( for now)?|talk (to you )?later|speak (to you )?later|i'?m done)\b/i;
+/** After a goodbye, how long the assistant's own goodbye may take before the seat hangs up anyway. */
+const FAREWELL_GRACE_MS = 6_000;
+
+/** The timings of one exchange, logged when the reply completes so a slow call can be read. */
+interface Turn {
+  /** When the caller's last words arrived (the end of their turn, as transcribed). */
+  callerStoppedAt: number;
+  replyStartedAt: number | null;
+  replyAudioMs: number;
+  tools: string[];
+}
 
 /**
  * A seat on a phone call held by a GPT-Live session: the assistant's (full duplex, the model the
@@ -40,6 +56,17 @@ export class LiveSeat extends DurableObject<Env> {
   private pending: Int16Array[] = [];
   private heard = { line: "", assistant: "" };
   private closed = false;
+  private streamStartedAt = 0;
+  private turn: Turn = { callerStoppedAt: 0, replyStartedAt: null, replyAudioMs: 0, tools: [] };
+  private framesIn = 0;
+  private framesOut = 0;
+  /** Armed when the caller said goodbye; the seat hangs up once the reply is done or the grace has passed. */
+  private farewellAt: number | null = null;
+  private hungUp = false;
+  /** GPT-Live's events are handled one after another, so tool outputs and transcript lines keep their order. */
+  private events: Promise<void> = Promise.resolve();
+  /** Transcript writes run in order, off the event path. */
+  private writes: Promise<void> = Promise.resolve();
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -92,10 +119,12 @@ export class LiveSeat extends DurableObject<Env> {
     switch (message.event) {
       case "start":
         this.streamSid = message.start?.streamSid ?? "";
+        this.streamStartedAt = Date.now();
         await this.openLive();
         break;
       case "media":
         if (message.media?.payload && message.media.track !== "outbound") {
+          this.framesIn += 1;
           this.pending.push(muLawToPcm16k(base64ToBytes(message.media.payload)));
           if (this.pending.length >= FRAMES_PER_APPEND) {
             this.flushAudio();
@@ -173,7 +202,7 @@ export class LiveSeat extends DurableObject<Env> {
       socket.accept();
       this.live = socket;
       socket.addEventListener("message", (event) => {
-        void this.fromLive(event.data);
+        this.events = this.events.then(() => this.fromLive(event.data)).catch(() => undefined);
       });
       socket.addEventListener("close", () => void this.end("GPT-Live closed the session"));
       socket.addEventListener("error", () => void this.end("the GPT-Live socket failed"));
@@ -182,7 +211,7 @@ export class LiveSeat extends DurableObject<Env> {
         scope,
         leg.home_id,
         "info",
-        `call ${start.conference}: GPT-Live ${agent ? "agent" : "assistant"} seat on the line`,
+        `call ${start.conference}: GPT-Live ${agent ? "agent" : "assistant"} seat on the line (socket ${Date.now() - this.streamStartedAt} ms after the stream started)`,
       );
     } catch (err) {
       await logFor(
@@ -203,14 +232,38 @@ export class LiveSeat extends DurableObject<Env> {
       return;
     }
     switch (event.type) {
+      case "session.started":
+        if (this.leg) {
+          await logFor(
+            { env: this.env },
+            this.leg.home_id,
+            "info",
+            `call ${this.start?.conference}: GPT-Live session ready ${Date.now() - this.streamStartedAt} ms after the stream started`,
+          );
+        }
+        break;
       case "session.output_audio.delta":
         if (typeof event.delta === "string" && this.twilio && this.streamSid) {
+          const samples = base64ToPcm16(event.delta);
+          // Silence streams all session long; only audible audio is the reply
+          if (isAudible(samples)) {
+            if (this.turn.replyStartedAt === null) {
+              this.turn.replyStartedAt = Date.now();
+            }
+            this.turn.replyAudioMs += (samples.length * 1_000) / LIVE_RATE;
+          }
+          this.framesOut += 1;
           this.toTwilio({ event: "media", streamSid: this.streamSid, media: { payload: liveToTwilio(event.delta) } });
         }
         break;
       case "session.input_transcript.delta":
         await this.flushHeard("assistant");
         this.heard.line += typeof event.delta === "string" ? event.delta : "";
+        this.turn.callerStoppedAt = Date.now();
+        if (!this.agent && this.farewellAt === null && USER_FAREWELL.test(this.heard.line)) {
+          this.farewellAt = Date.now();
+          this.ctx.waitUntil(this.hangUpAfterGoodbye());
+        }
         break;
       case "session.output_transcript.delta":
         await this.flushHeard("line");
@@ -221,6 +274,10 @@ export class LiveSeat extends DurableObject<Env> {
         const nested = (event.event as { type?: string } | undefined)?.type;
         if (nested === "response.completed" || nested === "response.done") {
           await this.flushHeard("assistant");
+          await this.logTurn();
+          if (this.farewellAt !== null) {
+            await this.hangUp("the caller said goodbye and the reply is done");
+          }
         }
         const call = realtimeFunctionCall(event.event);
         if (call && this.start && this.leg) {
@@ -232,12 +289,17 @@ export class LiveSeat extends DurableObject<Env> {
             onCall: true,
             legId: this.agent ? this.leg.id : undefined,
           };
+          const asked = Date.now();
           const output = await runCallTool(context, call);
+          this.turn.tools.push(`${call.name} ${Date.now() - asked} ms`);
+          if (call.name === "end_call") {
+            this.hungUp = true;
+          }
           await logFor(
             { env: this.env },
             this.leg.home_id,
             output.includes('"error"') ? "warn" : "info",
-            `on-call tool ${call.name} ${call.arguments.slice(0, 120)} -> ${output.slice(0, 200)}`,
+            `on-call tool ${call.name} ${call.arguments.slice(0, 120)} -> ${output.slice(0, 200)} (${Date.now() - asked} ms)`,
           );
           this.toLive({
             type: "response.item.create",
@@ -275,10 +337,75 @@ export class LiveSeat extends DurableObject<Env> {
     const text = this.heard[speaker].trim();
     this.heard[speaker] = "";
     if (text && this.start && !this.agent) {
-      const write = calls.addTurn(this.env.DB, this.start.conference, Date.now(), speaker, text.slice(0, 2000));
-      this.ctx.waitUntil(write.then(() => undefined));
-      await write;
+      const { conference } = this.start;
+      const at = Date.now();
+      this.writes = this.writes
+        .then(() => calls.addTurn(this.env.DB, conference, at, speaker, text.slice(0, 2000)))
+        .then(() => undefined)
+        .catch(() => undefined);
+      this.ctx.waitUntil(this.writes);
     }
+  }
+
+  /** One line per exchange: how long the caller waited, how much was said, and what tools ran. */
+  private async logTurn(): Promise<void> {
+    const turn = this.turn;
+    this.turn = { callerStoppedAt: turn.callerStoppedAt, replyStartedAt: null, replyAudioMs: 0, tools: [] };
+    if (!this.leg || !this.start || (turn.replyStartedAt === null && turn.tools.length === 0)) {
+      return;
+    }
+    const waited =
+      turn.replyStartedAt !== null && turn.callerStoppedAt > 0
+        ? `${turn.replyStartedAt - turn.callerStoppedAt} ms`
+        : "n/a";
+    const pace =
+      turn.replyStartedAt !== null && turn.replyAudioMs > 0
+        ? `${Math.round(turn.replyAudioMs)} ms of speech over ${Date.now() - turn.replyStartedAt} ms`
+        : "no speech";
+    await logFor(
+      { env: this.env },
+      this.leg.home_id,
+      "info",
+      `call ${this.start.conference}: turn: reply began ${waited} after the caller stopped; ${pace}; tools: ${turn.tools.join(", ") || "none"}`,
+    );
+  }
+
+  /** The caller said goodbye: the model gets a moment to say its own, then the seat hangs up regardless. */
+  private async hangUpAfterGoodbye(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, FAREWELL_GRACE_MS));
+    await this.hangUp("the caller said goodbye");
+  }
+
+  private async hangUp(why: string): Promise<void> {
+    if (this.hungUp || this.closed || !this.leg || !this.start) {
+      return;
+    }
+    this.hungUp = true;
+    try {
+      await endCall({ env: this.env }, this.leg.home_id, "assistant");
+      await logFor(
+        { env: this.env },
+        this.leg.home_id,
+        "info",
+        `call ${this.start.conference}: hung up by the seat: ${why}`,
+      );
+    } catch (err) {
+      await logFor(
+        { env: this.env },
+        this.leg.home_id,
+        "warn",
+        `call ${this.start.conference}: could not hang up (${why}): ${err instanceof Error ? err.message : "failed"}`,
+      );
+    }
+  }
+
+  /** Whether nobody but the caller and this seat is on the call (their own number, or an incoming call taken alone). */
+  private async alone(): Promise<boolean> {
+    if (!this.start) {
+      return false;
+    }
+    const legs = await calls.legs(this.env.DB, this.start.conference);
+    return !legs.some((l) => l.role === "guest" && l.direction === "out");
   }
 
   private toLive(message: Record<string, unknown>): void {
@@ -305,6 +432,7 @@ export class LiveSeat extends DurableObject<Env> {
     this.closed = true;
     await this.flushHeard("line");
     await this.flushHeard("assistant");
+    await this.writes;
     this.toLive({ type: "session.close" });
     try {
       this.live?.close(1000, why);
@@ -329,12 +457,31 @@ export class LiveSeat extends DurableObject<Env> {
         { env: this.env },
         leg.home_id,
         "info",
-        `call ${this.start.conference}: GPT-Live seat ended: ${why}`,
+        `call ${this.start.conference}: GPT-Live seat ended: ${why} (${this.framesIn} frames in, ${this.framesOut} out, ${Date.now() - this.streamStartedAt} ms)`,
       );
+      // GPT-Live going away on a call that was only the caller and the assistant leaves nobody: hang up
+      if (!this.agent && !why.startsWith("the stream") && (await this.alone())) {
+        await this.hangUp("GPT-Live left and nobody else is on the call");
+      }
     }
     this.live = null;
     this.twilio = null;
   }
+}
+
+/** Audio above this RMS (0 to 1) is the assistant speaking rather than the silence GPT-Live streams between replies. */
+const AUDIBLE_RMS = 0.004;
+
+function isAudible(samples: Int16Array): boolean {
+  if (samples.length === 0) {
+    return false;
+  }
+  let sum = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    const s = (samples[i] ?? 0) / 32_768;
+    sum += s * s;
+  }
+  return Math.sqrt(sum / samples.length) > AUDIBLE_RMS;
 }
 
 /** The samples a Twilio frame carries, for the tests that check the bridge's arithmetic. */

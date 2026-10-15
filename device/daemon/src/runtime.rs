@@ -912,6 +912,8 @@ pub async fn converse(
     let mut muted = runtime.call.muted();
     let mut outcome = Outcome::Done;
     let mut last_delta = Instant::now();
+    // Whether a reply is being heard right now, so the start of each one is logged with its latency
+    let mut replying = false;
     loop {
         tokio::select! {
             chunk = mic.recv() => {
@@ -999,6 +1001,15 @@ pub async fn converse(
                             }
                             runtime.player.play_live(&samples);
                             if pcm::rms(&samples) > alexsay_core::session::AUDIBLE_RMS {
+                                if !replying {
+                                    replying = true;
+                                    let user_ms = session.last_user_text_ms();
+                                    info!(
+                                        after_user_ms = if user_ms > 0 { now_ms().saturating_sub(user_ms) } else { 0 },
+                                        queued_ms = runtime.player.queued_ms(),
+                                        "reply started"
+                                    );
+                                }
                                 audible_until = Instant::now() + Duration::from_millis(runtime.player.queued_ms());
                             }
                             tracing::trace!(rms = pcm::rms(&samples), queued_ms = runtime.player.queued_ms(), "reply audio");
@@ -1106,6 +1117,10 @@ pub async fn converse(
                 session.tool_finished();
             }
             _ = ticker.tick() => {
+                // A reply is over once nothing audible has played for a moment
+                if replying && Instant::now() > audible_until + Duration::from_millis(600) {
+                    replying = false;
+                }
                 // A call this speaker carries the assistant on keeps the session open until it ends
                 session.set_held(runtime.call.carried_call());
                 // The app gave up (or the server did) while the speaker was still asking

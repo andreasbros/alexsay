@@ -802,6 +802,12 @@ export const parseAgent = (text: string | null): TestAgent | null => {
   }
 };
 
+/** The one way off a call, told to the assistant in every briefing: the model must call the tool, not just go quiet. */
+const HANG_UP_RULE =
+  "Hanging up: the only way to end the call is the end_call tool. When the user says hang up, end the call, " +
+  "goodbye, bye, that's all, or that they are done, say a short goodbye and call end_call at once; never just " +
+  "fall silent or wait for them to hang up.";
+
 /** How to share a phone line, told to every AI on a call; who gives way differs by side. */
 const PHONE_ETIQUETTE =
   "Phone etiquette: one voice at a time. Listen until the other side has clearly finished, including the pause " +
@@ -880,8 +886,7 @@ async function callBrief(place: Scope, home: string, hostBrief: HostBrief | null
       "them finish, then speak. " +
       `Keep every turn short. Never read out numbers, addresses or other personal details ${home} has not asked ` +
       "you to share.",
-    `Tools: when ${home} asks you to hang up or end the call, say a brief goodbye to the other side and call ` +
-      "end_call. When they ask to add someone, use find_contact if you need the number, then add_to_call, once per " +
+    `${HANG_UP_RULE} When they ask to add someone, use find_contact if you need the number, then add_to_call, once per ` +
       "person. The other tools (contacts, memory, lights, messages) work as usual. Speak only in the language the " +
       "people on the call use.",
     notes,
@@ -907,11 +912,10 @@ async function incomingBrief(
       `music and you have just joined; they are waiting. Introduce yourself at once as Alexsay, ${home}'s assistant, ` +
       `and pass on what ${home} asked. Offer to take a message. When they give one, call take_message with their ` +
       "words (or a faithful summary that names them and what they want), tell them it will be passed on, say goodbye " +
-      "and call end_call. If they do not want to leave one, say goodbye and call end_call. Keep every turn short."
+      `and call end_call. If they do not want to leave one, say goodbye and call end_call. Keep every turn short. ${HANG_UP_RULE}`
     : `${home} answered on their speaker and is talking to the caller. Do not introduce yourself and do not speak ` +
       `first. Stay silent unless ${home} addresses you by name (Alexsay, Aleksey) or asks you something directly ` +
-      `("Alexsay, what time is my dentist?", "Alexsay, hang up"); then help briefly and go quiet again. When ${home} ` +
-      "asks you to hang up, say a brief goodbye and call end_call.";
+      `("Alexsay, what time is my dentist?", "Alexsay, hang up"); then help briefly and go quiet again. ${HANG_UP_RULE}`;
   const parts = [
     `Your name is Alexsay, pronounced "Aleksey". ${who} has called ${home}'s number. ${role} ${PHONE_ETIQUETTE} ` +
       "If you and the other side start at the same moment, you give way: stop at once, let them finish, then speak. " +
@@ -927,8 +931,7 @@ async function aloneBrief(place: Scope, home: string, task: string | undefined):
   const parts = [
     `Your name is Alexsay, pronounced "Aleksey". ${home} has called their own number from the app, so this phone ` +
       `call is just the two of you: no one else is on the line or being dialled. Greet them briefly and help as you ` +
-      `would on the speaker.${task ? ` They asked: ${task}.` : ""} When they ask you to hang up, say goodbye and call ` +
-      `end_call. ${PHONE_ETIQUETTE}`,
+      `would on the speaker.${task ? ` They asked: ${task}.` : ""} ${HANG_UP_RULE} ${PHONE_ETIQUETTE}`,
     await currentConversation(place.env.DB, home),
     contextInstructions(await loadContext(place.env.DB, home)),
   ];

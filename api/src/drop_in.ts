@@ -3,6 +3,8 @@
  * decide when one ends live here, pure, so the line bridge only applies them.
  */
 
+import { decodeMuLaw } from "./mulaw";
+
 /** How long the speaker gets to announce the caller and hear yes or no. */
 export const RING_MS = 30_000;
 /** Nobody has said anything on either side for this long: the drop-in hangs up by itself. */
@@ -37,18 +39,6 @@ export function dueToEnd(dropIn: DropIn, now: number): DropInEnd | null {
     return now - dropIn.lastSpeechAt > SILENCE_HANGUP_MS ? "silence" : null;
   }
   return null;
-}
-
-const BIAS = 0x84;
-
-/** One G.711 mu-law byte back to a 16-bit sample. */
-export function decodeMuLaw(byte: number): number {
-  const value = ~byte & 0xff;
-  const sign = value & 0x80;
-  const exponent = (value >> 4) & 0x07;
-  const mantissa = value & 0x0f;
-  const pcm = (((mantissa << 3) + BIAS) << exponent) - BIAS;
-  return sign ? -pcm : pcm;
 }
 
 /** The loudness (RMS, 0 to 1) of a base64 mu-law frame as the speaker and the app send them. */

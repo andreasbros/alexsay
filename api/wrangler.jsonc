@@ -25,13 +25,15 @@
     "bindings": [
       { "name": "CALL_AGENT", "class_name": "CallAgent" },
       { "name": "LINE_BRIDGE", "class_name": "LineBridge" },
-      { "name": "SCHEDULER", "class_name": "Scheduler" }
+      { "name": "SCHEDULER", "class_name": "Scheduler" },
+      { "name": "LIVE_SEAT", "class_name": "LiveSeat" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["CallAgent"] },
     { "tag": "v2", "new_sqlite_classes": ["LineBridge"] },
-    { "tag": "v3", "new_sqlite_classes": ["Scheduler"] }
+    { "tag": "v3", "new_sqlite_classes": ["Scheduler"] },
+    { "tag": "v4", "new_sqlite_classes": ["LiveSeat"] }
   ],
   "vars": {
     "OPENAI_BASE_URL": "https://api.openai.com/v1",

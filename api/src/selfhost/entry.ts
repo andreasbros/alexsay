@@ -5,6 +5,7 @@ import { hashPassword } from "../crypto";
 import { purgeExpired } from "../db";
 import api from "../index";
 import { LineBridge as CloudLineBridge } from "../line_bridge";
+import { LiveSeat as CloudLiveSeat } from "../live_seat";
 import { Scheduler as CloudScheduler } from "../scheduler";
 import { assetsBinding } from "./assets";
 import { D1Shim, type D1Store } from "./d1";
@@ -44,6 +45,12 @@ export class CallAgent extends CloudCallAgent {
 }
 
 export class LineBridge extends CloudLineBridge {
+  constructor(ctx: DurableObjectState, env: SelfHostEnv) {
+    super(ctx, envFor(env));
+  }
+}
+
+export class LiveSeat extends CloudLiveSeat {
   constructor(ctx: DurableObjectState, env: SelfHostEnv) {
     super(ctx, envFor(env));
   }

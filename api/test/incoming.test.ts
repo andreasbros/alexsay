@@ -432,7 +432,7 @@ describe("incoming calls and messages", () => {
       {
         api_key: "sk-test-0123456789abcdefghijklmnop",
         webhook_secret: OPENAI_SECRET,
-        settings: { project_id: "proj_abc12345" },
+        settings: { project_id: "proj_abc12345", call_engine: "realtime" },
       },
       cookie,
     );

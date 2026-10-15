@@ -100,7 +100,10 @@ export type UpstreamHandler = (req: Request, body: string) => Response | Promise
  * Replaces global fetch for calls that leave the Worker (OpenAI, Lightwave). Keys are
  * `METHOD url`; every handler must be hit once, and anything unexpected throws.
  */
-export function mockUpstream(routes: Record<string, UpstreamHandler>): { calls: Request[]; done: () => void } {
+export function mockUpstream(
+  routes: Record<string, UpstreamHandler>,
+  options: { passThrough?: (url: string) => boolean } = {},
+): { calls: Request[]; done: () => void } {
   const pending = new Set(Object.keys(routes));
   const calls: Request[] = [];
   const original = globalThis.fetch;
@@ -112,6 +115,10 @@ export function mockUpstream(routes: Record<string, UpstreamHandler>): { calls: 
       key in routes ? key : Object.keys(routes).find((k) => k.endsWith("*") && key.startsWith(k.slice(0, -1)));
     const handler = matched ? routes[matched] : undefined;
     if (!handler || !matched) {
+      // The real-model tests let OpenAI through while Twilio stays mocked
+      if (options.passThrough?.(req.url)) {
+        return original(input, init);
+      }
       throw new Error(`unexpected upstream call ${key}`);
     }
     pending.delete(matched);

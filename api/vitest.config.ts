@@ -6,6 +6,16 @@ export default defineConfig(async () => ({
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
+        // GPT-Live's socket for the call seat tests: a relay in a worker of its own (see test/fake_live.mjs)
+        serviceBindings: { FAKE_LIVE: "fake-live" },
+        workers: [
+          {
+            name: "fake-live",
+            modules: true,
+            scriptPath: "./test/fake_live.mjs",
+            durableObjects: { RELAY: "Relay" },
+          },
+        ],
         bindings: {
           TEST_MIGRATIONS: await readD1Migrations("./migrations"),
           SECRETS_KEY: "11".repeat(32),

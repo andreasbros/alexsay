@@ -19,4 +19,5 @@ export const DEFAULT_OPENAI: OpenAiSettings = {
   respond_when_addressed: false,
   project_id: "",
   call_model: "gpt-realtime",
+  call_engine: "live",
 };

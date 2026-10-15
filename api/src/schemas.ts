@@ -48,6 +48,12 @@ export const openaiSettings = z.object({
     .default(""),
   /** The realtime model that answers the SIP leg of a phone call. */
   call_model: z.string().trim().min(1).max(64).default("gpt-realtime"),
+  /**
+   * How the assistant joins phone calls: `live`, a GPT-Live session the server bridges into the call's
+   * audio (full duplex, the speaker's model); or `realtime`, the Realtime API over SIP (needs the project id
+   * and webhook secret). Live falls back to realtime when it cannot be seated.
+   */
+  call_engine: z.enum(["live", "realtime"]).default("live"),
 });
 export type OpenAiSettings = z.infer<typeof openaiSettings>;
 

@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { type TwilioConnection, twilioFromRow } from "../connections";
 import { bridges, calls, connections, contacts, devices, messages } from "../db";
 import { allowed, callerLabel, incomingCall, notify } from "../incoming";
+import { liveSeatName } from "../live_seat";
 import { logFor } from "../log";
 import { serverOrigin } from "../origin";
 import { bareNumber, normalisePhone, WHATSAPP_PREFIX } from "../phone";
@@ -15,6 +16,7 @@ import {
   guestAnswered,
   guestUnanswered,
   hostAnswered,
+  LIVE_BRIDGE_PREFIX,
   streamUrl,
 } from "../telephony";
 import { dialOutTwiml, emptyTwiml, rejectTwiml, streamTwiml } from "../twiml";
@@ -50,6 +52,11 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
         return xml(c, rejectTwiml("No speaker is waiting for this call.", owner.connection.settings.voice));
       }
       await bridges.use(c.env.DB, bridge.token, Date.now());
+      if (bridge.device_id.startsWith(LIVE_BRIDGE_PREFIX)) {
+        // A GPT-Live seat: the stream carries the conference to the seat object, nothing else to start
+        await logFor(place, owner.home, "info", `call ${bridge.conference}: streaming to the GPT-Live seat`);
+        return xml(c, streamTwiml(streamUrl(place, bridge.token), bridge.conference, "assistant"));
+      }
       const host = await calls.hostLeg(c.env.DB, owner.home, bridge.conference);
       if (host) {
         await calls.setStatus(c.env.DB, host.sid ?? "", "in-progress");
@@ -191,6 +198,16 @@ export const twilioStreamRoute = new Hono<AppEnv>().get("/stream/:token", async 
   const bridge = await bridges.get(c.env.DB, c.req.param("token"));
   if (!bridge || bridge.created_at < Date.now() - BRIDGE_WINDOW_MS * 4) {
     return c.text("forbidden", 403);
+  }
+  if (bridge.device_id.startsWith(LIVE_BRIDGE_PREFIX)) {
+    const legId = bridge.device_id.slice(LIVE_BRIDGE_PREFIX.length);
+    const seat = c.env.LIVE_SEAT.get(c.env.LIVE_SEAT.idFromName(liveSeatName(legId)));
+    const url = new URL("https://seat/twilio");
+    url.searchParams.set("leg", legId);
+    url.searchParams.set("conference", bridge.conference);
+    url.searchParams.set("home", bridge.home_id);
+    url.searchParams.set("origin", serverOrigin(c));
+    return seat.fetch(url.toString(), { headers: { upgrade: "websocket" } });
   }
   const line = c.env.LINE_BRIDGE.get(c.env.LINE_BRIDGE.idFromName(bridge.device_id));
   const url = new URL("https://line/twilio");

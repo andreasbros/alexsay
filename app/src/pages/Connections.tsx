@@ -248,9 +248,26 @@ function OpenAiCard({ connection }: { connection: Connection | undefined }) {
               value={webhookSecret}
               onChange={(e) => setWebhookSecret(e.target.value)}
             />
+            <Flex direction="column" gap="1">
+              <Text size="1" color="gray">
+                On phone calls
+              </Text>
+              <Select.Root
+                value={settings.call_engine ?? "live"}
+                onValueChange={(call_engine) =>
+                  setSettings({ ...settings, call_engine: call_engine as "live" | "realtime" })
+                }
+              >
+                <Select.Trigger aria-label="Call engine" />
+                <Select.Content>
+                  <Select.Item value="live">GPT-Live (full duplex, bridged by the server)</Select.Item>
+                  <Select.Item value="realtime">Realtime API over SIP (needs the project id)</Select.Item>
+                </Select.Content>
+              </Select.Root>
+            </Flex>
             <TextField.Root
               aria-label="Call model"
-              placeholder="Call model"
+              placeholder="Call model (Realtime API)"
               value={settings.call_model}
               onChange={(e) => setSettings({ ...settings, call_model: e.target.value })}
             />

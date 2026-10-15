@@ -50,8 +50,15 @@ export const hangupTwiml = () => response("<Hangup/>");
  * conference as host, and the inbound side of that call carries the conference to the speaker.
  */
 export const conferenceHostTwiml = (conference: string, conferenceStatusCallback: string) =>
+  conferenceSeatTwiml(conference, conferenceStatusCallback, true);
+
+/**
+ * A self-call that sits in the conference: as host (starts it on entering, ends it on leaving) or as a
+ * plain participant. The inbound side of the call streams the conference to whoever holds the seat.
+ */
+export const conferenceSeatTwiml = (conference: string, conferenceStatusCallback: string, host: boolean) =>
   response(
-    `<Dial><Conference beep="false" startConferenceOnEnter="true" endConferenceOnExit="true" ` +
+    `<Dial><Conference beep="false" startConferenceOnEnter="${host}" endConferenceOnExit="${host}" ` +
       `statusCallback="${escapeXml(conferenceStatusCallback)}" statusCallbackEvent="start end join leave">` +
       `${escapeXml(conference)}</Conference></Dial>`,
   );

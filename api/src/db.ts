@@ -716,17 +716,18 @@ export const calls = {
    * both try; the unique index lets exactly one through.
    */
   /** The assistant's seat, with its briefing already in place for OpenAI's webhook, which may come first. */
+  /** The assistant's one seat per conference; `phone` names the engine holding it ("assistant" over SIP, "assistant:live"). */
   claimAssistant: async (
     db: D1Database,
-    row: { id: string; home_id: string; conference: string; brief: string; at: number },
+    row: { id: string; home_id: string; conference: string; brief: string; at: number; phone?: string },
   ) => {
     try {
       await db
         .prepare(
           `INSERT INTO calls (id, home_id, contact_id, direction, kind, phone, conference, role, brief, sid, status, at)
-           VALUES (?, ?, NULL, 'out', 'conference', 'assistant', ?, 'assistant', ?, NULL, 'dialling', ?)`,
+           VALUES (?, ?, NULL, 'out', 'conference', ?, ?, 'assistant', ?, NULL, 'dialling', ?)`,
         )
-        .bind(row.id, row.home_id, row.conference, row.brief, row.at)
+        .bind(row.id, row.home_id, row.phone ?? "assistant", row.conference, row.brief, row.at)
         .run();
       return true;
     } catch {

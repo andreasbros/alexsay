@@ -445,7 +445,7 @@ async function connectOpenaiForCalls(cookie: string): Promise<void> {
     {
       api_key: "sk-test-0123456789abcdefghijklmnop",
       webhook_secret: `whsec_${btoa("a-secret-of-some-length-1234")}`,
-      settings: { project_id: "proj_abc12345" },
+      settings: { project_id: "proj_abc12345", call_engine: "realtime" },
     },
     cookie,
   );

@@ -715,7 +715,12 @@ describe("twilio", () => {
     expect(logged.results.map((r) => r.message)).toContain(`call ${name}: ${MUM} busy`);
 
     // Without the OpenAI SIP setup, the same call still opens in the browser, just without the assistant
-    await json(`${APP}/api/connections/openai`, "PUT", { settings: { project_id: "" } }, maria);
+    await json(
+      `${APP}/api/connections/openai`,
+      "PUT",
+      { settings: { project_id: "", call_engine: "realtime" } },
+      maria,
+    );
     const plain = mockUpstream({
       [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: `CA${crypto.randomUUID()}`, status: "queued" }),
     });
@@ -1106,7 +1111,7 @@ describe("twilio", () => {
       {
         api_key: "sk-test-0123456789abcdefghijklmnop",
         webhook_secret: WEBHOOK_SECRET,
-        settings: { project_id: "proj_abc12345" },
+        settings: { project_id: "proj_abc12345", call_engine: "realtime" },
       },
       maria,
     );

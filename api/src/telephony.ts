@@ -1,6 +1,13 @@
-import { canJoinCalls, openaiConnection, type TwilioConnection, twilioConnection } from "./connections";
+import {
+  canJoinCalls,
+  type OpenAiConnection,
+  openaiConnection,
+  type TwilioConnection,
+  twilioConnection,
+} from "./connections";
 import { bridges, type CallRow, calls, contacts, messages } from "./db";
 import { notifyHome } from "./device_channel";
+import { liveSeatName } from "./live_seat";
 import { type Locale, localeInstructions } from "./locale";
 import { logFor } from "./log";
 import { contextInstructions, currentConversation, loadContext } from "./memory";
@@ -20,7 +27,7 @@ import {
   type Webhooks,
 } from "./providers/twilio";
 import type { Recipient } from "./recipients";
-import { announceTwiml, conferenceHostTwiml, digitsTwiml } from "./twiml";
+import { announceTwiml, conferenceHostTwiml, conferenceSeatTwiml, digitsTwiml } from "./twiml";
 import type { CallSpeaker, Channel, Scope, ToolContext, VoiceClient } from "./types";
 
 /** A precondition the user can fix in Connections, told apart from a Twilio failure. */
@@ -69,10 +76,23 @@ export interface Conference {
 /** Why the assistant cannot be seated on this user's calls, or null when it can. */
 async function assistantAbsence(place: Place, home: string): Promise<string | null> {
   if (!isPublicOrigin(place.origin)) {
-    return "the server has no public address for OpenAI's call webhook";
+    return "the server has no public address for the call's audio and OpenAI's webhooks";
   }
-  return canJoinCalls(await openaiConnection(place, home)) ? null : "OpenAI phone calls are not set up";
+  const openai = await openaiConnection(place, home);
+  if (!openai) {
+    return "OpenAI is not connected";
+  }
+  if (openai.settings.call_engine === "live" || canJoinCalls(openai)) {
+    return null;
+  }
+  return "OpenAI phone calls over the Realtime API need the project id and webhook secret";
 }
+
+/** Whether a seat goes through GPT-Live (bridged by the server) rather than the Realtime API over SIP. */
+const liveEngine = (openai: OpenAiConnection | null) => openai?.settings.call_engine !== "realtime";
+
+/** A bridge token that names a GPT-Live seat's leg rather than a speaker. */
+export const LIVE_BRIDGE_PREFIX = "live:";
 
 /** A scripted AI that answers a test call over SIP, playing a part the user dictated. */
 export interface TestAgent {
@@ -460,6 +480,9 @@ const errorText = (err: unknown) =>
 async function dialGuest(place: Place, home: string, connection: Ready, conference: string, guest: Guest) {
   const now = Date.now();
   const id = crypto.randomUUID();
+  if (guest.agent && liveEngine(await openaiConnection(place, home))) {
+    return dialLiveAgent(place, home, connection, conference, guest, id, now);
+  }
   const to = guest.agent ? await agentSipUri(place, home, conference, id) : guest.phone;
   const leg = await addParticipant(connection.client, conference, {
     to,
@@ -490,6 +513,78 @@ async function dialGuest(place: Place, home: string, connection: Ready, conferen
   return placed(leg, { phone: guest.phone, contact: null });
 }
 
+/** A scripted test agent held by a GPT-Live session: its leg is a self-call streamed to a seat object. */
+async function dialLiveAgent(
+  place: Place,
+  home: string,
+  connection: Ready,
+  conference: string,
+  guest: Guest,
+  id: string,
+  now: number,
+): Promise<Placed> {
+  await calls.create(place.env.DB, {
+    id,
+    home_id: home,
+    contact_id: null,
+    direction: "out",
+    kind: "conference",
+    phone: guest.phone,
+    conference,
+    role: "guest",
+    brief: JSON.stringify(guest.agent),
+    sid: null,
+    status: "dialling",
+    at: now,
+  });
+  const leg = await selfCallSeat(place, home, connection, conference, id, false);
+  await logFor(
+    place,
+    home,
+    "info",
+    `call ${conference}: dialled ${guest.name ?? guest.phone} over GPT-Live (${leg.status})`,
+  );
+  return placed(leg, { phone: guest.phone, contact: null });
+}
+
+/**
+ * The number calls itself for a GPT-Live seat: the outbound side joins the conference, the inbound
+ * side is answered with a stream to the seat object named after the leg. The bridge token ties the
+ * two together, as for a speaker's line. A leg that could not be dialled is removed.
+ */
+async function selfCallSeat(
+  place: Place,
+  home: string,
+  connection: Ready,
+  conference: string,
+  legId: string,
+  host: boolean,
+): Promise<Sent> {
+  const token = crypto.randomUUID();
+  await bridges.create(place.env.DB, {
+    token,
+    home_id: home,
+    device_id: `${LIVE_BRIDGE_PREFIX}${legId}`,
+    conference,
+    at: Date.now(),
+  });
+  let leg: Sent;
+  try {
+    leg = await createCall(connection.client, {
+      to: connection.from,
+      from: connection.from,
+      twiml: conferenceSeatTwiml(conference, conferenceStatusCallbackUrl(place), host),
+      statusCallback: statusCallbackUrl(place),
+    });
+  } catch (err) {
+    await bridges.remove(place.env.DB, token);
+    await calls.removeLeg(place.env.DB, legId);
+    throw err;
+  }
+  await calls.setLeg(place.env.DB, legId, leg.sid, leg.status);
+  return leg;
+}
+
 /** A guest picked up: logged, and the assistant on the line is told so it never has to guess. */
 export async function guestAnswered(place: Place, guestLeg: CallRow): Promise<void> {
   await logFor(place, guestLeg.home_id, "info", `call ${guestLeg.conference}: ${guestLeg.phone} answered`);
@@ -507,11 +602,18 @@ async function tellAssistant(place: Scope, leg: CallRow, text: string, reply: bo
   if (!leg.conference) {
     return;
   }
-  const agent = place.env.CALL_AGENT.get(place.env.CALL_AGENT.idFromName(assistantAgentName(leg.conference)));
-  await agent
-    .fetch("https://call-agent/notify", { method: "POST", body: JSON.stringify({ text, reply }) })
+  const seat = await calls.assistantLeg(place.env.DB, leg.conference);
+  const holder =
+    seat?.phone === LIVE_SEAT_PHONE
+      ? place.env.LIVE_SEAT.get(place.env.LIVE_SEAT.idFromName(liveSeatName(seat.id)))
+      : place.env.CALL_AGENT.get(place.env.CALL_AGENT.idFromName(assistantAgentName(leg.conference)));
+  await holder
+    .fetch("https://seat/notify", { method: "POST", body: JSON.stringify({ text, reply }) })
     .catch(() => undefined);
 }
+
+/** The `phone` of an assistant seat held by GPT-Live, as opposed to "assistant" over SIP. */
+export const LIVE_SEAT_PHONE = "assistant:live";
 
 /** The assistant's realtime socket lives in one object per conference, so call events can reach it. */
 export const assistantAgentName = (conference: string) => `assistant:${conference}`;
@@ -555,7 +657,52 @@ export async function seatAssistant(
   asHost = false,
 ): Promise<void> {
   const openai = await openaiConnection(place, home);
-  if (!canJoinCalls(openai) || !isPublicOrigin(place.origin)) {
+  if (!openai || !isPublicOrigin(place.origin)) {
+    return;
+  }
+  if (liveEngine(openai)) {
+    try {
+      await seatLive(place, home, conference, hostBrief, asHost);
+      return;
+    } catch (err) {
+      if (!canJoinCalls(openai)) {
+        throw err;
+      }
+      await logFor(
+        place,
+        home,
+        "warn",
+        `call ${conference}: GPT-Live seat failed (${errorText(err)}); trying the Realtime API`,
+      );
+    }
+  }
+  if (!canJoinCalls(openai)) {
+    return;
+  }
+  await seatRealtime(place, home, conference, hostBrief, asHost);
+}
+
+/** The assistant's seat as a GPT-Live session bridged into the conference by this server. */
+async function seatLive(place: Place, home: string, conference: string, hostBrief: HostBrief, asHost: boolean) {
+  const brief = await callBrief(place, home, hostBrief);
+  const seat = { id: crypto.randomUUID(), home_id: home, conference, brief, at: Date.now(), phone: LIVE_SEAT_PHONE };
+  if (!(await calls.claimAssistant(place.env.DB, seat))) {
+    return;
+  }
+  const connection = await ready(place, home);
+  await selfCallSeat(place, home, connection, conference, seat.id, asHost);
+  await logFor(
+    place,
+    home,
+    "info",
+    `call ${conference}: assistant seat dialled for GPT-Live${asHost ? " as host" : ""}`,
+  );
+}
+
+/** The assistant's seat as a Realtime API session, dialled in over SIP; OpenAI's webhook accepts it. */
+async function seatRealtime(place: Place, home: string, conference: string, hostBrief: HostBrief, asHost: boolean) {
+  const openai = await openaiConnection(place, home);
+  if (!canJoinCalls(openai)) {
     return;
   }
   const brief = await callBrief(place, home, hostBrief);
@@ -609,7 +756,11 @@ export async function placeTestCall(
   options: { task?: string; host: VoiceClient },
 ): Promise<Conference> {
   const connection = await ready(c, home);
-  await agentSipUri(c, home, "check", "check");
+  if (!liveEngine(await openaiConnection(c, home))) {
+    await agentSipUri(c, home, "check", "check");
+  } else if (!(await openaiConnection(c, home))) {
+    throw new TelephonyError("no_openai", "OpenAI is not connected");
+  }
   return openConference(c, home, connection, [agentGuest(agent)], options.host, options.task);
 }
 

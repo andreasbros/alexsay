@@ -51,6 +51,8 @@ export interface OpenAiSettings {
   respond_when_addressed: boolean;
   project_id: string;
   call_model: string;
+  /** How the assistant joins phone calls: GPT-Live bridged by the server, or the Realtime API over SIP. */
+  call_engine: "live" | "realtime";
 }
 
 export type VoiceClient = "browser" | "speaker" | "mobile";

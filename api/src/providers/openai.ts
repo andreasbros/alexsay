@@ -216,6 +216,42 @@ export function turnDetection(turnTaking: TurnTaking): Record<string, unknown> {
 /** The call's audio is a phone line: a handset or a speakerphone close by, so near-field noise reduction fits. */
 export const NOISE_REDUCTION = { type: "near_field" } as const;
 
+/** The audio GPT-Live exchanges with the server's call seat: PCM16 at 16 kHz, as the speaker uses. */
+export const LIVE_CALL_RATE = 16_000;
+
+/**
+ * The GPT-Live session for a seat on a phone call: the briefing alone as its instructions (the
+ * speaker's house rules do not apply on a line), the seat's tools, and a voice.
+ */
+export function liveCallSession(
+  settings: OpenAiSettings,
+  functions: LiveTool[],
+  briefing: string,
+  voice: string = settings.voice,
+): Record<string, unknown> {
+  return {
+    model: settings.model,
+    instructions: briefing,
+    audio: { output: { voice }, format: { type: "audio/pcm", rate: LIVE_CALL_RATE } },
+    delegation: {
+      type: "responses",
+      responses: {
+        model: settings.backend_model,
+        instructions: briefing,
+        tools: functions,
+        tool_choice: "auto",
+        reasoning: { effort: "low" },
+        text: { verbosity: "low" },
+      },
+    },
+  };
+}
+
+/** GPT-Live's socket on the provider's base (`.../v1` becomes `.../v1/live/sessions`; Workers upgrade over https). */
+export function liveSocketUrl(baseUrl: string): string {
+  return `${baseUrl.replace(/^wss?:/, "https:").replace(/\/+$/, "")}/live/sessions`;
+}
+
 /** Answers a SIP call OpenAI announced through realtime.call.incoming with a configured realtime session. */
 export async function acceptCall(baseUrl: string, apiKey: string, callId: string, session: CallSession): Promise<void> {
   const res = await fetch(`${baseUrl}/realtime/calls/${encodeURIComponent(callId)}/accept`, {

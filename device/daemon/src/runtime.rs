@@ -176,7 +176,7 @@ impl Runtime {
         if !self.call.muted()
             && let Some(line) = &self.line
         {
-            if self.call.drop_in() {
+            if self.call.drop_in() || self.call.carries_assistant() {
                 let mut mixed = chunk.to_vec();
                 self.call
                     .mixer
@@ -191,9 +191,10 @@ impl Runtime {
         true
     }
 
-    /// The drop-in keeps the speaker open for the wake word: a phone call takes it over entirely.
+    /// A drop-in, or a call this speaker carries the assistant on, keeps the speaker its own; any other
+    /// phone call takes it over entirely (a server seat is the assistant there).
     fn call_takes_the_speaker(&self) -> bool {
-        self.call.on_call() && !self.call.drop_in()
+        self.call.on_call() && !self.call.drop_in() && !self.call.carries_assistant()
     }
 
     /// Whether the offer being asked about has been withdrawn (consumed once).
@@ -265,6 +266,7 @@ impl Runtime {
 }
 
 /// What the phone line reports: a call starting, its audio, its end (then the report for the assistant).
+#[allow(clippy::too_many_lines)]
 async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<LineSignal>) {
     // What the call sent us, so a silent call shows whether the audio never came or never played
     let mut heard = CallAudio::default();
@@ -274,15 +276,29 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
                 conference,
                 who,
                 kind,
+                assistant,
             } => {
                 let drop_in = kind == "drop_in";
-                info!(conference = %conference, who = %who, kind = if drop_in { "drop-in" } else { "phone" }, "on a call");
-                // The drop-in opens while the assistant is still saying so: that is heard out
-                if !drop_in {
+                let carried = !drop_in && assistant == "speaker";
+                info!(
+                    conference = %conference,
+                    who = %who,
+                    kind = if drop_in { "drop-in" } else { "phone" },
+                    assistant = if carried { "this speaker" } else { "elsewhere" },
+                    "on a call"
+                );
+                // A drop-in opens while the assistant is still saying so, and a carried call keeps its session: heard out
+                if !drop_in && !carried {
                     runtime.player.clear();
                 }
-                runtime.call.begin(&conference, &kind, &who);
+                runtime
+                    .call
+                    .begin_with(&conference, &kind, &who, &assistant);
                 heard = CallAudio::default();
+                // The assistant is present for the whole of a carried call: a session opens if none is on
+                if carried && !runtime.in_session.load(Ordering::Relaxed) {
+                    let _ = runtime.openings_tx.send(Opening::Call);
+                }
             }
             LineSignal::Audio(samples) => {
                 // While the assistant answers in the room the far side waits (they still hear the room)
@@ -293,10 +309,20 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
                     tracing::debug!(rms = pcm::rms(&samples), "first call audio from the line");
                 }
                 heard.add(&samples, runtime.player.queued_ms());
+                // On a carried call the session hears the far side too (echo cancelling takes it out of the microphone)
+                if runtime.call.carried_call() {
+                    runtime
+                        .call
+                        .far_in
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(&samples);
+                }
                 runtime.player.play_live(&samples);
             }
             LineSignal::CallEnd => {
                 let drop_in = runtime.call.drop_in();
+                let carried = runtime.call.carried_call();
                 let Some(conference) = runtime.call.end() else {
                     continue;
                 };
@@ -309,8 +335,9 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
                 );
                 runtime.player.clear();
                 runtime.play_clip(sounds::END);
-                // A phone call leaves a report for the assistant; a drop-in leaves nothing to tell
-                if !drop_in {
+                // A phone call with a server seat leaves a report for the assistant; a drop-in, or a call the
+                // assistant was on from this speaker, leaves nothing to tell
+                if !drop_in && !carried {
                     let handed = Arc::clone(&runtime);
                     tokio::spawn(async move { hand_back(&handed, &conference).await });
                 }
@@ -619,6 +646,8 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
             Some(opening) = openings.recv() => {
                 match &opening {
                     Opening::Report(_) if runtime.call.on_call() => continue,
+                    // The call has ended by the time its opening is read: nothing to join
+                    Opening::Call if !runtime.call.carried_call() => continue,
                     Opening::DropIn { .. } | Opening::IncomingCall { .. } => runtime.play_clip(sounds::DROP_IN),
                     _ => {}
                 }
@@ -731,6 +760,9 @@ pub enum Opening {
         conference: String,
         who: String,
     },
+    /// A phone call this speaker carries the assistant on has started: the session stays with it
+    /// (who is on it is read from the call state).
+    Call,
 }
 
 /// A number as the assistant should say it: spaced in groups, never one long figure.
@@ -817,12 +849,16 @@ pub async fn converse(
         Opening::Snooze { preroll, note } => (preroll, Some(note)),
         Opening::DropIn { from, .. } => (Vec::new(), Some(drop_in::offer_note(&from))),
         Opening::IncomingCall { who, .. } => (Vec::new(), Some(incoming::offer_note(&who))),
+        Opening::Call => (Vec::new(), None),
     };
-    // Said nothing about until the user speaks: a drop-in is on, and who is on it
-    let mut context = runtime
-        .call
-        .drop_in()
-        .then(|| drop_in::open_note(&runtime.call.who()));
+    // Said nothing about until the user speaks: a drop-in or a call is on, and who is on it
+    let mut context = if runtime.call.drop_in() {
+        Some(drop_in::open_note(&runtime.call.who()))
+    } else if runtime.call.carried_call() {
+        Some(incoming::on_call_note(&runtime.call.who()))
+    } else {
+        None
+    };
     let own_tools = if ringing_call {
         incoming::offer_tools()
     } else if offer.is_some() {
@@ -905,7 +941,11 @@ pub async fn converse(
                 if decision.speech {
                     session.heard_user(now_ms());
                 }
-                let chunk = if decision.send { chunk } else { vec![0; chunk.len()] };
+                let mut chunk = if decision.send { chunk } else { vec![0; chunk.len()] };
+                // On a carried call the far side is in what the session hears
+                if runtime.call.carried_call() {
+                    runtime.call.far_in.lock().unwrap_or_else(std::sync::PoisonError::into_inner).mix_into(&mut chunk);
+                }
                 if allow_audio {
                     backlog.extend(chunk);
                     while backlog.len() >= AUDIO_CHUNK {
@@ -947,7 +987,8 @@ pub async fn converse(
                                 continue;
                             }
                             let samples = pcm::decode(&delta);
-                            if runtime.call.drop_in() {
+                            // The far side of a drop-in or a carried call hears the reply too
+                            if runtime.call.drop_in() || runtime.call.carried_call() {
                                 runtime.call.mixer.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(&samples);
                             }
                             // Reply audio must arrive at least as fast as it plays, or the listener hears gaps
@@ -1065,14 +1106,16 @@ pub async fn converse(
                 session.tool_finished();
             }
             _ = ticker.tick() => {
+                // A call this speaker carries the assistant on keeps the session open until it ends
+                session.set_held(runtime.call.carried_call());
                 // The app gave up (or the server did) while the speaker was still asking
                 if let Some(id) = &offer && runtime.offer_withdrawn(id) {
                     info!("the drop-in offer was withdrawn");
                     live.send(ClientEvent::SessionClose);
                     break;
                 }
-                // An alarm going off ends the conversation, so the listening loop can ring it
-                if !ring_session && !runtime.alarms.due(alarms::now_ms()).is_empty() {
+                // An alarm going off ends the conversation, so the listening loop can ring it (not mid-call: it waits)
+                if !ring_session && !runtime.call.on_call() && !runtime.alarms.due(alarms::now_ms()).is_empty() {
                     info!("an alarm is due: closing the conversation");
                     live.send(ClientEvent::SessionClose);
                     break;

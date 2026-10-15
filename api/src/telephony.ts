@@ -5,7 +5,7 @@ import {
   type TwilioConnection,
   twilioConnection,
 } from "./connections";
-import { bridges, type CallRow, calls, contacts, messages } from "./db";
+import { bridges, type CallRow, calls, contacts, devices, messages } from "./db";
 import { notifyHome } from "./device_channel";
 import { liveSeatName } from "./live_seat";
 import { type Locale, localeInstructions } from "./locale";
@@ -29,6 +29,7 @@ import {
 import type { Recipient } from "./recipients";
 import { announceTwiml, conferenceHostTwiml, conferenceSeatTwiml, digitsTwiml } from "./twiml";
 import type { CallSpeaker, Channel, Scope, ToolContext, VoiceClient } from "./types";
+import { speakerCarriesAssistant } from "./version";
 
 /** A precondition the user can fix in Connections, told apart from a Twilio failure. */
 export class TelephonyError extends Error {
@@ -158,6 +159,20 @@ export interface HostBrief {
   incoming?: CallerInfo;
   /** The user rang their own number: nobody else to dial, the assistant joins them alone. */
   alone?: boolean;
+  /**
+   * The host is a speaker whose own GPT-Live session stays on the call as the assistant (the far side
+   * mixed into what it hears, its replies into the line), so no seat is dialled from the server.
+   */
+  assistant_on_speaker?: boolean;
+}
+
+/** Whether the speaker a call is taken on carries the assistant itself, from the version it reports. */
+export async function carriesAssistant(scope: Scope, device: string | undefined): Promise<boolean> {
+  if (!device) {
+    return false;
+  }
+  const row = await devices.get(scope.env.DB, device);
+  return speakerCarriesAssistant(row?.firmware);
 }
 
 /** Where the app lives, for the URLs Twilio calls back; a tool context or a webhook request both know it. */
@@ -314,7 +329,13 @@ async function openConference(
   const own = connection.settings.my_number;
   const others = own ? guests.filter((g) => g.phone !== own) : guests;
   const alone = guests.length > 0 && others.length === 0;
-  const brief: HostBrief = { task, guests: others, ...(alone ? { alone: true } : {}) };
+  const onSpeaker = host === "speaker" && (await carriesAssistant(c, c.device));
+  const brief: HostBrief = {
+    task,
+    guests: others,
+    ...(alone ? { alone: true } : {}),
+    ...(onSpeaker ? { assistant_on_speaker: true } : {}),
+  };
   const hostLeg =
     host === "speaker"
       ? await ringSpeaker(c, home, connection, conference)
@@ -406,73 +427,54 @@ export async function hostAnswered(place: Place, hostLeg: CallRow): Promise<void
   if (!(await calls.claimDialling(place.env.DB, hostLeg.id))) {
     return;
   }
+  const home = hostLeg.home_id;
+  const conference = hostLeg.conference;
+  const seatFailed = async (err: unknown) => {
+    await logFor(place, home, "error", `call ${conference}: seating the assistant failed: ${errorText(err)}`);
+  };
+  // A speaker that carries the assistant itself needs no seat from the server
+  const seat = brief.assistant_on_speaker
+    ? Promise.resolve()
+    : seatAssistant(place, home, conference, brief).catch(seatFailed);
   if (brief.alone) {
-    await seatAssistant(place, hostLeg.home_id, hostLeg.conference, brief).catch(async (err: unknown) => {
-      await logFor(
-        place,
-        hostLeg.home_id,
-        "error",
-        `call ${hostLeg.conference}: seating the assistant failed: ${errorText(err)}`,
-      );
-    });
+    await seat;
     return;
   }
   if (brief.incoming) {
-    // The caller is already on: the other ringing sides stop, this side's hang-up now ends the call, the assistant joins quietly
-    await cancelOtherRinging(place, hostLeg.home_id, hostLeg.conference, hostLeg.sid);
+    // The caller is already on: the other ringing sides stop and this side's hang-up now ends the call
+    await cancelOtherRinging(place, home, conference, hostLeg.sid);
     if (hostLeg.sid) {
-      const connection = await twilioConnection(place, hostLeg.home_id);
+      const connection = await twilioConnection(place, home);
       if (connection) {
-        await endConferenceOnExit(connection.client, hostLeg.conference, hostLeg.sid).catch(async (err: unknown) => {
-          await logFor(
-            place,
-            hostLeg.home_id,
-            "warn",
-            `call ${hostLeg.conference}: could not pin the end to the host: ${errorText(err)}`,
-          );
+        await endConferenceOnExit(connection.client, conference, hostLeg.sid).catch(async (err: unknown) => {
+          await logFor(place, home, "warn", `call ${conference}: could not pin the end to the host: ${errorText(err)}`);
         });
       }
     }
-    await seatAssistant(place, hostLeg.home_id, hostLeg.conference, brief).catch(async (err: unknown) => {
-      await logFor(
-        place,
-        hostLeg.home_id,
-        "error",
-        `call ${hostLeg.conference}: seating the assistant failed: ${errorText(err)}`,
-      );
-    });
+    await seat;
     return;
   }
   await logFor(
     place,
-    hostLeg.home_id,
+    home,
     "info",
-    `call ${hostLeg.conference}: host is on, dialling ${brief.guests.length}`,
+    `call ${conference}: host is on, dialling ${brief.guests.length}${brief.assistant_on_speaker ? "; the speaker is the assistant" : ""}`,
   );
-  const connection = await ready(place, hostLeg.home_id);
-  const conference = hostLeg.conference;
+  const connection = await ready(place, home);
   // One guest failing must not leave the others undialled or the assistant off the call
   await Promise.all([
     ...brief.guests.map((guest) =>
-      dialGuest(place, hostLeg.home_id, connection, conference, guest).catch(async (err: unknown) => {
-        await logFor(
-          place,
-          hostLeg.home_id,
-          "error",
-          `call ${conference}: dialling ${guest.phone} failed: ${errorText(err)}`,
-        );
+      dialGuest(place, home, connection, conference, guest).catch(async (err: unknown) => {
+        await logFor(place, home, "error", `call ${conference}: dialling ${guest.phone} failed: ${errorText(err)}`);
       }),
     ),
-    seatAssistant(place, hostLeg.home_id, conference, brief).catch(async (err: unknown) => {
-      await logFor(
-        place,
-        hostLeg.home_id,
-        "error",
-        `call ${conference}: seating the assistant failed: ${errorText(err)}`,
-      );
-    }),
+    seat,
   ]);
 }
+
+/** Whether the speaker hosting this leg's call is the assistant on it (so the stream says so). */
+export const hostCarriesAssistant = (leg: CallRow | null): boolean =>
+  parseBrief(leg?.brief ?? null)?.assistant_on_speaker === true;
 
 const errorText = (err: unknown) =>
   err instanceof ProviderError ? err.detail : err instanceof Error ? err.message : "failed";

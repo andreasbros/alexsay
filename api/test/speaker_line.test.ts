@@ -69,7 +69,7 @@ describe("speaker phone line", () => {
     await resetDb();
     await addUser("maria", "maria-pass", "user");
     maria = await signIn("maria", "maria-pass");
-    await heartbeat(DEVICE_ID, { firmware: "0.2.0" });
+    await heartbeat(DEVICE_ID, { firmware: "0.1.5" });
     await json(`${APP}/api/contacts`, "POST", { name: "Mum", phone: MUM, label: "mobile" }, maria);
   });
 
@@ -151,6 +151,7 @@ describe("speaker phone line", () => {
       conference: placed.output.conference,
       who: "speaker",
       kind: "phone",
+      assistant: "",
     });
     twilio.send(JSON.stringify({ event: "media", media: { track: "inbound", payload: "AAAA" } }));
     expect(await nextMessage(line)).toEqual({ type: "audio", payload: "AAAA" });
@@ -259,6 +260,69 @@ describe("speaker phone line", () => {
     const logged = await env.DB.prepare("SELECT message FROM server_log WHERE message LIKE '%line dropped%'").first();
     expect(logged).not.toBeNull();
     upstream.done();
+  });
+
+  it("a speaker that carries the assistant gets the call with no seat dialled, and is told so", async () => {
+    await json(`${APP}/api/devices`, "POST", { id: DEVICE_ID, name: "Kitchen" }, maria);
+    await heartbeat(DEVICE_ID, { firmware: "0.2.0" });
+    await connectTwilio(maria);
+    await connectOpenaiForCalls(maria);
+    const line = await openLine();
+    const legs: Record<string, string>[] = [];
+    const selfCalls: Record<string, string>[] = [];
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Calls.json`]: (_req, body) => {
+        selfCalls.push(formOf(body));
+        return reply(201, { sid: `CA-self${selfCalls.length}`, status: "queued" });
+      },
+      [`POST ${TWILIO}/Conferences/*`]: (_req, body) => {
+        legs.push(formOf(body));
+        return reply(201, { call_sid: `CA-g${legs.length}`, status: "queued" });
+      },
+    });
+    const placed = await deviceTool("place_call", { name: "Mum" });
+    expect(placed.output).toMatchObject({ ok: true, host: "speaker", assistant: true });
+    const answered = await twilioWebhook("/v1/twilio/voice", {
+      To: TWILIO_NUMBER,
+      From: TWILIO_NUMBER,
+      CallSid: "CA-inbound",
+    });
+    const twiml = await answered.text();
+    expect(twiml).toContain(`<Parameter name="assistant" value="speaker"/>`);
+    const bridge = await env.DB.prepare("SELECT token FROM bridges").first<{ token: string }>();
+    const stream = (await openStream(bridge?.token ?? "")).webSocket;
+    if (!stream) {
+      throw new Error("no stream socket");
+    }
+    stream.accept();
+    stream.send(
+      JSON.stringify({
+        event: "start",
+        start: {
+          streamSid: "MZ7",
+          customParameters: { conference: placed.output.conference, who: "speaker", assistant: "speaker" },
+        },
+      }),
+    );
+    expect(await nextMessage(line)).toEqual({
+      type: "call.start",
+      conference: placed.output.conference,
+      who: "speaker",
+      kind: "phone",
+      assistant: "speaker",
+    });
+    // Mum is dialled; no assistant seat, neither a second self-call nor a SIP leg
+    await vi.waitFor(() => expect(legs.map((l) => l.To)).toEqual([MUM]));
+    expect(selfCalls).toHaveLength(1);
+    const seat = await env.DB.prepare("SELECT COUNT(*) AS n FROM calls WHERE role = 'assistant'").first<{
+      n: number;
+    }>();
+    expect(seat?.n).toBe(0);
+    upstream.done();
+    // Leave nothing open for the next test: the stream closing tells the line the call ended
+    stream.close();
+    expect(await nextMessage(line)).toEqual({ type: "call.end" });
+    line.close();
   });
 
   it("answers the speaker's pings itself, so an idle line costs nothing", async () => {

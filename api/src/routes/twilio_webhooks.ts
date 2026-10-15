@@ -16,6 +16,7 @@ import {
   guestAnswered,
   guestUnanswered,
   hostAnswered,
+  hostCarriesAssistant,
   LIVE_BRIDGE_PREFIX,
   streamUrl,
 } from "../telephony";
@@ -64,8 +65,17 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
         // conference meanwhile (and risks Twilio's webhook timeout); the host's join retries it anyway
         c.executionCtx.waitUntil(hostAnswered(place, host));
       }
-      await logFor(place, owner.home, "info", `call ${bridge.conference}: streaming to the speaker`);
-      return xml(c, streamTwiml(streamUrl(place, bridge.token), bridge.conference, "speaker"));
+      const carries = hostCarriesAssistant(host);
+      await logFor(
+        place,
+        owner.home,
+        "info",
+        `call ${bridge.conference}: streaming to the speaker${carries ? ", which carries the assistant" : ""}`,
+      );
+      return xml(
+        c,
+        streamTwiml(streamUrl(place, bridge.token), bridge.conference, "speaker", carries ? "speaker" : "seat"),
+      );
     }
     return xml(
       c,

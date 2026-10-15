@@ -71,6 +71,8 @@ pub enum LineSignal {
         who: String,
         /// `phone` or `drop_in` (the app talking through this speaker).
         kind: String,
+        /// `speaker` when this speaker's own session is the assistant on the call.
+        assistant: String,
     },
     Audio(Vec<i16>),
     CallEnd,
@@ -250,10 +252,12 @@ pub fn decode(text: &str) -> Option<LineSignal> {
             conference,
             who,
             kind,
+            assistant,
         } => Some(LineSignal::CallStart {
             conference,
             who,
             kind,
+            assistant,
         }),
         LineEvent::Audio { payload } => Some(LineSignal::Audio(mulaw::double(&mulaw::decode(
             &pcm::decode_bytes(&payload),
@@ -374,7 +378,8 @@ mod tests {
             Some(LineSignal::CallStart {
                 conference: "ay-9".to_owned(),
                 who: "speaker".to_owned(),
-                kind: String::new()
+                kind: String::new(),
+                assistant: String::new()
             })
         );
         assert!(sender.connected());

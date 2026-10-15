@@ -23,8 +23,12 @@ pub struct CallState {
     pub drop_in: Arc<AtomicBool>,
     /// Who is on the line: the app user's name on a drop-in, "speaker" on a phone call.
     pub who: Arc<std::sync::Mutex<String>>,
-    /// The assistant's voice on its way to the far side of a drop-in.
+    /// The assistant's voice on its way to the far side of a drop-in or a call this speaker carries it on.
     pub mixer: Arc<std::sync::Mutex<alexsay_core::drop_in::Mixer>>,
+    /// On a phone call this speaker's own session is the assistant: it hears the far side too and stays open.
+    pub carries_assistant: Arc<AtomicBool>,
+    /// The far side's audio since the session last read it, mixed into what GPT-Live hears.
+    pub far_in: Arc<std::sync::Mutex<alexsay_core::drop_in::Mixer>>,
     /// `alexsay alarm list|stop|snooze` (and the future hardware button) reach the alarms through it.
     pub alarms: crate::alarms::AlarmHandle,
 }
@@ -42,11 +46,29 @@ impl CallState {
     pub fn drop_in(&self) -> bool {
         self.drop_in.load(Ordering::Relaxed)
     }
+    pub fn carries_assistant(&self) -> bool {
+        self.carries_assistant.load(Ordering::Relaxed)
+    }
+    /// A phone call on which this speaker's session is the assistant, so the speaker stays its own.
+    pub fn carried_call(&self) -> bool {
+        self.on_call() && !self.drop_in() && self.carries_assistant()
+    }
     pub fn who(&self) -> String {
         self.who
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+    /// `kind` is `phone` or `drop_in`, as the bridge's `call.start` says; `assistant` is `speaker` when
+    /// this speaker's own session is the assistant on the call.
+    pub fn begin_with(&self, conference: &str, kind: &str, who: &str, assistant: &str) {
+        self.carries_assistant
+            .store(assistant == "speaker", Ordering::Relaxed);
+        self.far_in
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.begin(conference, kind, who);
     }
     /// `kind` is `phone` or `drop_in`, as the bridge's `call.start` says.
     pub fn begin(&self, conference: &str, kind: &str, who: &str) {
@@ -64,6 +86,11 @@ impl CallState {
     pub fn end(&self) -> Option<String> {
         self.on_call.store(false, Ordering::Relaxed);
         self.drop_in.store(false, Ordering::Relaxed);
+        self.carries_assistant.store(false, Ordering::Relaxed);
+        self.far_in
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         self.mixer
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -269,6 +296,7 @@ mod tests {
         assert!(!state.on_call());
         state.begin("d-1", "drop_in", "maria");
         assert!(state.drop_in());
+        assert!(!state.carried_call());
         state.mixer.lock().unwrap().push(&[1, 2, 3]);
         let status: serde_json::Value =
             serde_json::from_str(&reply(&state, None, "status")).unwrap();
@@ -277,6 +305,12 @@ mod tests {
         assert_eq!(state.end(), Some("d-1".to_owned()));
         assert!(!state.drop_in());
         assert_eq!(state.mixer.lock().unwrap().queued(), 0);
+        state.begin_with("ay-2", "phone", "speaker", "speaker");
+        assert!(state.carried_call());
+        state.far_in.lock().unwrap().push(&[1, 2]);
+        assert_eq!(state.end(), Some("ay-2".to_owned()));
+        assert!(!state.carries_assistant());
+        assert_eq!(state.far_in.lock().unwrap().queued(), 0);
         let bad: serde_json::Value = serde_json::from_str(&reply(&state, None, "dance")).unwrap();
         assert_eq!(bad["ok"], false);
     }

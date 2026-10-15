@@ -161,8 +161,9 @@ export class LineBridge extends DurableObject<Env> {
         const attachment = (ws.deserializeAttachment() as StreamAttachment | null) ?? {};
         const conference = start?.customParameters?.conference ?? attachment.conference ?? "";
         const who = start?.customParameters?.who ?? attachment.who ?? "";
+        const assistant = start?.customParameters?.assistant ?? "";
         ws.serializeAttachment({ ...attachment, conference, who, streamSid: start?.streamSid ?? "" });
-        send(device, { type: "call.start", conference, who, kind: "phone" });
+        send(device, { type: "call.start", conference, who, kind: "phone", assistant });
         this.ctx.waitUntil(this.ctx.storage.setAlarm(Date.now() + CHECK_EVERY_MS));
         break;
       }

@@ -8,6 +8,7 @@ import type { TwilioSettings } from "./schemas";
 import {
   type CallerInfo,
   cancelOtherRinging,
+  carriesAssistant,
   conferenceStatusCallbackUrl,
   type HostBrief,
   isLiveLeg,
@@ -225,7 +226,12 @@ export async function answerIncoming(
   if (legs.some((l) => (l.role === "host" || l.role === "assistant") && l.status === "in-progress")) {
     throw new TelephonyError("taken", "the call was answered somewhere else");
   }
-  const brief: HostBrief = { guests: [], incoming: parseCaller(caller), task: instruction?.trim() || undefined };
+  const brief: HostBrief = {
+    guests: [],
+    incoming: parseCaller(caller),
+    task: instruction?.trim() || undefined,
+    ...(mode === "speaker" && (await carriesAssistant(place, place.device)) ? { assistant_on_speaker: true } : {}),
+  };
   const connection = await ready(place, home);
   if (mode === "assistant") {
     await seatAssistant(place, home, conference, brief, true);

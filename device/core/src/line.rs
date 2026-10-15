@@ -15,6 +15,9 @@ pub enum LineEvent {
         /// `phone` (a Twilio call) or `drop_in` (the app talking through this speaker); phone when missing.
         #[serde(default)]
         kind: String,
+        /// Who is the assistant on a phone call: `speaker` (this speaker's own session) or a server seat (empty).
+        #[serde(default)]
+        assistant: String,
     },
     /// 8 kHz mu-law, base64, as Twilio sends it.
     #[serde(rename = "audio")]
@@ -101,23 +104,26 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn events_and_commands_match_the_bridge() {
         assert_eq!(
             LineEvent::parse(r#"{"type":"call.start","conference":"ay-1","who":"speaker"}"#),
             Some(LineEvent::CallStart {
                 conference: "ay-1".to_owned(),
                 who: "speaker".to_owned(),
-                kind: String::new()
+                kind: String::new(),
+                assistant: String::new()
             })
         );
         assert_eq!(
             LineEvent::parse(
-                r#"{"type":"call.start","conference":"d-1","who":"maria","kind":"drop_in"}"#
+                r#"{"type":"call.start","conference":"d-1","who":"maria","kind":"drop_in","assistant":"speaker"}"#
             ),
             Some(LineEvent::CallStart {
                 conference: "d-1".to_owned(),
                 who: "maria".to_owned(),
-                kind: "drop_in".to_owned()
+                kind: "drop_in".to_owned(),
+                assistant: "speaker".to_owned()
             })
         );
         assert_eq!(

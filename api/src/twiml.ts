@@ -63,12 +63,16 @@ export const conferenceSeatTwiml = (conference: string, conferenceStatusCallback
       `${escapeXml(conference)}</Conference></Dial>`,
   );
 
-/** The inbound side of that self-call: a two-way media stream to the speaker's line. */
-export const streamTwiml = (url: string, conference: string, who: string) =>
+/**
+ * The inbound side of that self-call: a two-way media stream to the speaker's line (or a seat).
+ * `assistant` says who is the assistant on the call: "speaker" (the speaker's own session) or "seat".
+ */
+export const streamTwiml = (url: string, conference: string, who: string, assistant = "seat") =>
   response(
     `<Connect><Stream url="${escapeXml(url)}">` +
       `<Parameter name="conference" value="${escapeXml(conference)}"/>` +
       `<Parameter name="who" value="${escapeXml(who)}"/>` +
+      `<Parameter name="assistant" value="${escapeXml(assistant)}"/>` +
       `</Stream></Connect>`,
   );
 

@@ -93,7 +93,7 @@ describe("incoming calls and messages", () => {
     await resetDb();
     await addUser("maria", "maria-pass", "user");
     maria = await signIn("maria", "maria-pass");
-    await heartbeat(DEVICE_ID, { firmware: "0.2.0" });
+    await heartbeat(DEVICE_ID, { firmware: "0.1.5" });
     await json(`${APP}/api/devices`, "POST", { id: DEVICE_ID, name: "Kitchen" }, maria);
     await json(`${APP}/api/contacts`, "POST", { name: "Mum", phone: MUM, label: "mobile" }, maria);
   });

@@ -61,6 +61,9 @@ pub struct Session {
     last_user_text_ms: u64,
     last_assistant_text_ms: u64,
     user_farewell_at: Option<u64>,
+    /// On a phone call the speaker carries: no idle, after-reply or cap closes it, and a goodbye
+    /// said to the far side is not one to the assistant. Only being asked to stop closes it.
+    held: bool,
 }
 
 impl Default for Session {
@@ -85,7 +88,17 @@ impl Session {
             last_user_text_ms: 0,
             last_assistant_text_ms: 0,
             user_farewell_at: None,
+            held: false,
         }
+    }
+
+    /// Holds the session open while the speaker is on a call it carries the assistant on.
+    pub fn set_held(&mut self, held: bool) {
+        self.held = held;
+    }
+
+    pub fn held(&self) -> bool {
+        self.held
     }
 
     pub fn state(&self) -> SessionState {
@@ -250,7 +263,12 @@ impl Session {
                 now_ms.saturating_sub(self.last_output_ms.max(at)) >= HANGUP_QUIET_MS
             })
             .map(|(_, why)| why);
-        let why = if capped {
+        let why = if self.held {
+            match hang_up {
+                Some(why) if why == "asked to stop" => why,
+                _ => return lines,
+            }
+        } else if capped {
             "hard cap"
         } else if let Some(why) = hang_up {
             why
@@ -403,6 +421,60 @@ pub fn is_sign_off(reply: &str, user_farewell_ago_ms: Option<u64>) -> bool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_held_session_outlasts_quiet_and_goodbyes_but_not_being_asked_to_stop() {
+        let policy = SessionPolicy {
+            idle_timeout_s: 1,
+            after_reply_s: 1,
+            max_minutes: 1,
+            ..SessionPolicy::default()
+        };
+        let mut session = Session::new(policy);
+        session.start(0);
+        session.set_held(true);
+        assert!(session.held());
+        // Opening the session is what `session.started` does: the state must be Open for ticks to count
+        let _ = session.on_event(
+            &ServerEvent::parse(r#"{"type":"session.started","session":{"id":"s1"}}"#).unwrap(),
+            0,
+        );
+        assert_eq!(session.state(), SessionState::Open);
+        // Minutes of silence on a held session close nothing
+        assert!(
+            session
+                .on_tick(5 * 60_000)
+                .iter()
+                .all(|a| !matches!(a, Action::Close))
+        );
+        assert_eq!(session.state(), SessionState::Open);
+        // Being asked to stop still closes it once the reply has had its moment
+        session.close_after_reply(5 * 60_000);
+        assert!(
+            session
+                .on_tick(5 * 60_000 + 10_000)
+                .iter()
+                .any(|a| matches!(a, Action::Close))
+        );
+        // Released, the ordinary rules apply again
+        let mut again = Session::new(SessionPolicy {
+            idle_timeout_s: 1,
+            ..SessionPolicy::default()
+        });
+        again.start(0);
+        let _ = again.on_event(
+            &ServerEvent::parse(r#"{"type":"session.started","session":{"id":"s2"}}"#).unwrap(),
+            0,
+        );
+        again.set_held(true);
+        again.set_held(false);
+        assert!(
+            again
+                .on_tick(60_000)
+                .iter()
+                .any(|a| matches!(a, Action::Close))
+        );
+    }
 
     fn event(text: &str) -> ServerEvent {
         ServerEvent::parse(text).unwrap()

@@ -77,6 +77,14 @@ pub fn offer_note(who: &str) -> String {
     )
 }
 
+/// What GPT-Live is told when this speaker carries the assistant on a phone call: the far side is
+/// in what it hears, the room hears its replies and so does the line.
+pub fn on_call_note(who: &str) -> String {
+    format!(
+        "This speaker is on a phone call with {who}: you hear the room and the caller together, and whatever          you say is heard by both. Do not introduce yourself and do not speak first. Stay silent unless the user          addresses you by name (Alexsay, Aleksey) or asks you something directly; then answer briefly and go quiet          again. When asked to hang up, say a short goodbye and call end_call. Never end this conversation yourself          while the call is on."
+    )
+}
+
 /// The body of a server answer that says the call was taken elsewhere or has ended.
 pub fn answer_failed(output: &str) -> Option<String> {
     let value: Value = serde_json::from_str(output).ok()?;

@@ -32,12 +32,24 @@ const FAREWELL_GRACE_MS = 6_000;
 
 /** The timings of one exchange, logged when the reply completes so a slow call can be read. */
 interface Turn {
-  /** When the caller's last words arrived (the end of their turn, as transcribed). */
+  /** When the caller's words last arrived before the reply began, as transcribed. */
   callerStoppedAt: number;
   replyStartedAt: number | null;
+  /** From the caller's last words to the first audible reply audio, fixed when the reply begins. */
+  waitedMs: number | null;
+  lastAudibleAt: number;
   replyAudioMs: number;
   tools: string[];
 }
+
+const freshTurn = (callerStoppedAt = 0): Turn => ({
+  callerStoppedAt,
+  replyStartedAt: null,
+  waitedMs: null,
+  lastAudibleAt: 0,
+  replyAudioMs: 0,
+  tools: [],
+});
 
 /**
  * A seat on a phone call held by a GPT-Live session: the assistant's (full duplex, the model the
@@ -57,7 +69,7 @@ export class LiveSeat extends DurableObject<Env> {
   private heard = { line: "", assistant: "" };
   private closed = false;
   private streamStartedAt = 0;
-  private turn: Turn = { callerStoppedAt: 0, replyStartedAt: null, replyAudioMs: 0, tools: [] };
+  private turn: Turn = freshTurn();
   private framesIn = 0;
   private framesOut = 0;
   /** Armed when the caller said goodbye; the seat hangs up once the reply is done or the grace has passed. */
@@ -247,9 +259,12 @@ export class LiveSeat extends DurableObject<Env> {
           const samples = base64ToPcm16(event.delta);
           // Silence streams all session long; only audible audio is the reply
           if (isAudible(samples)) {
+            const now = Date.now();
             if (this.turn.replyStartedAt === null) {
-              this.turn.replyStartedAt = Date.now();
+              this.turn.replyStartedAt = now;
+              this.turn.waitedMs = this.turn.callerStoppedAt > 0 ? now - this.turn.callerStoppedAt : null;
             }
+            this.turn.lastAudibleAt = now;
             this.turn.replyAudioMs += (samples.length * 1_000) / LIVE_RATE;
           }
           this.framesOut += 1;
@@ -350,17 +365,15 @@ export class LiveSeat extends DurableObject<Env> {
   /** One line per exchange: how long the caller waited, how much was said, and what tools ran. */
   private async logTurn(): Promise<void> {
     const turn = this.turn;
-    this.turn = { callerStoppedAt: turn.callerStoppedAt, replyStartedAt: null, replyAudioMs: 0, tools: [] };
+    this.turn = freshTurn(turn.callerStoppedAt);
     if (!this.leg || !this.start || (turn.replyStartedAt === null && turn.tools.length === 0)) {
       return;
     }
-    const waited =
-      turn.replyStartedAt !== null && turn.callerStoppedAt > 0
-        ? `${turn.replyStartedAt - turn.callerStoppedAt} ms`
-        : "n/a";
+    const waited = turn.waitedMs !== null ? `${turn.waitedMs} ms` : "n/a";
+    // Speech delivered against the time it spanned: under 100% means it arrived slower than it plays
     const pace =
       turn.replyStartedAt !== null && turn.replyAudioMs > 0
-        ? `${Math.round(turn.replyAudioMs)} ms of speech over ${Date.now() - turn.replyStartedAt} ms`
+        ? `${Math.round(turn.replyAudioMs)} ms of speech over ${turn.lastAudibleAt - turn.replyStartedAt} ms`
         : "no speech";
     await logFor(
       { env: this.env },

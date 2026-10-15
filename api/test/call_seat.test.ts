@@ -241,13 +241,17 @@ describe("the GPT-Live seat's bridge", () => {
   it("streams the conference to a GPT-Live session with the briefing and tools, both ways, with tools and a transcript", async () => {
     const live = fakeLive();
     let legs = 0;
+    let selfCalls = 0;
     const completed: string[] = [];
     const upstream = mockUpstream({
       [`POST ${TWILIO}/Conferences/*`]: () => {
         legs += 1;
         return reply(201, { call_sid: legs === 1 ? "CA-host" : "CA-mum", status: "ringing" });
       },
-      [`POST ${TWILIO}/Calls.json`]: () => reply(201, { sid: "CA-self", status: "queued" }),
+      [`POST ${TWILIO}/Calls.json`]: () => {
+        selfCalls += 1;
+        return reply(201, { sid: selfCalls === 1 ? "CA-self" : `CA-self${selfCalls}`, status: "queued" });
+      },
       [`POST ${TWILIO}/Calls/*`]: (req) => {
         completed.push(req.url.split("/").pop()?.replace(".json", "") ?? "");
         return reply(200, {});
@@ -328,6 +332,30 @@ describe("the GPT-Live seat's bridge", () => {
     const told = await session.next();
     expect(told).toMatchObject({ type: "response.item.create", item: { type: "message", role: "user" } });
     expect(JSON.stringify(told)).toContain("Mum (+447700900123) answered.");
+
+    // A test call asked for from inside the call joins this conference rather than opening one elsewhere
+    await json(`${APP}/api/session/settings`, "PATCH", { ai_call_test: true }, maria);
+    session.send({
+      type: "response.event",
+      event: {
+        type: "response.output_item.done",
+        item: {
+          type: "function_call",
+          call_id: "c2",
+          name: "call_test",
+          arguments: JSON.stringify({ role: "Sandra", scenario: "a friendly chat" }),
+        },
+      },
+    });
+    const joined = await session.next();
+    expect(JSON.parse(String((joined.item as { output: string }).output))).toMatchObject({ ok: true });
+    expect(await session.next()).toEqual({ type: "response.create" });
+    const agentLegs = await env.DB.prepare(
+      "SELECT conference, brief FROM calls WHERE role = 'guest' AND phone = 'test agent'",
+    ).all<{ conference: string; brief: string }>();
+    expect(agentLegs.results).toHaveLength(1);
+    expect(agentLegs.results[0]?.conference).toBe(conference);
+    expect(JSON.parse(agentLegs.results[0]?.brief ?? "{}")).toMatchObject({ role: "Sandra" });
 
     // The caller says goodbye and the model only answers in words: once that reply is done, the seat hangs up
     session.send({ type: "session.input_transcript.delta", delta: "okay, bye now" });

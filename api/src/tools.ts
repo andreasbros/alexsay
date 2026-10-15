@@ -625,6 +625,14 @@ export const TOOLS: Tool[] = [
       }
       const message = string(args, "message").slice(0, 500) || undefined;
       const task = string(args, "task").slice(0, 1000) || undefined;
+      // Asked from inside a call: the person joins the call in progress rather than a new one opening elsewhere
+      if (c.onCall && !message) {
+        return telephony(async () => ({
+          ok: true,
+          ...(await addToConference(c, c.user.home, recipient)),
+          note: "added to the call you are on; say so in one short sentence",
+        }));
+      }
       // A spoken message needs nobody on the user's side, so the page's line is only required for a real call
       const host = message ? { host: "mobile" as const } : callHost(c, args);
       if ("error" in host) {
@@ -778,6 +786,14 @@ export const TOOLS: Tool[] = [
       const agent = agentOf(args);
       if ("error" in agent) {
         return agent;
+      }
+      // Asked from inside a call: the agent joins the call in progress
+      if (c.onCall) {
+        return telephony(async () => ({
+          ok: true,
+          ...(await addTestAgent(c, c.user.home, agent)),
+          note: `the test agent (${agent.role}, voice ${agent.voice}) is joining this call; greet it when it answers`,
+        }));
       }
       const host = callHost(c, args);
       if ("error" in host) {

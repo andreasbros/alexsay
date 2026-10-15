@@ -27,7 +27,8 @@ export const UNANSWERED_JOB = "call.unanswered";
 
 export type IncomingPolicy = TwilioSettings["incoming_calls"];
 
-const DEFAULT_GREETING = "Hi, this is Alexsay, {name}'s assistant. Please stay on the line while I'm connecting you.";
+// Spelled as it sounds: Twilio's voices read "Alexsay" as "Alex say"
+const DEFAULT_GREETING = "Hi, this is Aleksei, {name}'s assistant. Please stay on the line while I'm connecting you.";
 const DEFAULT_UNANSWERED = "Sorry, nobody can take your call right now. Please try again later.";
 const CONTACTS_ONLY = "Sorry, this number only takes calls from people it knows. Goodbye.";
 

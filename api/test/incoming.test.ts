@@ -106,7 +106,7 @@ describe("incoming calls and messages", () => {
     expect(ownerName({ owner_name: "" }, "andreas")).toBe("Andreas");
     expect(ownerName({ owner_name: "Andy B" }, "andreas")).toBe("Andy B");
     expect(greetingFor({ owner_name: "", greeting: "" }, "maria")).toBe(
-      "Hi, this is Alexsay, Maria's assistant. Please stay on the line while I'm connecting you.",
+      "Hi, this is Aleksei, Maria's assistant. Please stay on the line while I'm connecting you.",
     );
     expect(greetingFor({ owner_name: "Mo", greeting: "{name} here, hold on" }, "maria")).toBe("Mo here, hold on");
     expect(unansweredFor({ unanswered: "" })).toContain("try again later");
@@ -154,7 +154,7 @@ describe("incoming calls and messages", () => {
     });
     const res = await ring();
     const twiml = await res.text();
-    expect(twiml).toContain("Hi, this is Alexsay, Maria&apos;s assistant.");
+    expect(twiml).toContain("Hi, this is Aleksei, Maria&apos;s assistant.");
     expect(twiml).toContain('<Say voice="Polly.Brian-Neural" language="en-GB">');
     expect(twiml).toContain('startConferenceOnEnter="false"');
     const conference = /<Conference[^>]*>(in-[a-z0-9]+)<\/Conference>/.exec(twiml)?.[1] ?? "";

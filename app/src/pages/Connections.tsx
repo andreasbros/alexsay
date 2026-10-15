@@ -624,7 +624,7 @@ function TwilioCard({ connection }: { connection: Connection | undefined }) {
                   onChange={(e) => set({ owner_name: e.target.value })}
                 />
                 <TextField.Root
-                  placeholder="Greeting: Hi, this is Alexsay, {name}'s assistant. Please stay on the line while I'm connecting you."
+                  placeholder="Greeting: Hi, this is Aleksei, {name}'s assistant. Please stay on the line while I'm connecting you."
                   aria-label="Caller greeting"
                   value={settings.greeting}
                   onChange={(e) => set({ greeting: e.target.value })}

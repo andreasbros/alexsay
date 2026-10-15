@@ -521,10 +521,10 @@ export const api = {
   voiceToken: () => request<{ token: string; identity: string; ttl: number }>("GET", "/api/twilio/voice-token"),
   recentCalls: (limit?: number) => request<RecentCall[]>("GET", `/api/twilio/calls${limit ? `?limit=${limit}` : ""}`),
   /** A text to a number that may not be a contact (a reply under Messages). */
-  sendMessageTo: (number: string, body: string) =>
-    request<Placed>("POST", "/api/twilio/messages", { number, body, channel: "sms" }),
+  sendMessageTo: (to: string, body: string) =>
+    request<Placed>("POST", "/api/twilio/messages", { to, body, channel: "sms" }),
   /** Calls a number back: the mobile rings first, then the person. */
-  callNumber: (number: string) => request<Placed>("POST", "/api/twilio/calls", { number }),
+  callNumber: (to: string) => request<Placed>("POST", "/api/twilio/calls", { to }),
   messages: (limit = 100) => request<MessageItem[]>("GET", `/api/messages?limit=${limit}`),
   notifications: () => request<{ unread: number; notifications: Notification[] }>("GET", "/api/notifications"),
   markNotificationsRead: (ids?: string[]) =>

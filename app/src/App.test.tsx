@@ -217,12 +217,17 @@ describe("App", () => {
         },
       ]),
     };
+    const sent: unknown[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string, init?: RequestInit) => {
         if (path === "/api/notifications/read") {
           read.push(JSON.parse(String(init?.body ?? "{}")));
           return json({ marked: 1 })();
+        }
+        if (path === "/api/twilio/messages" || path === "/api/twilio/calls") {
+          sent.push({ path, ...JSON.parse(String(init?.body ?? "{}")) });
+          return json({ sid: "x", status: "queued", phone: "+447700900123", contact: "Mum" })();
         }
         return routes[path]?.() ?? new Response("{}", { status: 404 });
       }),
@@ -237,6 +242,8 @@ describe("App", () => {
     await vi.waitFor(() => expect(read).toEqual([{ ids: ["n1"] }]));
     fireEvent.click(screen.getByRole("button", { name: "Mark all read" }));
     await vi.waitFor(() => expect(read).toEqual([{ ids: ["n1"] }, {}]));
+    fireEvent.click(screen.getAllByRole("button", { name: "Call back" })[0] as HTMLElement);
+    await vi.waitFor(() => expect(sent).toEqual([{ path: "/api/twilio/calls", to: "+447700900123" }]));
 
     // Radix doubles each tab's label (a hidden bold copy keeps the width), so the name is matched loosely
     const tab = (name: string) => {
@@ -251,6 +258,11 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Reply to Mum")).toBeDefined();
+    fireEvent.change(within(dialog).getByLabelText("Message"), { target: { value: "On my way" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send" }));
+    await vi.waitFor(() =>
+      expect(sent[1]).toEqual({ path: "/api/twilio/messages", to: "+447700900123", body: "On my way", channel: "sms" }),
+    );
   });
 
   it("needs a name as well as the UUID to add a speaker", async () => {

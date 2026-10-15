@@ -136,6 +136,8 @@ export interface HostBrief {
   dialled?: boolean;
   /** An incoming call: the caller is already on, waiting; nobody is dialled, only the assistant seated. */
   incoming?: CallerInfo;
+  /** The user rang their own number: nobody else to dial, the assistant joins them alone. */
+  alone?: boolean;
 }
 
 /** Where the app lives, for the URLs Twilio calls back; a tool context or a webhook request both know it. */
@@ -288,7 +290,11 @@ async function openConference(
   task?: string,
 ): Promise<Conference> {
   const conference = `ay-${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
-  const brief: HostBrief = { task, guests };
+  // The user's own mobile is the host's phone: dialling it as a guest too would ring them twice
+  const own = connection.settings.my_number;
+  const others = own ? guests.filter((g) => g.phone !== own) : guests;
+  const alone = guests.length > 0 && others.length === 0;
+  const brief: HostBrief = { task, guests: others, ...(alone ? { alone: true } : {}) };
   const hostLeg =
     host === "speaker"
       ? await ringSpeaker(c, home, connection, conference)
@@ -320,7 +326,7 @@ async function openConference(
     home,
     "info",
     `call ${conference}: ringing the ${host === "browser" ? "app" : host} first; ` +
-      `then ${pending.join(", ")}; assistant ${absence ?? "will join"}`,
+      `then ${alone ? "nobody (their own number)" : pending.join(", ")}; assistant ${absence ?? "will join"}`,
   );
   return {
     conference,
@@ -374,10 +380,21 @@ export async function speakerOnline(scope: Scope, device: string): Promise<boole
  */
 export async function hostAnswered(place: Place, hostLeg: CallRow): Promise<void> {
   const brief = parseBrief(hostLeg.brief);
-  if (!hostLeg.conference || !brief || (brief.guests.length === 0 && !brief.incoming)) {
+  if (!hostLeg.conference || !brief || (brief.guests.length === 0 && !brief.incoming && !brief.alone)) {
     return;
   }
   if (!(await calls.claimDialling(place.env.DB, hostLeg.id))) {
+    return;
+  }
+  if (brief.alone) {
+    await seatAssistant(place, hostLeg.home_id, hostLeg.conference, brief).catch(async (err: unknown) => {
+      await logFor(
+        place,
+        hostLeg.home_id,
+        "error",
+        `call ${hostLeg.conference}: seating the assistant failed: ${errorText(err)}`,
+      );
+    });
     return;
   }
   if (brief.incoming) {
@@ -674,6 +691,9 @@ async function callBrief(place: Scope, home: string, hostBrief: HostBrief | null
   if (hostBrief?.incoming) {
     return incomingBrief(place, home, hostBrief.incoming, hostBrief.task);
   }
+  if (hostBrief?.alone) {
+    return aloneBrief(place, home, hostBrief.task);
+  }
   const guests = hostBrief?.guests ?? [];
   const people = guests.map((g) => (g.name ? `${g.name} (${g.phone})` : g.phone)).join(", ") || "the person called";
   const notes = guests
@@ -743,6 +763,19 @@ async function incomingBrief(
     `Your name is Alexsay, pronounced "Aleksey". ${who} has called ${home}'s number. ${role} ${PHONE_ETIQUETTE} ` +
       "If you and the other side start at the same moment, you give way: stop at once, let them finish, then speak. " +
       `Never read out numbers, addresses or other personal details ${home} has not asked you to share.`,
+    await currentConversation(place.env.DB, home),
+    contextInstructions(await loadContext(place.env.DB, home)),
+  ];
+  return parts.filter(Boolean).join("\n\n");
+}
+
+/** The user rang their own number from the app: a phone call with the assistant and nobody else. */
+async function aloneBrief(place: Scope, home: string, task: string | undefined): Promise<string> {
+  const parts = [
+    `Your name is Alexsay, pronounced "Aleksey". ${home} has called their own number from the app, so this phone ` +
+      `call is just the two of you: no one else is on the line or being dialled. Greet them briefly and help as you ` +
+      `would on the speaker.${task ? ` They asked: ${task}.` : ""} When they ask you to hang up, say goodbye and call ` +
+      `end_call. ${PHONE_ETIQUETTE}`,
     await currentConversation(place.env.DB, home),
     contextInstructions(await loadContext(place.env.DB, home)),
   ];

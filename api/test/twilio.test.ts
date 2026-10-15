@@ -390,6 +390,32 @@ describe("twilio", () => {
     expect(row).toEqual({ status: "completed", kind: "conference", role: "host" });
   });
 
+  it("calling the user's own number rings the mobile once and seats the assistant with them alone", async () => {
+    await connectTwilio(maria);
+    await connectOpenaiForCalls();
+    const legs: Record<string, string>[] = [];
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: (_req, body) => {
+        legs.push(formOf(body));
+        return reply(201, { call_sid: `CA${legs.length}`, status: "queued" });
+      },
+    });
+    const placed = await json(`${APP}/api/twilio/calls`, "POST", { to: MY_NUMBER }, maria);
+    expect(placed.status).toBe(201);
+    expect(await placed.json()).toMatchObject({ host: "mobile", pending: [], assistant: true });
+    expect(legs.map((l) => l.To)).toEqual([MY_NUMBER]);
+
+    // The mobile picks up: nobody else is dialled, the assistant joins with a briefing for a call alone
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
+    expect(legs).toHaveLength(2);
+    expect(legs[1]?.To).toContain("sip:proj_abc12345@sip.api.openai.com");
+    const seat = await env.DB.prepare("SELECT brief FROM calls WHERE role = 'assistant'").first<{ brief: string }>();
+    expect(seat?.brief).toContain("called their own number");
+    await twilioWebhook("/v1/twilio/status", { CallSid: "CA1", CallStatus: "in-progress" });
+    expect(legs).toHaveLength(2);
+    upstream.done();
+  });
+
   it("reads a message out instead when one is given", async () => {
     await connectTwilio(maria);
     let form: Record<string, string> = {};

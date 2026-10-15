@@ -4,6 +4,18 @@ All notable changes to alexsay. The format follows
 [Keep a Changelog](https://keepachangelog.com), versions follow
 [SemVer](https://semver.org).
 
+## [0.1.5] - 2026-10-15
+
+
+### Changes
+
+- No Windows on Arm build: tract-linalg cannot assemble its arm64 kernels for msvc; Arm64 Windows takes the x86_64 build under emulation (b9c81377)
+- Incoming calls and texts: callers greeted and held while every speaker, the app and the mobile ring; the assistant on the call, or taking it alone with instructions and a message; texts read out; a Messages tab with notifications, texts and calls (ea5eec01)
+- Home page: every section folds to its title and remembers being opened; coming-soon marks in grey that light up on a tap; the home's name moves to Settings; tighter tabs on phones (d8cf05b1)
+- Callers hear a natural Twilio voice (British male neural by default, chosen in the Twilio card); hashed bundles never fall back to the page; a wrongly cached stylesheet heals itself (02165f34)
+- The spoken greeting spells the assistant's name Aleksei, as Twilio's voices say it (3c29ed0a)
+- Incoming calls: a ringing leg must not end the caller's conference; the fallback checks Twilio when the row looks finished (9b1486ac)
+
 ## [0.1.4] - 2026-10-15
 
 
@@ -16,6 +28,10 @@ All notable changes to alexsay. The format follows
 
 - Train the wake word with your voice (8b01f5d9)
 - Skills, scheduler and alarms in the handover (c0977125)
+
+### Internal
+
+- V0.1.4 (0fed054c)
 
 ### Changes
 

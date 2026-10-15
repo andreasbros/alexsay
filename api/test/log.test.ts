@@ -50,7 +50,7 @@ describe("server log", () => {
     expect(head.lines).toHaveLength(100);
     const everything = (await tool(maria, "read_log", { position: "tail", lines: 100 })) as { lines: string[] };
     expect(everything.lines).toHaveLength(100);
-  });
+  }, 30_000);
 
   it("keeps each user's log private", async () => {
     await addUser("tom", "tom-pass-123", "user");

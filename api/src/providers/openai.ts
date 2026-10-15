@@ -192,19 +192,29 @@ export interface CallSession {
 }
 
 /** A pause this long ends the other side's turn; the side that yields waits a little longer, so the two never tie. */
-const HOLDS_SILENCE_MS = 550;
-const YIELDS_SILENCE_MS = 850;
+const HOLDS_SILENCE_MS = 450;
+const YIELDS_SILENCE_MS = 650;
+/**
+ * How sure the detector must be that it hears speech (0 to 1; OpenAI's default is 0.5). Phone lines carry
+ * room noise, breaths and handling, which at the default cut the assistant off mid-sentence and left it
+ * silent (15 Oct 2026); speech still interrupts it at this level.
+ */
+const SPEECH_THRESHOLD = 0.75;
 
 /** Silence-based end of turn (fast; semantic detection added seconds), with the collision rule in interrupt_response. */
 export function turnDetection(turnTaking: TurnTaking): Record<string, unknown> {
   return {
     type: "server_vad",
+    threshold: SPEECH_THRESHOLD,
     silence_duration_ms: turnTaking === "yields" ? YIELDS_SILENCE_MS : HOLDS_SILENCE_MS,
     prefix_padding_ms: 300,
     create_response: true,
     interrupt_response: turnTaking === "yields",
   };
 }
+
+/** The call's audio is a phone line: a handset or a speakerphone close by, so near-field noise reduction fits. */
+export const NOISE_REDUCTION = { type: "near_field" } as const;
 
 /** Answers a SIP call OpenAI announced through realtime.call.incoming with a configured realtime session. */
 export async function acceptCall(baseUrl: string, apiKey: string, callId: string, session: CallSession): Promise<void> {
@@ -220,6 +230,7 @@ export async function acceptCall(baseUrl: string, apiKey: string, callId: string
         input: {
           transcription: { model: "gpt-4o-mini-transcribe" },
           turn_detection: turnDetection(session.turnTaking),
+          noise_reduction: NOISE_REDUCTION,
         },
         output: { voice: session.voice },
       },

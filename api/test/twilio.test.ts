@@ -770,7 +770,12 @@ describe("twilio", () => {
     expect(session?.instructions).toContain("Do not introduce yourself and do not speak first");
     expect(session?.instructions).toContain("you give way: stop at once");
     expect(accepted).toMatchObject({
-      audio: { input: { turn_detection: { type: "server_vad", silence_duration_ms: 850, interrupt_response: true } } },
+      audio: {
+        input: {
+          turn_detection: { type: "server_vad", threshold: 0.75, silence_duration_ms: 650, interrupt_response: true },
+          noise_reduction: { type: "near_field" },
+        },
+      },
     });
     const toolNames = session?.tools.map((t) => t.name) ?? [];
     expect(toolNames).toEqual(
@@ -1015,7 +1020,8 @@ describe("twilio", () => {
     expect(session?.instructions).toContain("you keep talking and they will wait");
     expect(session?.audio.input.turn_detection).toEqual({
       type: "server_vad",
-      silence_duration_ms: 550,
+      threshold: 0.75,
+      silence_duration_ms: 450,
       prefix_padding_ms: 300,
       create_response: true,
       interrupt_response: false,

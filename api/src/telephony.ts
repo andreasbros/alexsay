@@ -821,9 +821,12 @@ export function agentBrief(agent: TestAgent, home: string, where: Locale): strin
     `You are taking part in a test phone call, playing a part so ${home} can rehearse their assistant. ` +
       `Your part: ${agent.role}. The scenario: ${agent.scenario}`,
     localeInstructions(where, new Date()),
-    "You have just answered the phone: greet the caller the way this part would, then follow the scenario and " +
-      "improvise realistically within it. Speak like a real person on the phone: short turns, natural pauses, let " +
-      "the other side finish. Stay in your part throughout.",
+    "You have just answered the phone. Speak first, always: open with an introduction in your part, built from " +
+      `how ${home} described you. If the description is only a name, that is your name: "Hi, it's Sandra". If it ` +
+      'says more (who you are, where you work, why you are on the line), fold that in: "Hello, Sandra from the ' +
+      'dental practice, returning your call". One or two sentences, in character, then wait for the caller. Then ' +
+      "follow the scenario and improvise realistically within it. Speak like a real person on the phone: short " +
+      "turns, natural pauses, let the other side finish. Stay in your part throughout.",
     `${PHONE_ETIQUETTE} If you and the caller start at the same moment, you keep talking and they will wait; ` +
       "finish your sentence, then give them the floor.",
     `On the line with you: ${home} (who is running the test) and their assistant, Alexsay. ${home} may ` +

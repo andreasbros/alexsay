@@ -1023,6 +1023,7 @@ describe("twilio", () => {
     expect(session?.instructions).toContain("call leave_call");
     expect(session?.tools.map((t) => t.name)).toEqual(["leave_call"]);
     expect(session?.instructions).toContain("you keep talking and they will wait");
+    expect(session?.instructions).toContain("Speak first, always: open with an introduction in your part");
     expect(session?.audio.input.turn_detection).toEqual({
       type: "server_vad",
       threshold: 0.75,

@@ -4,8 +4,22 @@ All notable changes to alexsay. The format follows
 [Keep a Changelog](https://keepachangelog.com), versions follow
 [SemVer](https://semver.org).
 
+## [0.1.7] - 2026-10-15
+
+
+### Changes
+
+- Latency in the logs on the server and the speaker; the seat hangs up when the caller says goodbye or GPT-Live leaves; every briefing insists on end_call (4abe5425)
+- Calls asked for from inside a call join it: a test agent or a person is added to the conference in progress instead of a new call opening in the app (cf4dbd3e)
+- Test calls: the agent always speaks first with an introduction built from how the user described it (efe55438)
+- The GPT-Live seat speaks the line's own G.711: Twilio's frames pass to GPT-Live and back untouched, ending the hiss on every reply (4b3f310f)
+
 ## [0.1.6] - 2026-10-15
 
+
+### Internal
+
+- V0.1.6 (ecb58978)
 
 ### Changes
 

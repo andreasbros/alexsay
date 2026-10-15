@@ -4,6 +4,7 @@ import { alarmsForDevice, recordEvents } from "../alarms";
 import { addTurns, endConversation, runToolFor, sessionFor, startConversation } from "../assistant_api";
 import { openaiConnection, twilioConnection } from "../connections";
 import { devices, homes } from "../db";
+import { answerIncoming } from "../incoming";
 import { serverOrigin } from "../origin";
 import * as schemas from "../schemas";
 import { callReport, speakerOnline, TelephonyError } from "../telephony";
@@ -80,6 +81,21 @@ export const deviceApiRoutes = new Hono<AppEnv>()
   .use("/conferences/*", requireClaimedDevice)
   .use("/alarms", requireClaimedDevice)
   .use("/alarms/*", requireClaimedDevice)
+  .use("/calls/*", requireClaimedDevice)
+  /** The speaker takes an incoming call: itself, or the assistant alone with the user's instruction. */
+  .post("/calls/:conference/answer", async (c) => {
+    const conference = parse(schemas.conferenceName, c.req.param("conference"));
+    const { mode, instruction } = await jsonBody(c, schemas.answerCall);
+    const place = { env: c.env, origin: serverOrigin(c), device: c.get("device").id };
+    try {
+      return c.json(await answerIncoming(place, c.get("user").home, conference, mode, instruction));
+    } catch (err) {
+      if (err instanceof TelephonyError) {
+        return c.json({ error: err.code, detail: err.message }, err.code === "taken" ? 409 : 412);
+      }
+      throw err;
+    }
+  })
   /** What this speaker rings: the next few occurrences of each alarm, so it rings on its own clock. */
   .get("/alarms", async (c) => {
     const row = await devices.get(c.env.DB, c.get("device").id);

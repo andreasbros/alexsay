@@ -11,6 +11,7 @@ import { Logo } from "./Logo";
 const TABS: [string, string][] = [
   ["Home", "/"],
   ["Assistant", "/assistant"],
+  ["Messages", "/messages"],
   ["Memory", "/memory"],
   ["Skills", "/skills"],
 ];

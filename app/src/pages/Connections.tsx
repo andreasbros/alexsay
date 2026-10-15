@@ -17,6 +17,7 @@ import {
   ApiError,
   api,
   type Connection,
+  type IncomingPolicy,
   type Light,
   type OpenAiSettings,
   type PhoneNumber,
@@ -461,6 +462,17 @@ const DEFAULT_TWILIO: TwilioSettings = {
   my_number: "",
   sip_domain: "",
   country_code: "+44",
+  incoming_calls: "everyone",
+  incoming_messages: "everyone",
+  owner_name: "",
+  greeting: "",
+  unanswered: "",
+};
+
+const POLICY_LABEL: Record<IncomingPolicy, string> = {
+  off: "nobody",
+  contacts: "contacts only",
+  everyone: "everyone",
 };
 const NO_NUMBER = "none";
 
@@ -519,6 +531,7 @@ function TwilioCard({ connection }: { connection: Connection | undefined }) {
                 : ", your mobile not set"}
               {connection.settings.whatsapp_from ? ", WhatsApp on" : ""}
               {connection.settings.sip_domain ? ", speakers take calls" : ""}
+              {`. Incoming calls from ${POLICY_LABEL[connection.settings.incoming_calls ?? "everyone"]}, texts from ${POLICY_LABEL[connection.settings.incoming_messages ?? "everyone"]}.`}
             </Text>
             <Button size="1" variant="soft" onClick={() => setEditing(true)}>
               Change
@@ -605,6 +618,41 @@ function TwilioCard({ connection }: { connection: Connection | undefined }) {
                     value={settings.country_code}
                     onChange={(e) => set({ country_code: e.target.value })}
                     style={{ maxWidth: 220 }}
+                  />
+                  <Flex gap="3" wrap="wrap">
+                    <PolicySelect
+                      label="Incoming calls from"
+                      value={settings.incoming_calls}
+                      onChange={(incoming_calls) => set({ incoming_calls })}
+                    />
+                    <PolicySelect
+                      label="Texts from"
+                      value={settings.incoming_messages}
+                      onChange={(incoming_messages) => set({ incoming_messages })}
+                    />
+                  </Flex>
+                  <Text size="1" color="gray">
+                    A caller hears the greeting and hold music while every speaker, the app and your mobile ring;
+                    whoever answers first takes the call, with the assistant listening in. After 40 seconds the caller
+                    hears the unanswered message. Texts are read out on the speakers and kept under Messages.
+                  </Text>
+                  <TextField.Root
+                    placeholder="Your name as callers hear it (default: your username)"
+                    aria-label="Owner name"
+                    value={settings.owner_name}
+                    onChange={(e) => set({ owner_name: e.target.value })}
+                  />
+                  <TextField.Root
+                    placeholder="Greeting: Hi, this is Alexsay, {name}'s assistant. Please stay on the line while I'm connecting you."
+                    aria-label="Caller greeting"
+                    value={settings.greeting}
+                    onChange={(e) => set({ greeting: e.target.value })}
+                  />
+                  <TextField.Root
+                    placeholder="Unanswered: Sorry, nobody can take your call right now. Please try again later."
+                    aria-label="Unanswered message"
+                    value={settings.unanswered}
+                    onChange={(e) => set({ unanswered: e.target.value })}
                   />
                 </>
               )}
@@ -728,7 +776,7 @@ function describeVoiceUrl(url: string): string {
 
 /** What happened to the last calls, including where an incoming one rang, so a silent phone has an answer. */
 function RecentCalls() {
-  const recent = useQuery({ queryKey: ["recent-calls"], queryFn: api.recentCalls, refetchInterval: 60_000 });
+  const recent = useQuery({ queryKey: ["recent-calls"], queryFn: () => api.recentCalls(), refetchInterval: 60_000 });
   if (!recent.data || recent.data.length === 0) {
     return null;
   }
@@ -768,4 +816,31 @@ function twilioError(err: unknown): string {
     }
   }
   return errorText(err);
+}
+
+/** Who gets through: nobody, contacts only, or everyone. */
+function PolicySelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: IncomingPolicy;
+  onChange: (value: IncomingPolicy) => void;
+}) {
+  return (
+    <Flex direction="column" gap="1">
+      <Text size="1" color="gray">
+        {label}
+      </Text>
+      <Select.Root value={value} onValueChange={(next) => onChange(next as IncomingPolicy)}>
+        <Select.Trigger aria-label={label} />
+        <Select.Content>
+          <Select.Item value="everyone">Everyone</Select.Item>
+          <Select.Item value="contacts">Contacts only</Select.Item>
+          <Select.Item value="off">Nobody (off)</Select.Item>
+        </Select.Content>
+      </Select.Root>
+    </Flex>
+  );
 }

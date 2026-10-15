@@ -48,6 +48,29 @@ pub enum LineEvent {
     /// The offer is off: they gave up waiting, or the server did.
     #[serde(rename = "drop_in.cancel")]
     DropInCancel { id: String },
+    /// Someone is calling the home's number: ring, say who, ask whether to answer.
+    #[serde(rename = "call.incoming")]
+    CallIncoming {
+        conference: String,
+        #[serde(default)]
+        from: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        say: String,
+    },
+    /// Answered elsewhere, or nobody did in time: stop ringing.
+    #[serde(rename = "call.incoming.cancel")]
+    CallIncomingCancel { conference: String },
+    /// Something to read out after a chime: a text, a missed call, a message taken.
+    #[serde(rename = "notify")]
+    Notify {
+        #[serde(default)]
+        id: String,
+        #[serde(default)]
+        kind: String,
+        say: String,
+    },
 }
 
 /// Speaker to server.
@@ -108,6 +131,33 @@ mod tests {
             LineEvent::parse(r#"{"type":"drop_in.cancel","id":"d-1"}"#),
             Some(LineEvent::DropInCancel {
                 id: "d-1".to_owned()
+            })
+        );
+        assert_eq!(
+            LineEvent::parse(
+                r#"{"type":"call.incoming","conference":"in-1","from":"+447700900123","name":"Mum","say":"Call from Mum"}"#
+            ),
+            Some(LineEvent::CallIncoming {
+                conference: "in-1".to_owned(),
+                from: "+447700900123".to_owned(),
+                name: Some("Mum".to_owned()),
+                say: "Call from Mum".to_owned()
+            })
+        );
+        assert_eq!(
+            LineEvent::parse(r#"{"type":"call.incoming.cancel","conference":"in-1"}"#),
+            Some(LineEvent::CallIncomingCancel {
+                conference: "in-1".to_owned()
+            })
+        );
+        assert_eq!(
+            LineEvent::parse(
+                r#"{"type":"notify","id":"n1","kind":"message","say":"Text from Mum: hi"}"#
+            ),
+            Some(LineEvent::Notify {
+                id: "n1".to_owned(),
+                kind: "message".to_owned(),
+                say: "Text from Mum: hi".to_owned()
             })
         );
         assert_eq!(

@@ -505,7 +505,7 @@ describe("twilio", () => {
     expect(rows?.n).toBe(4);
   });
 
-  it("rings every speaker and the mobile when someone calls the number", async () => {
+  it("takes a call to the number into a conference and gives the speaker its SIP details", async () => {
     await connectTwilio(maria, { sip_domain: "alexsay.sip.twilio.com" });
     await json(`${APP}/api/devices`, "POST", { id: DEVICE_ID, name: "Kitchen" }, maria);
     const unsigned = await call(`${APP}/v1/twilio/voice`, {
@@ -517,6 +517,9 @@ describe("twilio", () => {
     const unknown = await twilioWebhook("/v1/twilio/voice", { To: "+447700900555", From: MUM, CallSid: "CA9" });
     expect(unknown.status).toBe(403);
 
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: "CA-ring", status: "ringing" }),
+    });
     const res = await twilioWebhook("/v1/twilio/voice", {
       To: TWILIO_NUMBER,
       From: MUM,
@@ -526,11 +529,12 @@ describe("twilio", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/xml");
     const twiml = await res.text();
-    expect(twiml).toContain(`<Sip>sip:${DEVICE_ID}@alexsay.sip.twilio.com</Sip>`);
-    expect(twiml).toContain(`<Number>${MY_NUMBER}</Number>`);
+    expect(twiml).toContain("<Say");
+    expect(twiml).toContain("<Conference");
     const row = await env.DB.prepare("SELECT direction, phone, contact_id FROM calls WHERE sid = 'CA9'").first();
     expect(row).toMatchObject({ direction: "in", phone: MUM });
     expect(row?.contact_id).toBe(await mumId());
+    upstream.done();
 
     const beat = await heartbeat(DEVICE_ID);
     expect(await beat.json()).toMatchObject({
@@ -1059,14 +1063,6 @@ describe("twilio", () => {
     }>();
     expect(open?.n).toBe(0);
     expect(await tool(maria, "end_call", {})).toEqual({ error: "there is no call in progress" });
-  });
-
-  it("rings the browser as well when someone calls the number", async () => {
-    await connectTwilio(maria);
-    const res = await twilioWebhook("/v1/twilio/voice", { To: TWILIO_NUMBER, From: MUM, CallSid: "CA12" });
-    expect(await res.text()).toContain(
-      `<Dial timeout="25"><Client>alexsay-app</Client><Number>${MY_NUMBER}</Number></Dial>`,
-    );
   });
 
   const WEBHOOK_SECRET = `whsec_${btoa("openai-webhook-secret-0123456789")}`;

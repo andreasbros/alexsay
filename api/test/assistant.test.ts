@@ -137,6 +137,8 @@ describe("assistant sessions", () => {
       "update_contact",
       "add_contact",
       "drop_in",
+      "list_notifications",
+      "mark_notifications_read",
     ]);
     expect(config.instructions).not.toMatch(/search the web/);
   });

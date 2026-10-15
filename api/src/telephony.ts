@@ -1,5 +1,6 @@
 import { canJoinCalls, openaiConnection, type TwilioConnection, twilioConnection } from "./connections";
 import { bridges, type CallRow, calls, contacts, messages } from "./db";
+import { notifyHome } from "./device_channel";
 import { type Locale, localeInstructions } from "./locale";
 import { logFor } from "./log";
 import { contextInstructions, currentConversation, loadContext } from "./memory";
@@ -121,10 +122,19 @@ const agentGuest = (agent: TestAgent): Guest => ({
   agent,
 });
 
-interface HostBrief {
+/** Who rang the number, kept on an incoming call's legs. */
+export interface CallerInfo {
+  phone: string;
+  name: string | null;
+  contact_id: string | null;
+}
+
+export interface HostBrief {
   task?: string;
   guests: Guest[];
   dialled?: boolean;
+  /** An incoming call: the caller is already on, waiting; nobody is dialled, only the assistant seated. */
+  incoming?: CallerInfo;
 }
 
 /** Where the app lives, for the URLs Twilio calls back; a tool context or a webhook request both know it. */
@@ -151,7 +161,7 @@ export function webhooks(origin: string): Webhooks {
 
 type Ready = TwilioConnection & { from: string };
 
-async function ready(scope: Scope, home: string): Promise<Ready> {
+export async function ready(scope: Scope, home: string): Promise<Ready> {
   const connection = await twilioConnection(scope, home);
   if (!connection) {
     throw new TelephonyError("no_twilio_connection", "Twilio is not connected");
@@ -324,7 +334,7 @@ async function openConference(
  * The speaker is the host: its line must be up, then the user's number calls itself. The outbound
  * side joins the conference as host; the inbound side (the voice webhook) streams it to the speaker.
  */
-async function ringSpeaker(c: Place & { device?: string }, home: string, connection: Ready, conference: string) {
+export async function ringSpeaker(c: Place & { device?: string }, home: string, connection: Ready, conference: string) {
   const device = c.device;
   if (!isPublicOrigin(c.origin)) {
     throw new TelephonyError(
@@ -363,10 +373,23 @@ export async function speakerOnline(scope: Scope, device: string): Promise<boole
  */
 export async function hostAnswered(place: Place, hostLeg: CallRow): Promise<void> {
   const brief = parseBrief(hostLeg.brief);
-  if (!hostLeg.conference || !brief || brief.guests.length === 0) {
+  if (!hostLeg.conference || !brief || (brief.guests.length === 0 && !brief.incoming)) {
     return;
   }
   if (!(await calls.claimDialling(place.env.DB, hostLeg.id))) {
+    return;
+  }
+  if (brief.incoming) {
+    // The caller is already on: the other ringing sides stop and the assistant joins quietly
+    await cancelOtherRinging(place, hostLeg.home_id, hostLeg.conference, hostLeg.sid);
+    await seatAssistant(place, hostLeg.home_id, hostLeg.conference, brief).catch(async (err: unknown) => {
+      await logFor(
+        place,
+        hostLeg.home_id,
+        "error",
+        `call ${hostLeg.conference}: seating the assistant failed: ${errorText(err)}`,
+      );
+    });
     return;
   }
   await logFor(
@@ -462,8 +485,44 @@ async function tellAssistant(place: Scope, leg: CallRow, text: string, reply: bo
 /** The assistant's realtime socket lives in one object per conference, so call events can reach it. */
 export const assistantAgentName = (conference: string) => `assistant:${conference}`;
 
-/** Dials the assistant's SIP leg into the conference; the unique seat means it happens once per call. */
-async function seatAssistant(place: Place, home: string, conference: string, hostBrief: HostBrief): Promise<void> {
+/** One side picked up an incoming call: every other ringing side (app, mobile, speakers) stops. */
+export async function cancelOtherRinging(
+  scope: Scope,
+  home: string,
+  conference: string,
+  keepSid: string | null,
+): Promise<void> {
+  const connection = await twilioConnection(scope, home);
+  const now = Date.now();
+  for (const leg of await calls.legs(scope.env.DB, conference)) {
+    if (
+      leg.role !== "host" ||
+      !leg.sid ||
+      leg.sid === keepSid ||
+      leg.status === "in-progress" ||
+      !isLiveLeg(leg, now)
+    ) {
+      continue;
+    }
+    await calls.setStatus(scope.env.DB, leg.sid, "canceled");
+    if (connection) {
+      await completeCall(connection.client, leg.sid).catch(() => undefined);
+    }
+  }
+  await notifyHome(scope, home, { type: "call.incoming.cancel", conference });
+}
+
+/**
+ * Dials the assistant's SIP leg into the conference; the unique seat means it happens once per call.
+ * As host (an incoming call it takes alone) its joining starts the conference and its leaving ends it.
+ */
+export async function seatAssistant(
+  place: Place,
+  home: string,
+  conference: string,
+  hostBrief: HostBrief,
+  asHost = false,
+): Promise<void> {
   const openai = await openaiConnection(place, home);
   if (!canJoinCalls(openai) || !isPublicOrigin(place.origin)) {
     return;
@@ -480,7 +539,7 @@ async function seatAssistant(place: Place, home: string, conference: string, hos
       to: sipUri(openai.settings.project_id, { [CONFERENCE_HEADER]: conference }),
       from: "alexsay",
       label: "assistant",
-      host: false,
+      host: asHost,
       statusCallback: statusCallbackUrl(place),
       conferenceStatusCallback: conferenceStatusCallbackUrl(place),
     });
@@ -598,6 +657,9 @@ const parseBrief = (text: string | null): HostBrief | null => {
 
 /** What the assistant on the line is told: who is there, who answered, what to do, and what it remembers. */
 async function callBrief(place: Scope, home: string, hostBrief: HostBrief | null): Promise<string> {
+  if (hostBrief?.incoming) {
+    return incomingBrief(place, home, hostBrief.incoming, hostBrief.task);
+  }
   const guests = hostBrief?.guests ?? [];
   const people = guests.map((g) => (g.name ? `${g.name} (${g.phone})` : g.phone)).join(", ") || "the person called";
   const notes = guests
@@ -636,6 +698,37 @@ async function callBrief(place: Scope, home: string, hostBrief: HostBrief | null
       "person. The other tools (contacts, memory, lights, messages) work as usual. Speak only in the language the " +
       "people on the call use.",
     notes,
+    await currentConversation(place.env.DB, home),
+    contextInstructions(await loadContext(place.env.DB, home)),
+  ];
+  return parts.filter(Boolean).join("\n\n");
+}
+
+/**
+ * The briefing on a call that came in. Taken on a speaker: the assistant is a quiet third party.
+ * Taken by the assistant alone: it speaks for the user, passes on their words, takes a message.
+ */
+async function incomingBrief(
+  place: Scope,
+  home: string,
+  caller: CallerInfo,
+  task: string | undefined,
+): Promise<string> {
+  const who = caller.name ? `${caller.name} (${caller.phone})` : caller.phone;
+  const role = task
+    ? `${home} is not taking this call themselves. They asked you: ${task}. The caller has heard a greeting and hold ` +
+      `music and you have just joined; they are waiting. Introduce yourself at once as Alexsay, ${home}'s assistant, ` +
+      `and pass on what ${home} asked. Offer to take a message. When they give one, call take_message with their ` +
+      "words (or a faithful summary that names them and what they want), tell them it will be passed on, say goodbye " +
+      "and call end_call. If they do not want to leave one, say goodbye and call end_call. Keep every turn short."
+    : `${home} answered on their speaker and is talking to the caller. Do not introduce yourself and do not speak ` +
+      `first. Stay silent unless ${home} addresses you by name (Alexsay, Aleksey) or asks you something directly ` +
+      `("Alexsay, what time is my dentist?", "Alexsay, hang up"); then help briefly and go quiet again. When ${home} ` +
+      "asks you to hang up, say a brief goodbye and call end_call.";
+  const parts = [
+    `Your name is Alexsay, pronounced "Aleksey". ${who} has called ${home}'s number. ${role} ${PHONE_ETIQUETTE} ` +
+      "If you and the other side start at the same moment, you give way: stop at once, let them finish, then speak. " +
+      `Never read out numbers, addresses or other personal details ${home} has not asked you to share.`,
     await currentConversation(place.env.DB, home),
     contextInstructions(await loadContext(place.env.DB, home)),
   ];
@@ -812,8 +905,14 @@ export async function pressDigits(c: Scope, home: string, digits: string): Promi
 /** Hangs up the user's current call by ending the host leg, which takes the whole conference down. */
 export async function endCall(c: Scope, home: string, by: EndedBy = "user"): Promise<{ conference: string }> {
   const connection = await ready(c, home);
-  const conference = await calls.openConference(c.env.DB, home, Date.now() - CONFERENCE_WINDOW_MS);
-  const host = conference ? await calls.hostLeg(c.env.DB, home, conference) : null;
+  const now = Date.now();
+  const conference = await calls.openConference(c.env.DB, home, now - CONFERENCE_WINDOW_MS);
+  const legs = conference ? await calls.legs(c.env.DB, conference) : [];
+  // An incoming call the assistant took alone has no live host but its own seat, which ends the conference too
+  const host =
+    legs.find((l) => l.role === "host" && l.home_id === home && isLiveLeg(l, now)) ??
+    legs.find((l) => l.role === "assistant" && l.home_id === home && isLiveLeg(l, now)) ??
+    null;
   if (!conference || !host?.sid) {
     throw new TelephonyError("no_open_conference", "there is no call in progress");
   }

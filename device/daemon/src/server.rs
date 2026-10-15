@@ -181,6 +181,37 @@ impl Server {
     }
 
     /// The report of a call this speaker was on; `ready` is false while the assistant's leg is still closing.
+    /// Takes a ringing call: on this speaker, or the assistant alone with the user's instruction.
+    /// The server's refusal (answered elsewhere, over) comes back as `{"error", "detail"}` text.
+    pub async fn answer_call(&self, conference: &str, instruction: Option<&str>) -> String {
+        let body = serde_json::json!({
+            "mode": if instruction.is_some() { "assistant" } else { "speaker" },
+            "instruction": instruction,
+        });
+        let url = format!("{}/v1/device/calls/{conference}/answer", self.base);
+        let result: anyhow::Result<Value> = async {
+            let res = self
+                .http
+                .post(&url)
+                .header(DEVICE_ID_HEADER, self.id.to_string())
+                .json(&body)
+                .send()
+                .await
+                .with_context(|| format!("POST {url}"))?;
+            if res.status().is_client_error() {
+                return Ok(res.json().await.unwrap_or(Value::Null));
+            }
+            Self::decode(res).await
+        }
+        .await;
+        match result {
+            Ok(value) => value.to_string(),
+            Err(err) => {
+                serde_json::json!({ "error": "failed", "detail": format!("{err:#}") }).to_string()
+            }
+        }
+    }
+
     pub async fn call_report(&self, conference: &str) -> anyhow::Result<Value> {
         let url = format!("{}/v1/device/conferences/{conference}/report", self.base);
         let res = self

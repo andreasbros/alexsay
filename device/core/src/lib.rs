@@ -7,6 +7,7 @@ pub mod duplex;
 pub mod endpoint;
 pub mod heartbeat;
 pub mod identity;
+pub mod incoming;
 pub mod line;
 pub mod live;
 pub mod mulaw;

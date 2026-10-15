@@ -1,7 +1,6 @@
 /** The call scripts Twilio runs for us; everything user-provided is escaped before it enters the XML. */
 
 const SAY_VOICE = 'voice="Polly.Amy" language="en-GB"';
-const RING_SECONDS = 25;
 
 export const escapeXml = (text: string) =>
   text.replace(
@@ -22,22 +21,19 @@ export const announceTwiml = (message: string) => {
 };
 
 /**
- * Someone called the user's Twilio number: ring the app in the browser, every registered speaker
- * and the user's own phone at once; whoever answers first takes the call. Without any, say so and hang up.
+ * Someone called the user's Twilio number: they hear the greeting (Twilio's own voice, so it plays
+ * whatever the assistant is doing) and wait in a conference of their own with hold music until
+ * whoever answers joins as host and starts it.
  */
-export function ringTwiml(sipUris: string[], mobile: string | null, client: string | null = null): string {
-  const targets = [
-    ...(client ? [`<Client>${escapeXml(client)}</Client>`] : []),
-    ...sipUris.map((uri) => `<Sip>${escapeXml(uri)}</Sip>`),
-    ...(mobile ? [`<Number>${escapeXml(mobile)}</Number>`] : []),
-  ];
-  if (targets.length === 0) {
-    return response(
-      `<Say ${SAY_VOICE}>Nothing is set up to take this call: no app open, no speaker and no other phone.</Say><Hangup/>`,
-    );
-  }
-  return response(`<Dial timeout="${RING_SECONDS}">${targets.join("")}</Dial>`);
-}
+export const incomingTwiml = (greeting: string, conference: string, conferenceStatusCallback: string) =>
+  response(
+    `<Say ${SAY_VOICE}>${escapeXml(greeting)}</Say>` +
+      `<Dial><Conference beep="false" startConferenceOnEnter="false" endConferenceOnExit="false" ` +
+      `statusCallback="${escapeXml(conferenceStatusCallback)}" statusCallbackEvent="start end join leave">` +
+      `${escapeXml(conference)}</Conference></Dial>`,
+  );
+
+export const hangupTwiml = () => response("<Hangup/>");
 
 /**
  * The host leg of a call taken on a speaker: a call from the user's number to itself joins the

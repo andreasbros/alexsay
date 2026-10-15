@@ -167,10 +167,26 @@ export const twilioSettings = z.object({
     .trim()
     .regex(/^\+[1-9]\d{0,3}$/)
     .default("+44"),
+  /** Who may ring the number: nobody, contacts only, or anyone. */
+  incoming_calls: z.enum(["off", "contacts", "everyone"]).default("everyone"),
+  /** Whose texts and WhatsApp messages are kept and read out. */
+  incoming_messages: z.enum(["off", "contacts", "everyone"]).default("everyone"),
+  /** How callers hear the home's name ("Andreas"); the home's id with a capital when empty. */
+  owner_name: z.string().trim().max(60).default(""),
+  /** What a caller hears first; {name} is the owner's name. Empty: the built-in greeting. */
+  greeting: z.string().trim().max(300).default(""),
+  /** What a caller hears when nobody picks up in time. Empty: the built-in message. */
+  unanswered: z.string().trim().max(300).default(""),
   /** How the chosen number routed calls before this app took it; put back when the user moves on. */
   number_backup: numberRouting.nullable().default(null),
 });
 export type TwilioSettings = z.infer<typeof twilioSettings>;
+
+/** A speaker answering an incoming call: itself, or the assistant alone with what to say and do. */
+export const answerCall = z.object({
+  mode: z.enum(["speaker", "assistant"]).default("speaker"),
+  instruction: z.string().trim().max(500).optional(),
+});
 
 /** Empty credentials keep the stored pair, so the number and settings can change on their own. */
 export const twilioConnection = z.object({

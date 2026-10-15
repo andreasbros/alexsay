@@ -7,6 +7,7 @@ import { conversationRoutes, memoryRoutes } from "./routes/conversations";
 import { deviceApiRoutes } from "./routes/device_api";
 import { deviceRoutes } from "./routes/devices";
 import { homeRoutes, inviteRoutes } from "./routes/home";
+import { messageRoutes, notificationRoutes } from "./routes/messages";
 import { openaiWebhookRoutes } from "./routes/openai_webhooks";
 import { serverRoutes } from "./routes/server";
 import { sessionRoutes } from "./routes/session";
@@ -48,6 +49,12 @@ export const app = new Hono<AppEnv>()
   .use("/api/contacts/*", requireUser)
   .use("/api/contacts", requireUser)
   .route("/api/contacts", contactRoutes)
+  .use("/api/messages/*", requireUser)
+  .use("/api/messages", requireUser)
+  .route("/api/messages", messageRoutes)
+  .use("/api/notifications/*", requireUser)
+  .use("/api/notifications", requireUser)
+  .route("/api/notifications", notificationRoutes)
   .use("/api/twilio/*", requireUser)
   .use("/api/twilio/numbers/*", changesNeedHomeAdmin)
   .route("/api/twilio", twilioRoutes)

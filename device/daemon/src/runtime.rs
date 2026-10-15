@@ -11,6 +11,7 @@ use alexsay_core::config::{Config, Paths};
 use alexsay_core::drop_in::{self, Decision};
 use alexsay_core::heartbeat::HeartbeatReply;
 use alexsay_core::identity::DeviceId;
+use alexsay_core::incoming;
 use alexsay_core::live::{ClientEvent, Item};
 use alexsay_core::pcm::{self, LIVE_RATE};
 use alexsay_core::session::{Action, END_TOOL, Session, SessionState};
@@ -324,11 +325,35 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
                     let _ = runtime.openings_tx.send(Opening::DropIn { id, from });
                 }
             }
-            LineSignal::DropInCancel { id } => {
+            LineSignal::DropInCancel { id } | LineSignal::CallIncomingCancel { conference: id } => {
                 *runtime
                     .cancelled_offer
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(id);
+            }
+            LineSignal::CallIncoming {
+                conference,
+                from,
+                name,
+            } => {
+                // Busy here: the call keeps ringing on the other speakers, the app and the mobile
+                if runtime.call.on_call() || runtime.alarms.ringing() {
+                    info!(from = %from, "call ringing while busy: not announced here");
+                } else {
+                    let _ = runtime.openings_tx.send(Opening::IncomingCall {
+                        conference,
+                        who: name.unwrap_or_else(|| incoming_number(&from)),
+                    });
+                }
+            }
+            LineSignal::Notify { say } => {
+                if runtime.call.on_call() {
+                    info!(%say, "notification held back during a call");
+                    continue;
+                }
+                runtime.play_clip(sounds::DING);
+                let told = Arc::clone(&runtime);
+                tokio::spawn(async move { told.announce(&say).await });
             }
             LineSignal::AlarmsChanged => runtime.alarms.send(AlarmSignal::Changed),
             LineSignal::AlarmStop { id } => runtime.alarms.send(AlarmSignal::Stop(id)),
@@ -594,7 +619,7 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
             Some(opening) = openings.recv() => {
                 match &opening {
                     Opening::Report(_) if runtime.call.on_call() => continue,
-                    Opening::DropIn { .. } => runtime.play_clip(sounds::DROP_IN),
+                    Opening::DropIn { .. } | Opening::IncomingCall { .. } => runtime.play_clip(sounds::DROP_IN),
                     _ => {}
                 }
                 opening
@@ -693,8 +718,40 @@ fn after_conversation(
 pub enum Opening {
     Wake(Vec<i16>),
     Report(String),
-    Snooze { preroll: Vec<i16>, note: String },
-    DropIn { id: String, from: String },
+    Snooze {
+        preroll: Vec<i16>,
+        note: String,
+    },
+    DropIn {
+        id: String,
+        from: String,
+    },
+    /// A call ringing on the home's number, to announce and decide (`who`: the contact's name or the number).
+    IncomingCall {
+        conference: String,
+        who: String,
+    },
+}
+
+/// A number as the assistant should say it: spaced in groups, never one long figure.
+fn incoming_number(phone: &str) -> String {
+    let digits: String = phone.chars().filter(char::is_ascii_digit).collect();
+    if digits.len() < 7 {
+        return phone.to_owned();
+    }
+    let (country, rest) = digits.split_at(2);
+    // The first group takes up to four digits so the rest falls into threes, as the server says it
+    let first = (1..=4)
+        .rev()
+        .find(|n| (rest.len().saturating_sub(*n)) % 3 == 0)
+        .unwrap_or(rest.len().min(4));
+    let mut groups = vec![rest[..first].to_owned()];
+    groups.extend(
+        rest.as_bytes()[first..]
+            .chunks(3)
+            .map(|chunk| String::from_utf8_lossy(chunk).into_owned()),
+    );
+    format!("+{country} {}", groups.join(" "))
 }
 
 /// What the wake word heard over the last second, logged at debug: the level, the gain the detector
@@ -750,20 +807,25 @@ pub async fn converse(
     let ring_session = matches!(opening, Opening::Snooze { .. });
     let offer = match &opening {
         Opening::DropIn { id, .. } => Some(id.clone()),
+        Opening::IncomingCall { conference, .. } => Some(conference.clone()),
         _ => None,
     };
+    let ringing_call = matches!(opening, Opening::IncomingCall { .. });
     let (preroll, mut report) = match opening {
         Opening::Wake(preroll) => (preroll, None),
         Opening::Report(report) => (Vec::new(), Some(report)),
         Opening::Snooze { preroll, note } => (preroll, Some(note)),
         Opening::DropIn { from, .. } => (Vec::new(), Some(drop_in::offer_note(&from))),
+        Opening::IncomingCall { who, .. } => (Vec::new(), Some(incoming::offer_note(&who))),
     };
     // Said nothing about until the user speaks: a drop-in is on, and who is on it
     let mut context = runtime
         .call
         .drop_in()
         .then(|| drop_in::open_note(&runtime.call.who()));
-    let own_tools = if offer.is_some() {
+    let own_tools = if ringing_call {
+        incoming::offer_tools()
+    } else if offer.is_some() {
         drop_in::offer_tools()
     } else if runtime.call.drop_in() {
         drop_in::call_tools()
@@ -771,6 +833,8 @@ pub async fn converse(
         Vec::new()
     };
     let mut decided = false;
+    // The answer_call tool asks the server; its reply decides whether the conversation closes
+    let mut answering: Option<String> = None;
     let Some(device_session) = runtime
         .server
         .session()
@@ -909,6 +973,36 @@ pub async fn converse(
                                 session.tool_finished();
                                 continue;
                             }
+                            if ringing_call && let Some(conference) = &offer
+                                && let Some(decision) = incoming::decision(&call.name, &call.arguments)
+                            {
+                                info!(?decision, "ringing call");
+                                decided = true;
+                                match decision {
+                                    incoming::Decision::Reject => {
+                                        session.close_after_reply(now_ms());
+                                        live.send(ClientEvent::ResponseItemCreate { item: Item::FunctionCallOutput { call_id: call.call_id, output: r#"{"ok":true,"note":"left ringing"}"#.to_owned() } });
+                                        live.send(ClientEvent::ResponseCreate);
+                                        session.tool_finished();
+                                    }
+                                    incoming::Decision::Answer | incoming::Decision::Delegate(_) => {
+                                        let instruction = match decision {
+                                            incoming::Decision::Delegate(text) => Some(text),
+                                            _ => None,
+                                        };
+                                        answering = Some(call.call_id.clone());
+                                        let server = runtime.server.clone();
+                                        let tx = tool_tx.clone();
+                                        let conference = conference.clone();
+                                        tokio::spawn(async move {
+                                            let output = server.answer_call(&conference, instruction.as_deref()).await;
+                                            info!(result = %output.chars().take(160).collect::<String>(), "answer_call");
+                                            let _ = tx.send((call.call_id, output));
+                                        });
+                                    }
+                                }
+                                continue;
+                            }
                             if let Some(decision) = drop_in::decision(&call.name)
                                 && let Some(line) = &runtime.line
                                 && let Some(reply) = drop_in_reply(decision, offer.as_deref(), runtime.call.drop_in())
@@ -959,6 +1053,13 @@ pub async fn converse(
                 }
             }
             Some((call_id, output)) = tool_rx.recv() => {
+                // The call is ours (the stream follows and takes the speaker) or the assistant's: either way this talk is done
+                if answering.as_deref() == Some(call_id.as_str()) {
+                    match incoming::answer_failed(&output) {
+                        Some(why) => info!(%why, "the call could not be taken here"),
+                        None => session.close_after_reply(now_ms()),
+                    }
+                }
                 live.send(ClientEvent::ResponseItemCreate { item: Item::FunctionCallOutput { call_id, output } });
                 live.send(ClientEvent::ResponseCreate);
                 session.tool_finished();
@@ -1015,8 +1116,10 @@ pub async fn converse(
             }
         }
     }
-    // Asked and not answered (nothing said, the session timed out): that is a no
+    // A drop-in asked about and not answered (nothing said, the session timed out): that is a no.
+    // A ringing call left unanswered keeps ringing elsewhere until the server gives up.
     if let Some(id) = &offer
+        && !ringing_call
         && !decided
         && let Some(line) = &runtime.line
     {
@@ -1122,6 +1225,13 @@ mod tests {
         );
         assert_eq!(ring_command("stop_alarm", "{}"), Some(RingCommand::Stop));
         assert_eq!(ring_command("set_alarm", "{}"), None);
+    }
+
+    #[test]
+    fn a_number_is_announced_in_groups() {
+        assert_eq!(incoming_number("+447700900123"), "+44 7700 900 123");
+        assert_eq!(incoming_number("+14155552671"), "+14 155 552 671");
+        assert_eq!(incoming_number("12345"), "12345");
     }
 
     #[test]

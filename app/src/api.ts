@@ -68,12 +68,21 @@ export interface NumberRouting {
   status_callback: string;
 }
 
+export type IncomingPolicy = "off" | "contacts" | "everyone";
+
 export interface TwilioSettings {
   from_number: string;
   whatsapp_from: string;
   my_number: string;
   sip_domain: string;
   country_code: string;
+  /** Who may ring the number, and whose texts are kept and read out. */
+  incoming_calls: IncomingPolicy;
+  incoming_messages: IncomingPolicy;
+  /** How callers hear the home's name; the greeting and the message for unanswered calls ({name} is the owner). */
+  owner_name: string;
+  greeting: string;
+  unanswered: string;
   /** Set by the server: how the chosen number routed calls before this app took it. */
   number_backup?: NumberRouting | null;
 }
@@ -235,6 +244,31 @@ export interface RecentCall {
   contact: string | null;
   status: string;
   detail: string | null;
+}
+
+export interface MessageItem {
+  id: string;
+  at: number;
+  channel: Channel;
+  direction: "out" | "in";
+  phone: string;
+  contact_id: string | null;
+  contact: string | null;
+  body: string;
+  status: string;
+}
+
+export interface Notification {
+  id: string;
+  at: number;
+  kind: "call" | "message" | "note";
+  phone: string;
+  contact_id: string | null;
+  contact: string | null;
+  title: string;
+  body: string;
+  ref: string | null;
+  read_at: number | null;
 }
 
 export interface Placed {
@@ -483,7 +517,16 @@ export const api = {
   sendMessage: (contact_id: string, body: string, channel: Channel) =>
     request<Placed>("POST", "/api/twilio/messages", { contact_id, body, channel }),
   voiceToken: () => request<{ token: string; identity: string; ttl: number }>("GET", "/api/twilio/voice-token"),
-  recentCalls: () => request<RecentCall[]>("GET", "/api/twilio/calls"),
+  recentCalls: (limit?: number) => request<RecentCall[]>("GET", `/api/twilio/calls${limit ? `?limit=${limit}` : ""}`),
+  /** A text to a number that may not be a contact (a reply under Messages). */
+  sendMessageTo: (number: string, body: string) =>
+    request<Placed>("POST", "/api/twilio/messages", { number, body, channel: "sms" }),
+  /** Calls a number back: the mobile rings first, then the person. */
+  callNumber: (number: string) => request<Placed>("POST", "/api/twilio/calls", { number }),
+  messages: (limit = 100) => request<MessageItem[]>("GET", `/api/messages?limit=${limit}`),
+  notifications: () => request<{ unread: number; notifications: Notification[] }>("GET", "/api/notifications"),
+  markNotificationsRead: (ids?: string[]) =>
+    request<{ marked: number }>("POST", "/api/notifications/read", ids ? { ids } : {}),
   endCall: () => request<{ conference: string }>("POST", "/api/twilio/calls/end"),
   callReport: (conference: string) =>
     request<CallReport>("GET", `/api/twilio/conferences/${encodeURIComponent(conference)}/report`),

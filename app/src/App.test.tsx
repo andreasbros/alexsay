@@ -107,6 +107,7 @@ describe("App", () => {
     expect([...new Set(tabs.map((link) => link.getAttribute("href")))]).toEqual([
       "/",
       "/assistant",
+      "/messages",
       "/memory",
       "/skills",
     ]);
@@ -146,6 +147,102 @@ describe("App", () => {
     expect(getUserMedia).toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("shows what came in under Messages, marks it read and offers to reply or call back", async () => {
+    const read: unknown[] = [];
+    const routes: Record<string, () => Response> = {
+      "/api/session/me": json({ username: "maria", role: "user", home: "maria", homeRole: "user" }),
+      "/api/notifications": json({
+        unread: 1,
+        notifications: [
+          {
+            id: "n1",
+            at: Date.now() - 60_000,
+            kind: "note",
+            phone: "+447700900123",
+            contact_id: "c1",
+            contact: "Mum",
+            title: "Message from Mum",
+            body: "Dinner is at seven",
+            ref: null,
+            read_at: null,
+          },
+          {
+            id: "n2",
+            at: Date.now() - 3_600_000,
+            kind: "call",
+            phone: "+447700900777",
+            contact_id: null,
+            contact: null,
+            title: "Missed call from +44 7700 900 777",
+            body: "",
+            ref: null,
+            read_at: Date.now(),
+          },
+        ],
+      }),
+      "/api/messages?limit=100": json([
+        {
+          id: "m1",
+          at: Date.now(),
+          channel: "sms",
+          direction: "in",
+          phone: "+447700900123",
+          contact_id: "c1",
+          contact: "Mum",
+          body: "Dinner at 7?",
+          status: "received",
+        },
+      ]),
+      "/api/twilio/calls?limit=50": json([
+        {
+          id: "k1",
+          at: Date.now(),
+          direction: "in",
+          kind: "conference",
+          role: "guest",
+          phone: "+447700900123",
+          contact: "Mum",
+          status: "no-answer",
+          detail: null,
+        },
+      ]),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        if (path === "/api/notifications/read") {
+          read.push(JSON.parse(String(init?.body ?? "{}")));
+          return json({ marked: 1 })();
+        }
+        return routes[path]?.() ?? new Response("{}", { status: 404 });
+      }),
+    );
+    renderApp("/messages");
+    expect(await screen.findByText("Message from Mum")).toBeDefined();
+    expect(screen.getByText("Dinner is at seven")).toBeDefined();
+    expect(screen.getByText("Missed call from +44 7700 900 777")).toBeDefined();
+    expect(screen.getAllByRole("button", { name: "Reply" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Call back" })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Mark read" }));
+    await vi.waitFor(() => expect(read).toEqual([{ ids: ["n1"] }]));
+    fireEvent.click(screen.getByRole("button", { name: "Mark all read" }));
+    await vi.waitFor(() => expect(read).toEqual([{ ids: ["n1"] }, {}]));
+
+    // Radix doubles each tab's label (a hidden bold copy keeps the width), so the name is matched loosely
+    const tab = (name: string) => {
+      const trigger = screen.getByRole("tab", { name: new RegExp(`^${name}`) });
+      fireEvent.mouseDown(trigger);
+      fireEvent.click(trigger);
+    };
+    tab("Calls");
+    expect(await screen.findByText("Missed")).toBeDefined();
+    tab("SMS");
+    expect(await screen.findByText("Dinner at 7?")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Reply to Mum")).toBeDefined();
   });
 
   it("needs a name as well as the UUID to add a speaker", async () => {

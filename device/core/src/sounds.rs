@@ -61,7 +61,9 @@ pub const REMINDER: (&[Note], f32) = (
     ],
     1.4,
 );
-/// Someone is dropping in from the app: a doorbell before the assistant says who.
+/// Something arrived (a text, a missed call, a message taken): one bright note before it is read out.
+pub const DING: (&[Note], f32) = (&[note(1046.5, 0.0, 0.35, 0.9)], 0.5);
+/// Someone is dropping in from the app, or calling the number: a doorbell before the assistant says who.
 pub const DROP_IN: (&[Note], f32) = (
     &[note(659.25, 0.0, 0.25, 0.9), note(523.25, 0.3, 0.4, 0.9)],
     0.8,

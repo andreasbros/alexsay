@@ -31,6 +31,7 @@ Say **"Alexsay"** and talk. A full-duplex OpenAI voice conversation answers in a
 - 🍓 **Raspberry Pi 5 stack.** Pi 5, a ReSpeaker XVF3800 four-microphone array with hardware echo cancellation, a 4" driver and a printed cylinder.
 - 🧠 **Memory.** Every conversation is summarised and the durable facts are kept, so the assistant knows your people, home and routines next time.
 - 📞 **Phone calls.** Call, text and WhatsApp your contacts; the assistant joins the call, presses menu keys, hands you a summary when it ends.
+- ☎️ **Incoming calls and texts.** Callers hear a greeting and hold music while every speaker announces them ("Call from Mum. Answer?"); take it on the speaker with the assistant listening in, or say "tell her I'm out and take a message" and the assistant handles it and reads the message back. Texts are read out and kept under Messages, with contacts-only or off for either.
 - 🚪 **Drop in.** From the app (or "Alexsay, drop in on the kitchen" to the assistant there), talk through any speaker in your home like an intercom. The speaker announces you and asks before opening; the room can still ask the assistant or tell it to hang up; 40 seconds of silence hangs up by itself.
 
 ## Quick start

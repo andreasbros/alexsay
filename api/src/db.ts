@@ -19,6 +19,7 @@ import type {
   MemoryCategory,
   MemoryRow,
   MessageRow,
+  NotificationRow,
   Provider,
   Role,
   TurnRole,
@@ -822,3 +823,68 @@ export const bridges = {
 };
 
 export type { CallRow } from "./types";
+
+/** What the home was told about, shown under Messages and read out on the speakers. */
+export const notifications = {
+  create: (
+    db: D1Database,
+    row: {
+      id: string;
+      home_id: string;
+      kind: NotificationRow["kind"];
+      contact_id: string | null;
+      phone: string;
+      title: string;
+      body: string;
+      ref: string | null;
+      at: number;
+    },
+  ) =>
+    db
+      .prepare(
+        `INSERT INTO notifications (id, home_id, kind, contact_id, phone, title, body, ref, at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(row.id, row.home_id, row.kind, row.contact_id, row.phone, row.title, row.body, row.ref, row.at)
+      .run(),
+
+  list: async (db: D1Database, home: string, limit: number, unreadOnly: boolean) =>
+    (
+      await db
+        .prepare(
+          `SELECT * FROM notifications WHERE home_id = ? AND (? = 0 OR read_at IS NULL) ORDER BY at DESC LIMIT ?`,
+        )
+        .bind(home, unreadOnly ? 1 : 0, limit)
+        .all<NotificationRow>()
+    ).results,
+
+  unread: async (db: D1Database, home: string) =>
+    (
+      await db
+        .prepare("SELECT COUNT(*) AS n FROM notifications WHERE home_id = ? AND read_at IS NULL")
+        .bind(home)
+        .first<{ n: number }>()
+    )?.n ?? 0,
+
+  /** Marks the given ones (or every unread one) read; how many changed. */
+  markRead: async (db: D1Database, home: string, ids: string[] | null, at: number) => {
+    if (ids === null) {
+      return (
+        await db
+          .prepare("UPDATE notifications SET read_at = ? WHERE home_id = ? AND read_at IS NULL")
+          .bind(at, home)
+          .run()
+      ).meta.changes;
+    }
+    let changed = 0;
+    for (const id of ids) {
+      changed += (
+        await db
+          .prepare("UPDATE notifications SET read_at = ? WHERE home_id = ? AND id = ? AND read_at IS NULL")
+          .bind(at, home, id)
+          .run()
+      ).meta.changes;
+    }
+    return changed;
+  },
+};

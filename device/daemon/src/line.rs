@@ -91,6 +91,19 @@ pub enum LineSignal {
     DropInCancel {
         id: String,
     },
+    /// A call is ringing on the home's number: announce it, ask, answer through the server.
+    CallIncoming {
+        conference: String,
+        from: String,
+        name: Option<String>,
+    },
+    CallIncomingCancel {
+        conference: String,
+    },
+    /// Something to read out after a chime.
+    Notify {
+        say: String,
+    },
 }
 
 pub fn line_url(server_base: &str) -> String {
@@ -252,6 +265,20 @@ pub fn decode(text: &str) -> Option<LineSignal> {
         LineEvent::AlarmSnooze { id, minutes } => Some(LineSignal::AlarmSnooze { id, minutes }),
         LineEvent::DropInOffer { id, from } => Some(LineSignal::DropInOffer { id, from }),
         LineEvent::DropInCancel { id } => Some(LineSignal::DropInCancel { id }),
+        LineEvent::CallIncoming {
+            conference,
+            from,
+            name,
+            ..
+        } => Some(LineSignal::CallIncoming {
+            conference,
+            from,
+            name,
+        }),
+        LineEvent::CallIncomingCancel { conference } => {
+            Some(LineSignal::CallIncomingCancel { conference })
+        }
+        LineEvent::Notify { say, .. } => Some(LineSignal::Notify { say }),
     }
 }
 

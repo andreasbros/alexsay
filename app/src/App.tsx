@@ -8,6 +8,7 @@ import { HomePage } from "./pages/Home";
 import { Invite } from "./pages/Invite";
 import { Login } from "./pages/Login";
 import { MemoryPage } from "./pages/Memory";
+import { MessagesPage } from "./pages/Messages";
 import { Register } from "./pages/Register";
 import { Settings } from "./pages/Settings";
 import { Skills } from "./pages/Skills";
@@ -45,6 +46,7 @@ export function App() {
           <Route index element={<HomePage user={user} />} />
           <Route path="assistant" element={<Assistant />} />
           <Route path="connections" element={<Navigate to="/#connections" replace />} />
+          <Route path="messages" element={<MessagesPage />} />
           <Route path="memory" element={<MemoryPage />} />
           <Route path="skills" element={<Skills />} />
           <Route path="settings" element={<Settings user={user} />} />

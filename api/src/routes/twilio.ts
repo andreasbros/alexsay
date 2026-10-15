@@ -80,7 +80,8 @@ export const twilioRoutes = new Hono<AppEnv>()
   /** The latest calls either way, with where an incoming one rang, so a silent phone can be explained. */
   .get("/calls", async (c) => {
     const home = c.get("user").home;
-    const rows = await calls.list(c.env.DB, home, null, RECENT_CALLS);
+    const limit = Math.min(200, Math.max(1, Number.parseInt(c.req.query("limit") ?? "", 10) || RECENT_CALLS));
+    const rows = await calls.list(c.env.DB, home, null, limit);
     const names = new Map<string, string>();
     for (const row of rows) {
       if (row.contact_id && !names.has(row.contact_id)) {

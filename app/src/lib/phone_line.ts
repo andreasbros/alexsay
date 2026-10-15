@@ -109,8 +109,8 @@ export async function openPhoneLine(
   };
   device.on("incoming", (call: Call) => {
     attach(call);
-    // Our own conference legs carry the conference name; anything else is a real incoming call
-    if (call.customParameters.get("conference")) {
+    // Our own conference legs carry the conference name; a caller parked in one ("incoming"), or any other call, rings
+    if (call.customParameters.get("conference") && !call.customParameters.get("incoming")) {
       acceptWhenQuiet(call, canAccept);
     } else {
       set("ringing", callerOf(call));
@@ -194,8 +194,15 @@ function acceptWhenQuiet(call: Call, canAccept: () => boolean): void {
   attempt();
 }
 
-/** Who is calling, as Twilio tells it: the caller's number, or the conference the assistant opened. */
+/**
+ * Who is calling, as Twilio tells it: a caller parked on the number (named by the server), the
+ * caller's own number, or the conference the assistant opened.
+ */
 export function callerOf(call: Pick<Call, "parameters" | "customParameters">): string {
+  const parked = call.customParameters.get("from");
+  if (call.customParameters.get("incoming") && parked) {
+    return parked;
+  }
   const conference = call.customParameters.get("conference");
   if (conference) {
     return "the assistant's call";

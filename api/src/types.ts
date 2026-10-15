@@ -183,6 +183,22 @@ export interface CallRow {
 
 export type CallSpeaker = "assistant" | "line";
 
+/** A missed call, a text received, or a message the assistant took on a call. */
+export type NotificationKind = "call" | "message" | "note";
+
+export interface NotificationRow {
+  id: string;
+  home_id: string;
+  kind: NotificationKind;
+  contact_id: string | null;
+  phone: string;
+  title: string;
+  body: string;
+  ref: string | null;
+  at: number;
+  read_at: number | null;
+}
+
 export interface CallTurnRow {
   id: number;
   conference: string;

@@ -2,6 +2,7 @@ import { ALARM_TOOLS } from "./alarm_tools";
 import { countryCode, lightwaveToken, lightwaveUrls } from "./connections";
 import { calls, contacts, conversations, homes, memories, messages } from "./db";
 import { DROP_IN_TOOLS } from "./drop_in_tools";
+import { INCOMING_TOOLS } from "./incoming_tools";
 import { DEFAULT_LOG_LINES, formatLogLine, MAX_LOG_LINES, readLog } from "./log";
 import { normalisePhone } from "./phone";
 import { type Light, lights, writeFeatures } from "./providers/lightwave";
@@ -970,7 +971,7 @@ async function sendTool(c: ToolContext, args: Record<string, unknown>, channel: 
   }));
 }
 
-TOOLS.push(...ALARM_TOOLS, ...DROP_IN_TOOLS);
+TOOLS.push(...ALARM_TOOLS, ...DROP_IN_TOOLS, ...INCOMING_TOOLS);
 
 export const toolByName = (name: string) => TOOLS.find((t) => t.definition.name === name);
 

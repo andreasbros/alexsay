@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyAlarm } from "./alarms";
+import { UNANSWERED_JOB, unansweredCall } from "./incoming";
 import { type JobRow, jobs, runAt } from "./jobs";
 import { logFor } from "./log";
 import { parseRule } from "./schedule";
@@ -11,6 +12,7 @@ export type JobHandler = (scope: Scope, job: JobRow, occurrence: number) => Prom
 /** The router: which handler runs each topic. A skill adds its topics here. */
 export const ROUTES: Record<string, JobHandler> = {
   "alarm.verify": verifyAlarm,
+  [UNANSWERED_JOB]: unansweredCall,
 };
 
 /** Jobs due this close together run in the same wake-up. */

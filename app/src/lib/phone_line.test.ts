@@ -18,5 +18,14 @@ describe("callerOf", () => {
     ).toBe("the assistant's call");
     expect(callerOf({ parameters: { From: "+447700900123" }, customParameters: new Map() })).toBe("+447700900123");
     expect(callerOf({ parameters: {}, customParameters: new Map() })).toBe("unknown number");
+    expect(
+      callerOf({
+        parameters: { From: "+447700900000" },
+        customParameters: new Map([
+          ["incoming", "in-1"],
+          ["from", "Mum"],
+        ]),
+      }),
+    ).toBe("Mum");
   });
 });

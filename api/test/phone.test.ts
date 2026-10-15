@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bareNumber, normalisePhone, searchName, toWhatsapp } from "../src/phone";
-import { announceTwiml, bridgeTwiml, escapeXml, ringTwiml } from "../src/twiml";
+import { announceTwiml, bridgeTwiml, escapeXml, hangupTwiml, incomingTwiml } from "../src/twiml";
 
 describe("phone numbers", () => {
   it("turns the ways people write a UK number into E.164", () => {
@@ -51,12 +51,14 @@ describe("TwiML", () => {
     );
   });
 
-  it("rings the speakers and the mobile together, or explains that nobody is available", () => {
-    const ring = ringTwiml(["sip:abc@home.sip.twilio.com"], "+447700900999");
-    expect(ring).toContain(
-      '<Dial timeout="25"><Sip>sip:abc@home.sip.twilio.com</Sip><Number>+447700900999</Number></Dial>',
+  it("greets a caller and parks them in their own conference until someone joins as host", () => {
+    const twiml = incomingTwiml("Hi, it's Andreas's assistant & co", "in-abc", "https://app/v1/twilio/conference");
+    expect(twiml).toContain(
+      '<Say voice="Polly.Amy" language="en-GB">Hi, it&apos;s Andreas&apos;s assistant &amp; co</Say>',
     );
-    expect(ringTwiml([], null)).toContain("Nothing is set up to take this call");
-    expect(ringTwiml([], null)).toContain("<Hangup/>");
+    expect(twiml).toContain('startConferenceOnEnter="false" endConferenceOnExit="false"');
+    expect(twiml).toContain('statusCallback="https://app/v1/twilio/conference"');
+    expect(twiml).toContain(">in-abc</Conference></Dial>");
+    expect(hangupTwiml()).toContain("<Response><Hangup/></Response>");
   });
 });

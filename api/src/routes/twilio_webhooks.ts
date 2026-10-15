@@ -2,10 +2,11 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { type TwilioConnection, twilioFromRow } from "../connections";
 import { bridges, calls, connections, contacts, devices, messages } from "../db";
+import { allowed, callerLabel, incomingCall, notify } from "../incoming";
 import { logFor } from "../log";
 import { serverOrigin } from "../origin";
 import { bareNumber, normalisePhone, WHATSAPP_PREFIX } from "../phone";
-import { CLIENT_IDENTITY, validSignature } from "../providers/twilio";
+import { validSignature } from "../providers/twilio";
 import {
   BRIDGE_WINDOW_MS,
   callEnded,
@@ -15,7 +16,7 @@ import {
   hostAnswered,
   streamUrl,
 } from "../telephony";
-import { dialOutTwiml, emptyTwiml, rejectTwiml, ringTwiml, streamTwiml } from "../twiml";
+import { dialOutTwiml, emptyTwiml, rejectTwiml, streamTwiml } from "../twiml";
 import type { AppEnv } from "../types";
 
 const SIP_USER = /^sip:([^@;]+)@/;
@@ -40,7 +41,6 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       return c.text("forbidden", 403);
     }
     const from = params.From ?? "";
-    const { settings } = owner.connection;
     const place = { env: c.env, origin: serverOrigin(c) };
     // The number calling itself is a speaker's host leg: answer with the stream to that speaker
     if (bareNumber(from) === bareNumber(params.To ?? "")) {
@@ -59,29 +59,14 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
       await logFor(place, owner.home, "info", `call ${bridge.conference}: streaming to the speaker`);
       return xml(c, streamTwiml(streamUrl(place, bridge.token), bridge.conference, "speaker"));
     }
-    const speakers = settings.sip_domain
-      ? (await devices.list(c.env.DB, owner.home)).map((d) => `sip:${d.id}@${settings.sip_domain}`)
-      : [];
-    // The user's own mobile cannot take a call it is making itself, so it is left out when it is the caller
-    const mobile = settings.my_number && settings.my_number !== from ? settings.my_number : null;
-    const rang = ["app", ...speakers.map(() => "speaker"), ...(mobile ? ["mobile"] : [])];
-    const contact = await contacts.byPhone(c.env.DB, owner.home, from);
-    const now = Date.now();
-    await calls.create(c.env.DB, {
-      home_id: owner.home,
-      contact_id: contact?.id ?? null,
-      direction: "in",
-      kind: "call",
-      phone: from,
-      conference: null,
-      brief: `rang: ${rang.join(", ")}`,
-      sid: params.CallSid ?? null,
-      status: params.CallStatus ?? "ringing",
-      at: now,
-    });
-    await contacts.stamp(c.env.DB, owner.home, from, "last_called_at", now);
-    await logFor(c, owner.home, "info", `incoming call from ${from}, ringing ${rang.join(", ")}`);
-    return xml(c, ringTwiml(speakers, mobile, CLIENT_IDENTITY));
+    return xml(
+      c,
+      await incomingCall(place, owner, {
+        from,
+        callSid: params.CallSid ?? "",
+        callStatus: params.CallStatus ?? "ringing",
+      }),
+    );
   })
   .post("/voice/outbound", async (c) => {
     const params = await form(c);
@@ -124,20 +109,45 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     }
     const from = bareNumber(params.From ?? "");
     const contact = await contacts.byPhone(c.env.DB, owner.home, from);
+    if (!allowed(owner.connection.settings.incoming_messages, contact !== null)) {
+      await logFor(
+        c,
+        owner.home,
+        "info",
+        `incoming message from ${from} dropped: ${contact ? "messages off" : "not a contact"}`,
+      );
+      return xml(c, emptyTwiml());
+    }
     const now = Date.now();
+    const body = (params.Body ?? "").slice(0, 1600);
+    const channel = (params.From ?? "").startsWith(WHATSAPP_PREFIX) ? "whatsapp" : "sms";
     await messages.create(c.env.DB, {
       home_id: owner.home,
       contact_id: contact?.id ?? null,
-      channel: (params.From ?? "").startsWith(WHATSAPP_PREFIX) ? "whatsapp" : "sms",
+      channel,
       direction: "in",
       phone: from,
-      body: (params.Body ?? "").slice(0, 1600),
+      body,
       sid: params.MessageSid ?? null,
       status: "received",
       at: now,
     });
     await contacts.stamp(c.env.DB, owner.home, from, "last_messaged_at", now);
-    await logFor(c, owner.home, "info", `incoming message from ${from}`);
+    const label = callerLabel(contact, from);
+    await notify(
+      c,
+      owner.home,
+      {
+        kind: "message",
+        contact_id: contact?.id ?? null,
+        phone: from,
+        title: `${channel === "whatsapp" ? "WhatsApp" : "Text"} from ${label}`,
+        body,
+        ref: params.MessageSid,
+      },
+      `${channel === "whatsapp" ? "WhatsApp" : "Text"} message from ${label}: ${body}`,
+    );
+    await logFor(c, owner.home, "info", `incoming ${channel} from ${label} (${from})`);
     return xml(c, emptyTwiml());
   })
   .post("/status", async (c) => {

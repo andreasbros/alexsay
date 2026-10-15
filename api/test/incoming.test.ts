@@ -265,7 +265,7 @@ describe("incoming calls and messages", () => {
     expect(await stream.text()).toContain("<Connect><Stream");
     // The host's answer runs after the reply to Twilio, so the rest follows a moment later
     await vi.waitFor(() => expect(completed.sort()).toEqual(["CA-p1", "CA-p2"]));
-    expect(pinned).toEqual(["CA-self"]);
+    await vi.waitFor(() => expect(pinned).toEqual(["CA-self"]));
     expect(await line.next()).toEqual({ type: "call.incoming.cancel", conference });
     await vi.waitFor(() => expect(participants.some((p) => p.Label === "assistant")).toBe(true));
     const assistant = participants.find((p) => p.Label === "assistant");

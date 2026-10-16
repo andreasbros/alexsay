@@ -70,10 +70,17 @@ impl Server {
         Ok(())
     }
 
-    pub async fn heartbeat(&self, uptime_s: u64) -> anyhow::Result<HeartbeatReply> {
+    pub async fn heartbeat(
+        &self,
+        uptime_s: u64,
+        volume: u8,
+        mic_muted: bool,
+    ) -> anyhow::Result<HeartbeatReply> {
         let report = HeartbeatReport {
             firmware: VERSION.to_owned(),
             uptime_s,
+            volume,
+            mic_muted,
         };
         let url = format!("{}/v1/device/heartbeat", self.base);
         let res = self

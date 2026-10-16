@@ -28,7 +28,18 @@ export const heartbeat = z.object({
   firmware: z.string().max(64).optional(),
   uptime_s: z.number().int().min(0).optional(),
   ip: z.string().max(64).optional(),
+  /** The speaker's sound state, shown and changed in the app (0.1.9 and newer). */
+  volume: z.number().int().min(0).max(100).optional(),
+  mic_muted: z.boolean().optional(),
 });
+
+/** What the app's sound controls send a speaker: one or both. */
+export const deviceSound = z
+  .object({
+    volume: z.number().int().min(0).max(100).optional(),
+    mic_muted: z.boolean().optional(),
+  })
+  .refine((s) => s.volume !== undefined || s.mic_muted !== undefined, "volume or mic_muted is required");
 
 const voice = z.enum(["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"]);
 export const openaiSettings = z.object({

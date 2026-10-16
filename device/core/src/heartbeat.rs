@@ -8,6 +8,10 @@ pub const DEVICE_ID_HEADER: &str = "x-device-id";
 pub struct HeartbeatReport {
     pub firmware: String,
     pub uptime_s: u64,
+    /// Playback volume, 0 to 100, as the app's sound controls show it.
+    pub volume: u8,
+    /// Whether the app muted the microphone.
+    pub mic_muted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -71,10 +75,12 @@ mod tests {
         let report = HeartbeatReport {
             firmware: "0.1.0".to_owned(),
             uptime_s: 12,
+            volume: 80,
+            mic_muted: false,
         };
         assert_eq!(
             serde_json::to_string(&report).unwrap(),
-            r#"{"firmware":"0.1.0","uptime_s":12}"#
+            r#"{"firmware":"0.1.0","uptime_s":12,"volume":80,"mic_muted":false}"#
         );
     }
 

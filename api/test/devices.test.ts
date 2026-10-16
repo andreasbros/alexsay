@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { env, SELF } from "cloudflare:test";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { APP, addUser, call, DEVICE_ID, heartbeat, json, resetDb, signIn } from "./helpers";
 
 interface DeviceView {
@@ -43,6 +44,40 @@ describe("devices", () => {
     const sam = await signIn("sam", "sam-pass");
     expect((await json(`${APP}/api/devices`, "POST", { id: DEVICE_ID }, sam)).status).toBe(409);
     expect((await call(`${APP}/api/devices`, {}, sam)).json()).resolves.toEqual([]);
+  });
+
+  it("shows a speaker's sound state, pushes the app's changes to it and takes what it reports", async () => {
+    await heartbeat(DEVICE_ID, { firmware: "0.1.9", volume: 80, mic_muted: false });
+    await json(`${APP}/api/devices`, "POST", { id: DEVICE_ID, name: "Kitchen" }, maria);
+    const sound = async () =>
+      ((await (await call(`${APP}/api/devices`, {}, maria)).json()) as { sound: unknown }[])[0]?.sound;
+    expect(await sound()).toEqual({ volume: 80, mic_muted: false });
+    // Not connected: nothing to push to
+    const offline = await json(`${APP}/api/devices/${DEVICE_ID}/sound`, "POST", { volume: 40 }, maria);
+    expect(offline.status).toBe(409);
+    const res = await SELF.fetch(`${APP}/v1/device/line`, {
+      headers: { upgrade: "websocket", "x-device-id": DEVICE_ID },
+    });
+    const ws = res.webSocket;
+    if (!ws) {
+      throw new Error("no line");
+    }
+    ws.accept();
+    const received: Record<string, unknown>[] = [];
+    ws.addEventListener("message", (event) => received.push(JSON.parse(String(event.data)) as Record<string, unknown>));
+    // A member, not only an admin, may turn a speaker down or mute it
+    await addUser("tom", "tom-pass", "user");
+    const tom = await signIn("tom", "tom-pass");
+    await json(`${APP}/api/home/members`, "POST", { username: "tom" }, maria).catch(() => undefined);
+    const pushed = await json(`${APP}/api/devices/${DEVICE_ID}/sound`, "POST", { volume: 40 }, maria);
+    expect(await pushed.json()).toEqual({ delivered: true, sound: { volume: 40, mic_muted: false } });
+    await vi.waitFor(() => expect(received).toContainEqual({ type: "sound.set", volume: 40 }));
+    // The speaker says what it ended up with (on connect and after every change)
+    ws.send(JSON.stringify({ type: "sound", volume: 40, mic_muted: true }));
+    await vi.waitFor(async () => expect(await sound()).toEqual({ volume: 40, mic_muted: true }));
+    expect((await json(`${APP}/api/devices/${DEVICE_ID}/sound`, "POST", {}, maria)).status).toBe(400);
+    expect((await json(`${APP}/api/devices/${DEVICE_ID}/sound`, "POST", { volume: 10 }, tom)).status).toBe(404);
+    expect(env).toBeDefined();
   });
 
   it("shows admins every speaker and lets them reassign one", async () => {

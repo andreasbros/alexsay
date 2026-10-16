@@ -148,6 +148,14 @@ Ending a session. GPT-Live has no idle timeout of its own and bills open voice t
 - Home Assistant at `http://127.0.0.1:8123` with a long-lived access token.
 - Tool arguments are validated in `core` before any HTTP call; the model never gets raw HA errors with tokens or URLs in them.
 
+## Sound controls (16 Oct 2026)
+
+| Piece | Where |
+|---|---|
+| App | Devices, the sound button on a speaker's row: volume slider (0 to 100, sent when released) and a microphone mute switch; `POST /api/devices/:id/sound`, any home member; 409 when the speaker is offline |
+| Server | Pushes `sound.set {volume?, mic_muted?}` over the speaker's line; keeps the state in `devices.last_meta` from the speaker's `sound` line message (on connect and after each change) and from every heartbeat (`volume`, `mic_muted`); `GET /api/devices` carries `sound` |
+| Speaker | `Player::set_volume` (an atomic read by the output callback, so running audio follows), the level saved to `config.toml`; `CallState.mic_muted` silences the capture pump for everything; both confirmed by the ready tick and reported back |
+
 ## Music (Spotify, 16 Oct 2026)
 
 | Piece | Where |

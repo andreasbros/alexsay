@@ -40,6 +40,8 @@ export interface Device {
   last_seen_at: number | null;
   firmware: string | null;
   online: boolean;
+  /** Volume (0 to 100) and microphone mute as the speaker last reported; null for software without them. */
+  sound: { volume: number; mic_muted: boolean } | null;
 }
 
 export interface OpenAiSettings {
@@ -454,6 +456,13 @@ export const api = {
   updateDevice: (id: string, changes: { name?: string; owner?: string | null }) =>
     request<void>("PATCH", `/api/devices/${encodeURIComponent(id)}`, changes),
   removeDevice: (id: string) => request<void>("DELETE", `/api/devices/${encodeURIComponent(id)}`),
+  /** Pushes volume or microphone mute to an online speaker; 409 offline. */
+  setDeviceSound: (id: string, sound: { volume?: number; mic_muted?: boolean }) =>
+    request<{ delivered: boolean; sound: Device["sound"] }>(
+      "POST",
+      `/api/devices/${encodeURIComponent(id)}/sound`,
+      sound,
+    ),
 
   connections: () => request<Connection[]>("GET", "/api/connections"),
   /** An empty key or webhook secret keeps the one already stored and only updates the settings. */

@@ -15,6 +15,7 @@ const device: Device = {
   last_seen_at: Date.now(),
   firmware: "0.1.0",
   online: true,
+  sound: null,
 };
 
 function mockApi(routes: Record<string, () => Response>) {
@@ -118,6 +119,33 @@ describe("App", () => {
       "/memory",
       "/skills",
     ]);
+  });
+
+  it("shows a speaker's sound controls and sends the volume and mute to it", async () => {
+    const sent: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        if (path === "/api/session/me") {
+          return new Response(JSON.stringify({ username: "maria", role: "user", home: "maria", homeRole: "user" }));
+        }
+        if (path === "/api/devices") {
+          return new Response(JSON.stringify([{ ...device, sound: { volume: 60, mic_muted: false } }]));
+        }
+        if (path === `/api/devices/${device.id}/sound`) {
+          sent.push(String(init?.body));
+          return new Response(JSON.stringify({ delivered: true, sound: { volume: 60, mic_muted: true } }));
+        }
+        return new Response("{}", { status: 404 });
+      }),
+    );
+    renderApp();
+    await openSection("Devices");
+    fireEvent.click(await screen.findByRole("button", { name: "Sound of Kitchen" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("60%")).toBeDefined();
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Microphone muted" }));
+    await vi.waitFor(() => expect(sent).toEqual(['{"mic_muted":true}']));
   });
 
   it("offers to drop in on an online speaker that takes it, after asking, from a browser that can", async () => {

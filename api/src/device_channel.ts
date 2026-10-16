@@ -11,7 +11,9 @@ export type DeviceMessage =
   /** The call was answered elsewhere, or nobody did in time: stop ringing. */
   | { type: "call.incoming.cancel"; conference: string }
   /** Something to read out after a chime: a text, a missed call, a message taken. */
-  | { type: "notify"; id: string; kind: NotificationKind; say: string };
+  | { type: "notify"; id: string; kind: NotificationKind; say: string }
+  /** The app's sound controls: playback volume (0 to 100) and the microphone mute, either or both. */
+  | { type: "sound.set"; volume?: number; mic_muted?: boolean };
 
 /** Pushes one message to every speaker of the home; how many were connected to take it. */
 export async function notifyHome(scope: Scope, home: string, message: DeviceMessage): Promise<number> {

@@ -45,6 +45,8 @@ export const deviceApiRoutes = new Hono<AppEnv>()
       uptime_s: report.uptime_s ?? null,
       ip: c.req.header("cf-connecting-ip") ?? report.ip ?? null,
       country: c.req.raw.cf?.country ?? null,
+      ...(report.volume !== undefined ? { volume: report.volume } : {}),
+      ...(report.mic_muted !== undefined ? { mic_muted: report.mic_muted } : {}),
     });
     await devices.touch(c.env.DB, id, now, report.firmware ?? null, meta);
     const row = await devices.get(c.env.DB, id);
@@ -114,7 +116,7 @@ export const deviceApiRoutes = new Hono<AppEnv>()
     }
     const id = c.get("device").id;
     const bridge = c.env.LINE_BRIDGE.get(c.env.LINE_BRIDGE.idFromName(id));
-    return bridge.fetch("https://line/device", { headers: { upgrade: "websocket" } });
+    return bridge.fetch(`https://line/device?device=${encodeURIComponent(id)}`, { headers: { upgrade: "websocket" } });
   })
   .get("/line/status", async (c) => c.json({ online: await speakerOnline(c, c.get("device").id) }))
   .get("/conferences/:name/report", async (c) => {

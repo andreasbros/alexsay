@@ -238,6 +238,19 @@ export const devices = {
   remove: (db: D1Database, id: string) => db.prepare("DELETE FROM devices WHERE id = ?").bind(id).run(),
 
   /** A speaker calling home: known rows get a last-seen stamp, unknown ones a capped unclaimed row. */
+  /** The sound state the speaker reported (or the app just set), kept with the rest of its meta. */
+  setSound: (db: D1Database, id: string, sound: { volume?: number; mic_muted?: boolean }) =>
+    db
+      .prepare(
+        `UPDATE devices SET last_meta = json_set(
+           COALESCE(last_meta, '{}'),
+           '$.volume', COALESCE(?, json_extract(COALESCE(last_meta, '{}'), '$.volume')),
+           '$.mic_muted', COALESCE(?, json_extract(COALESCE(last_meta, '{}'), '$.mic_muted'))
+         ) WHERE id = ?`,
+      )
+      .bind(sound.volume ?? null, sound.mic_muted === undefined ? null : sound.mic_muted ? 1 : 0, id)
+      .run(),
+
   touch: (db: D1Database, id: string, now: number, firmware: string | null, meta: string) =>
     db.batch([
       db

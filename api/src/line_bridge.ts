@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { devices } from "./db";
 import { type DropIn, type DropInEnd, dueToEnd, hasSpeech } from "./drop_in";
 import { logFor } from "./log";
 import { endCall, TelephonyError } from "./telephony";
@@ -59,6 +60,8 @@ export class LineBridge extends DurableObject<Env> {
       }
       const pair = new WebSocketPair();
       this.ctx.acceptWebSocket(pair[1], ["device"]);
+      // The object is named after the speaker but cannot read its own name: the route says whose line this is
+      pair[1].serializeAttachment({ device: url.searchParams.get("device") ?? "" });
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
     if (url.pathname === "/twilio") {
@@ -242,9 +245,24 @@ export class LineBridge extends DurableObject<Env> {
       case "ping":
         send(ws, { type: "pong" });
         break;
+      case "sound": {
+        // The speaker's volume and microphone state, for the app's controls: on connect and after each change
+        const volume = typeof message.volume === "number" ? Math.round(message.volume) : undefined;
+        const mic_muted = typeof message.mic_muted === "boolean" ? message.mic_muted : undefined;
+        if (volume !== undefined || mic_muted !== undefined) {
+          this.ctx.waitUntil(
+            devices.setSound(this.env.DB, this.deviceId(ws), { volume, mic_muted }).catch(() => undefined),
+          );
+        }
+        break;
+      }
       default:
         break;
     }
+  }
+
+  private deviceId(ws: WebSocket): string {
+    return (ws.deserializeAttachment() as { device?: string } | null)?.device ?? "";
   }
 
   /** Speech on either side keeps the drop-in alive; the time is only written when it moves. */

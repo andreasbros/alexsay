@@ -95,6 +95,12 @@ pub struct Runtime {
     ring_command: Mutex<Option<RingCommand>>,
 }
 
+/// A 0 to 1 loudness as the 0 to 100 the app shows.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub fn volume_percent(volume: f32) -> u8 {
+    (volume.clamp(0.0, 1.0) * 100.0).round() as u8
+}
+
 impl Runtime {
     pub fn new(paths: Paths, config: Config, id: DeviceId) -> anyhow::Result<Self> {
         let server = Server::new(&config.server.url, id)?;
@@ -134,6 +140,39 @@ impl Runtime {
     pub fn play_clip(&self, clip: (&[sounds::Note], f32)) {
         if self.config.sounds.enabled {
             self.player.play(&sounds::render(clip, LIVE_RATE));
+        }
+    }
+
+    /// The app's sound controls: the volume takes effect at once and is kept in the config file, the
+    /// microphone mute silences everything the microphone would hear. Either is confirmed with the
+    /// ready tick, at the new level, and the new state is reported back for the app.
+    pub fn apply_sound(&self, volume: Option<u8>, mic_muted: Option<bool>) {
+        if let Some(percent) = volume {
+            let level = f32::from(percent.min(100)) / 100.0;
+            self.player.set_volume(level);
+            info!(volume = percent, "volume set from the app");
+            match paths::load_config(&self.paths).and_then(|mut config| {
+                config
+                    .set("audio.volume", &format!("{level:.2}"))
+                    .map_err(|err| anyhow::anyhow!("{err}"))?;
+                paths::save_config(&self.paths, &config)
+            }) {
+                Ok(()) => {}
+                Err(err) => warn!("the volume could not be kept in the config file: {err:#}"),
+            }
+        }
+        if let Some(muted) = mic_muted {
+            self.call.set_mic_muted(muted);
+            info!(muted, "microphone mute set from the app");
+        }
+        self.play_clip(sounds::READY);
+        self.report_sound();
+    }
+
+    /// What the speaker's volume and microphone are set to, for the app's controls.
+    pub fn report_sound(&self) {
+        if let Some(line) = &self.line {
+            line.sound(volume_percent(self.player.volume()), self.call.mic_muted());
         }
     }
 
@@ -382,7 +421,12 @@ async fn line_loop(runtime: Arc<Runtime>, mut signals: mpsc::UnboundedReceiver<L
                 let told = Arc::clone(&runtime);
                 tokio::spawn(async move { told.announce(&say).await });
             }
-            LineSignal::AlarmsChanged => runtime.alarms.send(AlarmSignal::Changed),
+            LineSignal::AlarmsChanged => {
+                runtime.alarms.send(AlarmSignal::Changed);
+                // Sent when the line comes up: the app's sound controls start from what is set now
+                runtime.report_sound();
+            }
+            LineSignal::SoundSet { volume, mic_muted } => runtime.apply_sound(volume, mic_muted),
             LineSignal::AlarmStop { id } => runtime.alarms.send(AlarmSignal::Stop(id)),
             LineSignal::AlarmSnooze { id, minutes } => {
                 runtime.alarms.send(AlarmSignal::Snooze(id, minutes));
@@ -472,7 +516,15 @@ async fn heartbeat_loop(runtime: Arc<Runtime>) {
     let started = Instant::now();
     let mut was_claimed: Option<bool> = None;
     loop {
-        let wait = match runtime.server.heartbeat(started.elapsed().as_secs()).await {
+        let wait = match runtime
+            .server
+            .heartbeat(
+                started.elapsed().as_secs(),
+                volume_percent(runtime.player.volume()),
+                runtime.call.mic_muted(),
+            )
+            .await
+        {
             Ok(reply) => {
                 if was_claimed != Some(reply.claimed) {
                     if reply.claimed {
@@ -569,7 +621,10 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
     let capture = Capture::open_with(&runtime.config.audio, reference, cancelled)
         .context("opening the microphone")?;
     info!(input = %capture.device, rate = capture.source_rate, channels = capture.channels, output = %runtime.player.device, "audio open");
-    let mut mic = capture.pump_with(runtime.call.injection.clone());
+    let mut mic = capture.pump_with(
+        runtime.call.injection.clone(),
+        Arc::clone(&runtime.call.mic_muted),
+    );
     let mut wake = match runtime.load_wake_word() {
         Ok(wake) if runtime.config.wake.enabled => Some(wake),
         Ok(_) => {

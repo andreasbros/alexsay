@@ -259,7 +259,10 @@ async fn dispatch(
             let _log = logging::init("warn", None, 1);
             let id = paths::load_or_create_identity(&paths)?;
             let server = server::Server::new(&config.server.url, id)?;
-            let reply = server.heartbeat(0).await.context("heartbeat")?;
+            let reply = server
+                .heartbeat(0, runtime::volume_percent(config.audio.volume), false)
+                .await
+                .context("heartbeat")?;
             let state = paths::load_state(&paths);
             println!(
                 "{}",

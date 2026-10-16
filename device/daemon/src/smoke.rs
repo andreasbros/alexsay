@@ -75,7 +75,13 @@ pub async fn run(paths: &Paths, config: &Config, voice: bool, quiet: bool, audio
             "server",
             server.health().await.map(|()| server.base_url().to_owned()),
         ));
-        let beat = server.heartbeat(0).await;
+        let beat = server
+            .heartbeat(
+                0,
+                crate::runtime::volume_percent(config.audio.volume),
+                false,
+            )
+            .await;
         claimed = beat.as_ref().is_ok_and(|r| r.claimed);
         checks.push(check(
             "heartbeat",

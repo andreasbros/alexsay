@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { devices, users } from "../db";
+import { notifyDevice } from "../device_channel";
 import * as schemas from "../schemas";
 import type { AppEnv, DeviceRow } from "../types";
 import { jsonBody, parse } from "../validate";
@@ -16,7 +17,21 @@ function view(row: DeviceRow, now: number) {
     last_seen_at: row.last_seen_at,
     firmware: row.firmware,
     online: row.last_seen_at !== null && now - row.last_seen_at < ONLINE_WINDOW_MS,
+    sound: soundOf(row),
   };
+}
+
+/** Volume and microphone mute as the speaker last reported them; null for software that does not. */
+function soundOf(row: DeviceRow): { volume: number; mic_muted: boolean } | null {
+  try {
+    const meta = JSON.parse(row.last_meta ?? "{}") as { volume?: unknown; mic_muted?: unknown };
+    if (typeof meta.volume !== "number") {
+      return null;
+    }
+    return { volume: meta.volume, mic_muted: meta.mic_muted === true || meta.mic_muted === 1 };
+  } catch {
+    return null;
+  }
 }
 
 /** A home sees its own speakers; server admins see every speaker and can move one to a person's home. */
@@ -66,6 +81,23 @@ export const deviceRoutes = new Hono<AppEnv>()
    * Drop in on a speaker: the app's side of the two-way channel, a WebSocket to the speaker's line
    * bridge. The bridge offers it to the speaker, which announces who it is and asks before opening.
    */
+  /** The app's sound controls: pushed to the speaker over its line, and remembered as what it will report. */
+  .post("/:id/sound", async (c) => {
+    const id = parse(schemas.deviceId, c.req.param("id"));
+    const sound = await jsonBody(c, schemas.deviceSound);
+    const me = c.get("user");
+    const row = await devices.get(c.env.DB, id);
+    if (!row || (row.home_id !== me.home && me.role !== "admin")) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    const delivered = await notifyDevice(c, id, { type: "sound.set", ...sound });
+    if (!delivered) {
+      return c.json({ error: "offline" }, 409);
+    }
+    await devices.setSound(c.env.DB, id, sound);
+    const updated = await devices.get(c.env.DB, id);
+    return c.json({ delivered: true, sound: updated ? soundOf(updated) : null });
+  })
   .get("/:id/drop-in", async (c) => {
     const id = parse(schemas.deviceId, c.req.param("id"));
     const me = c.get("user");

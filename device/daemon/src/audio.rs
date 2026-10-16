@@ -2,7 +2,7 @@
 //! the rest of the daemon sees 16 kHz mono PCM16 both ways.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -160,17 +160,25 @@ impl Capture {
     /// Hands the chunks to an async receiver. The whole struct moves into the pump thread: a closure
     /// that touched only `chunks` would drop the stop guard and silently close the stream.
     pub fn pump(self) -> tokio::sync::mpsc::Receiver<Vec<i16>> {
-        self.pump_with(Injection::default())
+        self.pump_with(Injection::default(), Arc::new(AtomicBool::new(false)))
     }
 
-    /// As `pump`, but audio queued in `injection` replaces the microphone's while it lasts: a test
-    /// recording heard exactly as the microphone would deliver it, at the microphone's pace.
-    pub fn pump_with(self, injection: Injection) -> tokio::sync::mpsc::Receiver<Vec<i16>> {
+    /// As `pump`, but audio queued in `injection` replaces the microphone's while it lasts (a test
+    /// recording heard exactly as the microphone would deliver it, at the microphone's pace), and
+    /// while `muted` is set every chunk is silence: the app's microphone mute, before anything hears it.
+    pub fn pump_with(
+        self,
+        injection: Injection,
+        muted: Arc<AtomicBool>,
+    ) -> tokio::sync::mpsc::Receiver<Vec<i16>> {
         let (tx, rx) = tokio::sync::mpsc::channel::<Vec<i16>>(64);
         std::thread::spawn(move || {
             let capture = self;
             while let Ok(chunk) = capture.chunks.recv() {
-                let chunk = injection.replace(chunk);
+                let mut chunk = injection.replace(chunk);
+                if muted.load(Ordering::Relaxed) {
+                    chunk.fill(0);
+                }
                 if tx.blocking_send(chunk).is_err() {
                     break;
                 }
@@ -486,6 +494,8 @@ struct PlaybackShared {
     popped: AtomicU64,
     /// Output callbacks that ran out of queued audio partway through: heard as a break in the sound.
     underruns: AtomicU64,
+    /// Loudness, 0 to 1, as f32 bits: the app changes it while the stream runs.
+    volume: AtomicU32,
 }
 
 /// The real-time side of the speaker: pop, upsample, copy to the echo reference. No locks, no allocation.
@@ -495,7 +505,6 @@ struct PlaybackCallback {
     popped: u64,
     reference: Option<HeapProd<f32>>,
     upsampler: Upsampler,
-    volume: f32,
     channels: usize,
 }
 
@@ -504,6 +513,7 @@ impl PlaybackCallback {
     where
         T: cpal::SizedSample + cpal::FromSample<f32>,
     {
+        let volume = f32::from_bits(self.shared.volume.load(Ordering::Relaxed));
         let mark = self.shared.clear_mark.load(Ordering::Acquire);
         if self.popped < mark {
             let wanted = usize::try_from(mark - self.popped).unwrap_or(usize::MAX);
@@ -517,7 +527,7 @@ impl PlaybackCallback {
             while self.upsampler.needs_sample() {
                 let sample = if let Some(s) = self.ring.try_pop() {
                     self.popped += 1;
-                    f32::from(s) / 32768.0 * self.volume
+                    f32::from(s) / 32768.0 * volume
                 } else {
                     ran_dry = true;
                     0.0
@@ -552,7 +562,6 @@ impl PlaybackCallback {
 /// What the output callback needs, made fresh for each attempt to open the stream.
 struct PlaybackSetup {
     shared: Arc<PlaybackShared>,
-    volume: f32,
     channels: usize,
     sink_rate: u32,
     echo: bool,
@@ -584,7 +593,6 @@ impl PlaybackSetup {
             popped: self.shared.popped.load(Ordering::Acquire),
             reference,
             upsampler: Upsampler::new(LIVE_RATE, self.sink_rate),
-            volume: self.volume,
             channels: self.channels,
         };
         let err = |err: cpal::Error| tracing::warn!("output stream: {err}");
@@ -669,9 +677,11 @@ impl Player {
         let config = supported.config();
         let sink_rate = config.sample_rate;
         let shared = Arc::new(PlaybackShared::default());
+        shared
+            .volume
+            .store(settings.volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
         let setup = PlaybackSetup {
             shared: Arc::clone(&shared),
-            volume: settings.volume,
             channels: usize::from(config.channels),
             sink_rate,
             echo,
@@ -773,6 +783,17 @@ impl Player {
         }
         out.extend(pcm::to_i16(&converter.flush(), 1.0));
         self.play(&out);
+    }
+
+    /// Loudness, 0 to 1; takes effect on the next output callback, so a running clip changes level too.
+    pub fn set_volume(&self, volume: f32) {
+        self.shared
+            .volume
+            .store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.shared.volume.load(Ordering::Relaxed))
     }
 
     /// Drops everything not yet played: the callback skips it on its next run.
@@ -912,6 +933,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_muted_microphone_delivers_silence_at_the_same_pace() {
+        let (chunk_tx, chunk_rx) = mpsc::channel::<Vec<i16>>();
+        let (stop_tx, _stop_rx) = mpsc::channel::<()>();
+        let capture = Capture {
+            device: "fake".to_owned(),
+            source_rate: 16_000,
+            channels: 1,
+            chunks: chunk_rx,
+            _stop: stop_tx,
+        };
+        let muted = Arc::new(AtomicBool::new(true));
+        let mut pumped = capture.pump_with(Injection::default(), Arc::clone(&muted));
+        chunk_tx.send(vec![1, 2, 3]).unwrap();
+        assert_eq!(pumped.recv().await, Some(vec![0, 0, 0]));
+        muted.store(false, Ordering::Relaxed);
+        chunk_tx.send(vec![4, 5]).unwrap();
+        assert_eq!(pumped.recv().await, Some(vec![4, 5]));
+    }
+
+    #[tokio::test]
     async fn the_pump_keeps_the_stream_alive_for_as_long_as_it_runs() {
         let (chunk_tx, chunk_rx) = mpsc::channel::<Vec<i16>>();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -996,6 +1037,7 @@ mod tests {
     #[test]
     fn playback_callback_skips_what_was_cleared_and_copies_what_it_played() {
         let shared = Arc::new(PlaybackShared::default());
+        shared.volume.store(1.0f32.to_bits(), Ordering::Relaxed);
         let (mut producer, ring) = HeapRb::<i16>::new(64).split();
         let (reference, played) = crate::echo::link();
         let mut callback = PlaybackCallback {
@@ -1004,7 +1046,6 @@ mod tests {
             popped: 0,
             reference: Some(reference),
             upsampler: Upsampler::new(LIVE_RATE, LIVE_RATE),
-            volume: 1.0,
             channels: 2,
         };
         // Four samples queued, then cleared, then two new ones: only the new ones play

@@ -1,7 +1,19 @@
-import { EnterIcon, PlusIcon } from "@radix-ui/react-icons";
-import { AlertDialog, Badge, Button, Dialog, Flex, IconButton, Table, Text, TextField } from "@radix-ui/themes";
+import { EnterIcon, PlusIcon, SpeakerLoudIcon } from "@radix-ui/react-icons";
+import {
+  AlertDialog,
+  Badge,
+  Button,
+  Dialog,
+  Flex,
+  IconButton,
+  Slider,
+  Switch,
+  Table,
+  Text,
+  TextField,
+} from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { ApiError, api, type Device, type User } from "../api";
 import { Section, useSection } from "../components/Section";
 import { useDropIn } from "../drop_in";
@@ -94,6 +106,7 @@ function DeviceRow({
       </Table.Cell>
       <Table.Cell>{ago(device.last_seen_at)}</Table.Cell>
       <Table.Cell justify="end">
+        {device.sound && <SoundButton device={device} />}
         {canChange && (
           <AlertDialog.Root>
             <AlertDialog.Trigger>
@@ -125,6 +138,84 @@ function DeviceRow({
         )}
       </Table.Cell>
     </Table.Row>
+  );
+}
+
+/** Volume and microphone mute of one speaker: shown as last reported, sent when the slider is let go. */
+function SoundButton({ device }: { device: Device }) {
+  const client = useQueryClient();
+  const name = device.name || "this speaker";
+  const reported = device.sound ?? { volume: 0, mic_muted: false };
+  const [volume, setVolume] = useState(reported.volume);
+  useEffect(() => setVolume(reported.volume), [reported.volume]);
+  const set = useMutation({
+    mutationFn: (sound: { volume?: number; mic_muted?: boolean }) => api.setDeviceSound(device.id, sound),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["devices"] }),
+  });
+  const offline = !device.online;
+  return (
+    <Dialog.Root>
+      <Dialog.Trigger>
+        <IconButton size="1" variant="ghost" aria-label={`Sound of ${name}`} title="Sound" mr="3">
+          <SpeakerLoudIcon />
+        </IconButton>
+      </Dialog.Trigger>
+      <Dialog.Content maxWidth="420px">
+        <Dialog.Title>{name}</Dialog.Title>
+        <Dialog.Description size="2" color="gray">
+          {offline
+            ? "The speaker is offline; its last known settings are shown."
+            : "Changes reach the speaker at once."}
+        </Dialog.Description>
+        <Flex direction="column" gap="4" mt="4">
+          <Flex direction="column" gap="2">
+            <Flex justify="between">
+              <Text size="2" weight="medium">
+                Volume
+              </Text>
+              <Text size="2" color="gray">
+                {volume}%
+              </Text>
+            </Flex>
+            <Slider
+              aria-label="Volume"
+              value={[volume]}
+              min={0}
+              max={100}
+              step={5}
+              disabled={offline || set.isPending}
+              onValueChange={([v]) => setVolume(v ?? volume)}
+              onValueCommit={([v]) => v !== undefined && set.mutate({ volume: v })}
+            />
+          </Flex>
+          <Flex justify="between" align="center">
+            <Text size="2" weight="medium">
+              Microphone muted
+            </Text>
+            <Switch
+              aria-label="Microphone muted"
+              checked={reported.mic_muted}
+              disabled={offline || set.isPending}
+              onCheckedChange={(mic_muted) => set.mutate({ mic_muted })}
+            />
+          </Flex>
+          {set.error && (
+            <Text size="2" color="red">
+              {set.error instanceof ApiError && set.error.code === "offline"
+                ? "The speaker is not connected right now."
+                : "The speaker did not take the change."}
+            </Text>
+          )}
+          <Flex justify="end">
+            <Dialog.Close>
+              <Button variant="soft" color="gray">
+                Close
+              </Button>
+            </Dialog.Close>
+          </Flex>
+        </Flex>
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }
 

@@ -121,7 +121,12 @@ export const requireHomeAdmin = createMiddleware<AppEnv>(async (c, next) => {
  */
 export const changesNeedHomeAdmin = createMiddleware<AppEnv>(async (c, next) => {
   const user = c.get("user");
-  const changes = c.req.method !== "GET" && c.req.method !== "HEAD" && !c.req.path.endsWith("/test");
+  // Testing a connection and turning a speaker up or down are everyone's; the rest changes the home
+  const changes =
+    c.req.method !== "GET" &&
+    c.req.method !== "HEAD" &&
+    !c.req.path.endsWith("/test") &&
+    !c.req.path.endsWith("/sound");
   if (changes && user.homeRole !== "admin" && user.role !== "admin") {
     return c.json({ error: "home_admin_only" }, 403);
   }

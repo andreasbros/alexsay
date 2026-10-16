@@ -74,6 +74,14 @@ pub enum LineEvent {
         kind: String,
         say: String,
     },
+    /// The app's sound controls: a new volume (0 to 100), a microphone mute, or both.
+    #[serde(rename = "sound.set")]
+    SoundSet {
+        #[serde(default)]
+        volume: Option<u8>,
+        #[serde(default)]
+        mic_muted: Option<bool>,
+    },
 }
 
 /// Speaker to server.
@@ -90,6 +98,9 @@ pub enum LineCommand {
     Ping,
     #[serde(rename = "drop_in.answer")]
     DropInAnswer { id: String, accept: bool },
+    /// What the speaker's volume and microphone are set to: on connect and after every change.
+    #[serde(rename = "sound")]
+    Sound { volume: u8, mic_muted: bool },
 }
 
 impl LineEvent {
@@ -207,6 +218,21 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&LineCommand::Mute { muted: true }).unwrap(),
             r#"{"type":"mute","muted":true}"#
+        );
+        assert_eq!(
+            LineEvent::parse(r#"{"type":"sound.set","volume":40}"#),
+            Some(LineEvent::SoundSet {
+                volume: Some(40),
+                mic_muted: None
+            })
+        );
+        assert_eq!(
+            serde_json::to_string(&LineCommand::Sound {
+                volume: 80,
+                mic_muted: false
+            })
+            .unwrap(),
+            r#"{"type":"sound","volume":80,"mic_muted":false}"#
         );
     }
 }

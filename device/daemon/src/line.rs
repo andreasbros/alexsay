@@ -61,6 +61,11 @@ impl LineSender {
             accept,
         });
     }
+
+    /// The speaker's volume and microphone state, for the app's sound controls.
+    pub fn sound(&self, volume: u8, mic_muted: bool) {
+        let _ = self.tx.send(LineCommand::Sound { volume, mic_muted });
+    }
 }
 
 /// What the bridge tells the speaker, decoded: call audio arrives as 16 kHz PCM ready to play.
@@ -105,6 +110,11 @@ pub enum LineSignal {
     /// Something to read out after a chime.
     Notify {
         say: String,
+    },
+    /// The app's sound controls: a volume (0 to 100), a microphone mute, or both.
+    SoundSet {
+        volume: Option<u8>,
+        mic_muted: Option<bool>,
     },
 }
 
@@ -283,6 +293,9 @@ pub fn decode(text: &str) -> Option<LineSignal> {
             Some(LineSignal::CallIncomingCancel { conference })
         }
         LineEvent::Notify { say, .. } => Some(LineSignal::Notify { say }),
+        LineEvent::SoundSet { volume, mic_muted } => {
+            Some(LineSignal::SoundSet { volume, mic_muted })
+        }
     }
 }
 
@@ -320,6 +333,13 @@ mod tests {
             Some(LineSignal::AlarmSnooze {
                 id: None,
                 minutes: 5
+            })
+        );
+        assert_eq!(
+            decode(r#"{"type":"sound.set","mic_muted":true}"#),
+            Some(LineSignal::SoundSet {
+                volume: None,
+                mic_muted: Some(true)
             })
         );
         assert_eq!(

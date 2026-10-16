@@ -4,12 +4,19 @@ All notable changes to alexsay. The format follows
 [Keep a Changelog](https://keepachangelog.com), versions follow
 [SemVer](https://semver.org).
 
-## [0.1.11] - 2026-10-16
+## [0.1.12] - 2026-10-16
 
+
+### Internal
+
+- V0.1.11 (46bedd3b)
 
 ### Changes
 
 - Survive the Flex leaving USB, set its master at startup, clear stale cache dirs (fe3533ac)
+- The alsa crate is a Linux-only dependency (c8b36d8a)
+- Log when Spotify starts and stops playing (6bc1dff5)
+- Diagnostics for a sound card that stalls or leaves (612f5480)
 
 ## [0.1.10] - 2026-10-16
 

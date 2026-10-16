@@ -158,29 +158,6 @@ export const connectionRoutes = new Hono<AppEnv>()
     const state = await loginState(c.env, home, Date.now());
     return c.redirect(authorizeUrl(spotifyUrls(c), connection.secret.client_id, redirectUri(serverOrigin(c)), state));
   })
-  .get("/spotify/callback", async (c) => {
-    const home = c.get("user").home;
-    const { code, state, error } = c.req.query();
-    const back = `${serverOrigin(c)}/#spotify`;
-    if (error || !code || !state) {
-      await logFor(c, home, "warn", `spotify sign-in did not complete: ${error || "no code"}`);
-      return c.redirect(back);
-    }
-    if ((await homeOfState(c.env, state, Date.now())) !== home) {
-      return c.json({ error: "bad_state" }, 400);
-    }
-    try {
-      const settings = await completeLogin({ env: c.env, origin: serverOrigin(c) }, home, code);
-      await logFor(c, home, "info", `spotify signed in as ${settings.account}${settings.premium ? " (Premium)" : ""}`);
-    } catch (err) {
-      if (err instanceof ProviderError) {
-        await logFor(c, home, "error", `spotify sign-in failed: ${err.status} ${err.detail}`);
-        return c.redirect(back);
-      }
-      throw err;
-    }
-    return c.redirect(back);
-  })
   .post("/spotify/test", async (c) => {
     try {
       const token = await spotifyToken(c, c.get("user").home);
@@ -267,3 +244,32 @@ async function releaseTwilioNumber(c: Context<AppEnv>): Promise<void> {
     );
   }
 }
+
+/**
+ * Spotify sends the browser back here from accounts.spotify.com: a cross-site navigation, so the
+ * `SameSite=Strict` session cookie is not on it. The home comes from the signed `state` instead,
+ * which only a signed-in home admin could have been given, minutes ago.
+ */
+export const spotifyCallbackRoute = new Hono<AppEnv>().get("/spotify/callback", async (c) => {
+  const { code, state, error } = c.req.query();
+  const back = `${serverOrigin(c)}/#spotify`;
+  const home = state ? await homeOfState(c.env, state, Date.now()) : null;
+  if (!home) {
+    return c.json({ error: "bad_state" }, 400);
+  }
+  if (error || !code) {
+    await logFor(c, home, "warn", `spotify sign-in did not complete: ${error || "no code"}`);
+    return c.redirect(back);
+  }
+  try {
+    const settings = await completeLogin({ env: c.env, origin: serverOrigin(c) }, home, code);
+    await logFor(c, home, "info", `spotify signed in as ${settings.account}${settings.premium ? " (Premium)" : ""}`);
+  } catch (err) {
+    if (err instanceof ProviderError) {
+      await logFor(c, home, "error", `spotify sign-in failed: ${err.status} ${err.detail}`);
+      return c.redirect(back);
+    }
+    throw err;
+  }
+  return c.redirect(back);
+});

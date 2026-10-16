@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { changesNeedHomeAdmin, requireAdmin, requireUser } from "./auth";
 import { assistantRoutes, lightwaveRoutes } from "./routes/assistant";
-import { connectionRoutes } from "./routes/connections";
+import { connectionRoutes, spotifyCallbackRoute } from "./routes/connections";
 import { contactRoutes } from "./routes/contacts";
 import { conversationRoutes, memoryRoutes } from "./routes/conversations";
 import { deviceApiRoutes } from "./routes/device_api";
@@ -34,6 +34,7 @@ export const app = new Hono<AppEnv>()
   .use("/api/devices/*", requireUser, changesNeedHomeAdmin)
   .use("/api/devices", requireUser, changesNeedHomeAdmin)
   .route("/api/devices", deviceRoutes)
+  .route("/api/connections", spotifyCallbackRoute)
   .use("/api/connections/*", requireUser, changesNeedHomeAdmin)
   .use("/api/connections", requireUser, changesNeedHomeAdmin)
   .route("/api/connections", connectionRoutes)

@@ -164,12 +164,10 @@ describe("connections", () => {
     expect(location.searchParams.get("redirect_uri")).toBe(`${APP}/api/connections/spotify/callback`);
     expect(location.searchParams.get("scope")).toContain("user-modify-playback-state");
     const state = location.searchParams.get("state") ?? "";
-    // A state this home did not make is refused before any code is exchanged
-    const forged = await call(
-      `${APP}/api/connections/spotify/callback?code=code-1&state=${state}x`,
-      { redirect: "manual" },
-      maria,
-    );
+    // A state this server did not sign is refused before any code is exchanged
+    const forged = await call(`${APP}/api/connections/spotify/callback?code=code-1&state=${state}x`, {
+      redirect: "manual",
+    });
     expect(forged.status).toBe(400);
     const upstream = mockUpstream({
       [`POST ${SPOTIFY_ACCOUNTS}/api/token`]: (_req, body) => {
@@ -183,11 +181,10 @@ describe("connections", () => {
       [`GET ${SPOTIFY}/me`]: () =>
         reply(200, { id: "maria", display_name: "Maria", product: "premium", country: "GB" }),
     });
-    const back = await call(
-      `${APP}/api/connections/spotify/callback?code=code-1&state=${state}`,
-      { redirect: "manual" },
-      maria,
-    );
+    // The browser arrives from accounts.spotify.com without the SameSite=Strict session cookie
+    const back = await call(`${APP}/api/connections/spotify/callback?code=code-1&state=${state}`, {
+      redirect: "manual",
+    });
     expect(back.status).toBe(302);
     expect(back.headers.get("location")).toBe(`${APP}/#spotify`);
     upstream.done();

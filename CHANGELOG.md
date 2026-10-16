@@ -4,8 +4,22 @@ All notable changes to alexsay. The format follows
 [Keep a Changelog](https://keepachangelog.com), versions follow
 [SemVer](https://semver.org).
 
+## [0.1.8] - 2026-10-16
+
+
+### Changes
+
+- Keep the home ringing when a failed app leg ends the empty incoming conference (52a207d9)
+- Answer a ringing call without an instruction, and keep the caller's message from the transcript (bef1c06f)
+- Name a day that is never today in the real-model alarm test (012b441f)
+- Let the assistant's seat greet first when a caller is waiting for it (cd4fb8d1)
+
 ## [0.1.7] - 2026-10-15
 
+
+### Internal
+
+- V0.1.7 (a7386f47)
 
 ### Changes
 

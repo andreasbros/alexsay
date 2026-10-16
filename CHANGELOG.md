@@ -4,8 +4,19 @@ All notable changes to alexsay. The format follows
 [Keep a Changelog](https://keepachangelog.com), versions follow
 [SemVer](https://semver.org).
 
+## [0.1.11] - 2026-10-16
+
+
+### Changes
+
+- Survive the Flex leaving USB, set its master at startup, clear stale cache dirs (fe3533ac)
+
 ## [0.1.10] - 2026-10-16
 
+
+### Internal
+
+- V0.1.10 (4e0ffef6)
 
 ### Changes
 

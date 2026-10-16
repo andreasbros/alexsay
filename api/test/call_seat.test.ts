@@ -288,6 +288,10 @@ describe("the GPT-Live seat taking an incoming call alone", () => {
     const started = await session.next();
     expect(started.type).toBe("session.start");
     expect((started.session as { instructions: string }).instructions).toContain("They asked you: take a message");
+    // An exact opening line: the speech layer says it at once instead of a filler while it delegates
+    expect((started.session as { instructions: string }).instructions).toContain(
+      'Open with exactly these words, before anything else: "Hello, this is Alexsay, maria\'s assistant."',
+    );
     session.send({ type: "session.started" });
     expect(await session.next()).toEqual({ type: "response.create" });
     upstream.done();
@@ -367,8 +371,16 @@ describe("the GPT-Live seat's bridge", () => {
     expect(tools).toContain("end_call");
     expect(tools).not.toContain("end_conversation");
 
+    // Line audio from before the session is up is dropped, not queued as the model's first turn
+    const early = bytesToBase64(new Uint8Array(160).fill(0x00));
+    for (let i = 0; i < 3; i += 1) {
+      twilio.send({ event: "media", media: { track: "inbound", payload: early } });
+    }
+    // The two fake sockets are not ordered against each other: let the frames land first
+    await new Promise((resolve) => setTimeout(resolve, 50));
     // Someone else answered and is talking: the seat does not open the conversation itself
     session.send({ type: "session.started" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
     // Five 20 ms frames from the line become one 100 ms append of the same G.711 bytes
     for (let i = 0; i < 5; i += 1) {
       twilio.send({ event: "media", media: { track: "inbound", payload: QUIET_FRAME } });

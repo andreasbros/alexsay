@@ -64,6 +64,8 @@ export class LiveSeat extends DurableObject<Env> {
   private twilio: WebSocket | null = null;
   private streamSid = "";
   private live: WebSocket | null = null;
+  /** Set by `session.started`: line audio from before it is dropped, not queued (see `fromTwilio`). */
+  private ready = false;
   private start: SeatStart | null = null;
   private leg: CallRow | null = null;
   private agent = false;
@@ -141,6 +143,11 @@ export class LiveSeat extends DurableObject<Env> {
       case "media":
         if (message.media?.payload && message.media.track !== "outbound") {
           this.framesIn += 1;
+          // The second of line audio before the session is up (ringing tail, the join, a first "hello") used
+          // to reach the model as its first turn, which it answered with a filler (16 Oct 2026); it is dropped
+          if (!this.ready) {
+            break;
+          }
           this.pending.push(base64ToBytes(message.media.payload));
           if (this.pending.length >= FRAMES_PER_APPEND) {
             this.flushAudio();
@@ -252,6 +259,7 @@ export class LiveSeat extends DurableObject<Env> {
     }
     switch (event.type) {
       case "session.started":
+        this.ready = true;
         if (this.leg) {
           await logFor(
             { env: this.env },

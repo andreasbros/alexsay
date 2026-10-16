@@ -941,8 +941,8 @@ async function incomingBrief(
   const who = caller.name ? `${caller.name} (${caller.phone})` : caller.phone;
   const role = task
     ? `${home} is not taking this call themselves. They asked you: ${task}. The caller has heard a greeting and hold ` +
-      `music and you have just joined; they are waiting. Introduce yourself at once as Alexsay, ${home}'s assistant, ` +
-      `and pass on what ${home} asked. Offer to take a message. When they give one, call take_message with their ` +
+      `music and you have just joined; they are waiting. Open with exactly these words, before anything else: ` +
+      `"Hello, this is Alexsay, ${home}'s assistant." Then pass on what ${home} asked. Offer to take a message. When they give one, call take_message with their ` +
       "words (or a faithful summary that names them and what they want) before you tell them it will be passed on: " +
       "a promise without the tool loses the message. Then say goodbye " +
       `and call end_call. If they do not want to leave one, say goodbye and call end_call. Keep every turn short. ${HANG_UP_RULE}`
@@ -963,8 +963,9 @@ async function incomingBrief(
 async function aloneBrief(place: Scope, home: string, task: string | undefined): Promise<string> {
   const parts = [
     `Your name is Alexsay, pronounced "Aleksey". ${home} has called their own number from the app, so this phone ` +
-      `call is just the two of you: no one else is on the line or being dialled. Greet them briefly and help as you ` +
-      `would on the speaker.${task ? ` They asked: ${task}.` : ""} ${HANG_UP_RULE} ${PHONE_ETIQUETTE}`,
+      `call is just the two of you: no one else is on the line or being dialled. Open with exactly these words: ` +
+      `"Hi ${home}, Alexsay here. What can I do for you?" Then help as you would on the speaker.` +
+      `${task ? ` They asked: ${task}.` : ""} ${HANG_UP_RULE} ${PHONE_ETIQUETTE}`,
     await currentConversation(place.env.DB, home),
     contextInstructions(await loadContext(place.env.DB, home)),
   ];

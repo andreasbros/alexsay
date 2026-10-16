@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { sessionConfig } from "../src/providers/openai";
+import { assistantCallSession, liveCallSession, sessionConfig } from "../src/providers/openai";
 import { openaiSettings } from "../src/schemas";
 import { toolDefinitions } from "../src/tools";
 import {
@@ -175,6 +175,28 @@ describe("assistant sessions", () => {
     expect(String(sessionConfig(openaiSettings.parse({}), toolDefinitions(false)).instructions)).not.toMatch(
       /play_music/,
     );
+  });
+
+  it("seats the assistant on a call with its persona, the user's instructions and web search, minus the room rules", () => {
+    const settings = openaiSettings.parse({ web_search: true, instructions: "Always answer in Welsh." });
+    const tools = toolDefinitions(false, true, false, false, undefined, true);
+    const session = assistantCallSession(settings, tools, "You have just joined a phone call with Mum.") as {
+      instructions: string;
+      audio: { format: unknown };
+      delegation: { responses: { tools: { type: string }[]; instructions: string } };
+    };
+    expect(session.instructions).toContain("Your name is Alexsay");
+    expect(session.instructions).toContain("Always answer in Welsh.");
+    expect(session.instructions).toContain("You can search the web");
+    expect(session.instructions).toContain("call play_music with X at once");
+    expect(session.instructions).toMatch(/phone call with Mum\.$/);
+    expect(session.instructions).not.toContain("end_conversation");
+    expect(session.instructions).not.toContain("background sound");
+    expect(session.delegation.responses.tools[0]).toEqual({ type: "web_search" });
+    expect(session.audio.format).toEqual({ type: "audio/pcmu", rate: 8000 });
+    // A scripted agent keeps its part alone
+    const agent = liveCallSession(settings, [], "You are a dentist's receptionist.") as { instructions: string };
+    expect(agent.instructions).toBe("You are a dentist's receptionist.");
   });
 
   it("builds a Responses delegation with the user's instructions appended", () => {

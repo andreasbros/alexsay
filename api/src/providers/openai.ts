@@ -20,14 +20,17 @@ export interface FunctionTool {
 /** OpenAI runs hosted tools itself; web_search gives the backend current information. */
 export type LiveTool = FunctionTool | { type: "web_search" };
 
-const SPEAKER_INSTRUCTIONS =
+const PERSONA_INSTRUCTIONS =
   'Your name is Alexsay, pronounced "Aleksey" (ah-lek-SAY, like the Russian first name Alexei). ' +
   "When you say your name, say Aleksey; never spell it out or say Alexa. " +
   "You are a friendly home assistant speaker. Keep spoken replies short and natural. " +
   "Use the available tools for anything about the home; never pretend a device changed. " +
   "For lights, call list_lights once to learn the names and ids. One light: set_light. A room or group such as " +
   '"the kitchen lights": set_lights with the room words, which handles them all at once. Every light in the home: ' +
-  'ask the user to confirm first, then set_lights with match "all". Report the tool\'s result truthfully. ' +
+  'ask the user to confirm first, then set_lights with match "all". Report the tool\'s result truthfully.';
+
+/** How a speaker or page conversation ends; a phone call ends by the briefing's hang-up rule instead. */
+const ENDING_INSTRUCTIONS =
   "The conversation ends only through the end_conversation tool: whenever the user wants to stop, in any words " +
   '("end the conversation", "that\'s all", "stop listening", "bye"), say a short goodbye and call it. ' +
   "Never just agree without calling it: the speaker keeps listening until you do.";
@@ -72,13 +75,23 @@ export interface SessionInput {
   resumeFrom?: string;
 }
 
-/** The session body GPT-Live expects: voice layer plus a Responses backend that owns the tools. */
-export function sessionConfig(settings: OpenAiSettings, functions: LiveTool[], context = ""): Record<string, unknown> {
+/**
+ * The assistant's instructions, the same wherever it speaks from: persona and house rules, what its
+ * tools allow, the user's own instructions, then the context (memories, locale; on a call, the briefing).
+ * A call has no end_conversation tool and no room to listen to, so those two parts stay off the line.
+ */
+export function assistantInstructions(
+  settings: OpenAiSettings,
+  functions: LiveTool[],
+  context: string,
+  onCall = false,
+): string {
   const hasPhone = functions.some((t) => t.type === "function" && t.name === "place_call");
   const hasMusic = functions.some((t) => t.type === "function" && t.name === "play_music");
-  const instructions = [
-    SPEAKER_INSTRUCTIONS,
-    settings.respond_when_addressed ? ADDRESSED_INSTRUCTIONS : "",
+  return [
+    PERSONA_INSTRUCTIONS,
+    onCall ? "" : ENDING_INSTRUCTIONS,
+    !onCall && settings.respond_when_addressed ? ADDRESSED_INSTRUCTIONS : "",
     settings.web_search ? WEB_SEARCH_INSTRUCTIONS : "",
     hasPhone ? PHONE_INSTRUCTIONS : "",
     hasMusic ? MUSIC_INSTRUCTIONS : "",
@@ -87,7 +100,16 @@ export function sessionConfig(settings: OpenAiSettings, functions: LiveTool[], c
   ]
     .filter(Boolean)
     .join("\n\n");
-  const tools: LiveTool[] = settings.web_search ? [{ type: "web_search" }, ...functions] : functions;
+}
+
+/** The tools the Responses backend gets: OpenAI's hosted web search when switched on, then our functions. */
+export function assistantTools(settings: OpenAiSettings, functions: LiveTool[]): LiveTool[] {
+  return settings.web_search ? [{ type: "web_search" }, ...functions] : functions;
+}
+
+/** The session body GPT-Live expects: voice layer plus a Responses backend that owns the tools. */
+export function sessionConfig(settings: OpenAiSettings, functions: LiveTool[], context = ""): Record<string, unknown> {
+  const instructions = assistantInstructions(settings, functions, context);
   return {
     model: settings.model,
     instructions,
@@ -97,7 +119,7 @@ export function sessionConfig(settings: OpenAiSettings, functions: LiveTool[], c
       responses: {
         model: settings.backend_model,
         instructions,
-        tools,
+        tools: assistantTools(settings, functions),
         tool_choice: "auto",
         // Spoken replies: think briefly, answer briefly, so GPT-Live is not left waiting
         reasoning: { effort: "low" },
@@ -233,8 +255,26 @@ export const NOISE_REDUCTION = { type: "near_field" } as const;
 export const LIVE_CALL_FORMAT = { type: "audio/pcmu", rate: 8_000 } as const;
 
 /**
- * The GPT-Live session for a seat on a phone call: the briefing alone as its instructions (the
- * speaker's house rules do not apply on a line), the seat's tools, and a voice.
+ * The assistant's GPT-Live session on a phone call: the same persona, tool guidance, user instructions
+ * and hosted web search as on the speaker, with the call's briefing (who is on, the task, memories) as
+ * its context and the line's audio format (16 Oct 2026: a seat with the briefing alone could not say
+ * what the weather was, having no web search and no word about it).
+ */
+export function assistantCallSession(
+  settings: OpenAiSettings,
+  functions: LiveTool[],
+  briefing: string,
+): Record<string, unknown> {
+  return liveCallSession(
+    settings,
+    assistantTools(settings, functions),
+    assistantInstructions(settings, functions, briefing, true),
+  );
+}
+
+/**
+ * A GPT-Live session for a seat on a phone call with the given instructions alone: a scripted test
+ * agent's part, or the assistant's through `assistantCallSession`.
  */
 export function liveCallSession(
   settings: OpenAiSettings,

@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import type { CallAgentStart } from "../call_agent";
-import { openaiConnection } from "../connections";
+import { musicReady, openaiConnection } from "../connections";
 import { calls, connections, homes } from "../db";
 import { logFor } from "../log";
 import { serverOrigin } from "../origin";
-import { acceptCall, ProviderError, rejectCall, verifyWebhook } from "../providers/openai";
+import { acceptCall, assistantInstructions, ProviderError, rejectCall, verifyWebhook } from "../providers/openai";
 import { skills } from "../skills";
 import {
   AGENT_HEADER,
@@ -62,19 +62,24 @@ export const openaiWebhookRoutes = new Hono<AppEnv>().post("/webhook", async (c)
   }
   try {
     const hasLights = (await connections.get(c.env.DB, leg.home_id, "lightwave")) !== null;
-    const [logAccess, callTest, where, skillsOn] = await Promise.all([
+    const [logAccess, callTest, where, skillsOn, hasMusic] = await Promise.all([
       homes.logAccess(c.env.DB, leg.home_id),
       homes.callTest(c.env.DB, leg.home_id),
       homes.locale(c.env.DB, leg.home_id),
       skills.enabled(c.env.DB, leg.home_id),
+      musicReady({ env: c.env }, leg.home_id),
     ]);
+    // The Realtime API runs no hosted tools, so web search stays off this path; the words are the same
+    const tools = agent
+      ? agentToolDefinitions()
+      : toolDefinitions(hasLights, true, logAccess, callTest, skillsOn, hasMusic).filter((t) => !notOnCalls(t.name));
     await acceptCall(c.env.OPENAI_BASE_URL, openai.apiKey, callId, {
       model: openai.settings.call_model,
-      instructions: agent ? agentBrief(agent, leg.home_id, where) : (leg.brief ?? ""),
+      instructions: agent
+        ? agentBrief(agent, leg.home_id, where)
+        : assistantInstructions(openai.settings, tools, leg.brief ?? "", true),
       voice: agent ? agent.voice : openai.settings.voice,
-      tools: agent
-        ? agentToolDefinitions()
-        : toolDefinitions(hasLights, true, logAccess, callTest, skillsOn).filter((t) => !notOnCalls(t.name)),
+      tools,
       // The person called (or the agent playing one) keeps the floor; the assistant gives way, as a caller's helper would
       turnTaking: agent ? "holds" : "yields",
     });

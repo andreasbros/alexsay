@@ -1,11 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import { type CallNotice, realtimeFunctionCall, runCallTool } from "./call_agent";
-import { openaiConnection } from "./connections";
+import { musicReady, openaiConnection } from "./connections";
 import { calls, connections, homes } from "./db";
 import { frameLevel, SPEECH_RMS } from "./drop_in";
 import { logFor } from "./log";
 import { base64ToBytes, bytesToBase64 } from "./mulaw";
-import { liveCallSession, liveSocketUrl } from "./providers/openai";
+import { assistantCallSession, liveCallSession, liveSocketUrl } from "./providers/openai";
 import { skills } from "./skills";
 import { agentBrief, endCall, notOnCalls, parseAgent, seatSpeaksFirst } from "./telephony";
 import { agentToolDefinitions, toolDefinitions } from "./tools";
@@ -199,16 +199,17 @@ export class LiveSeat extends DurableObject<Env> {
           agent.voice,
         );
       } else {
-        const [hasLights, logAccess, callTest, skillsOn] = await Promise.all([
+        const [hasLights, logAccess, callTest, skillsOn, hasMusic] = await Promise.all([
           connections.get(this.env.DB, leg.home_id, "lightwave").then((row) => row !== null),
           homes.logAccess(this.env.DB, leg.home_id),
           homes.callTest(this.env.DB, leg.home_id),
           skills.enabled(this.env.DB, leg.home_id),
+          musicReady(scope, leg.home_id),
         ]);
-        const tools = toolDefinitions(hasLights, true, logAccess, callTest, skillsOn).filter(
+        const tools = toolDefinitions(hasLights, true, logAccess, callTest, skillsOn, hasMusic).filter(
           (t) => !notOnCalls(t.name),
         );
-        session = liveCallSession(openai.settings, tools, leg.brief ?? "");
+        session = assistantCallSession(openai.settings, tools, leg.brief ?? "");
       }
       const res = await fetch(liveSocketUrl(this.env.OPENAI_BASE_URL), {
         headers: { upgrade: "websocket", authorization: `Bearer ${openai.apiKey}` },

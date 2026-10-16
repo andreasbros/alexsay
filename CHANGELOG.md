@@ -4,8 +4,25 @@ All notable changes to alexsay. The format follows
 [Keep a Changelog](https://keepachangelog.com), versions follow
 [SemVer](https://semver.org).
 
+## [0.1.10] - 2026-10-16
+
+
+### Changes
+
+- Spotify help: Premium-only dashboard, one app per account (4411da0d)
+- Spotify callback: no session cookie on the cross-site return (f72be868)
+- Read the plan, and sign the speaker in over zeroconf (50a890ba)
+- A drop-in or call offer rides in the session instructions (38b40db8)
+- Speaker page with music, sound and details; music tools named for any service (8fc1f284)
+- Format (afe41e9c)
+- One self-call in flight per home, bridges claimed oldest first (7a522e06)
+
 ## [0.1.9] - 2026-10-16
 
+
+### Internal
+
+- V0.1.9 (3779b658)
 
 ### Changes
 

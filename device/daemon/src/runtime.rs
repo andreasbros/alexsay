@@ -915,13 +915,17 @@ pub async fn converse(
         _ => None,
     };
     let ringing_call = matches!(opening, Opening::IncomingCall { .. });
-    let (preroll, mut report) = match opening {
-        Opening::Wake(preroll) => (preroll, None),
-        Opening::Report(report) => (Vec::new(), Some(report)),
-        Opening::Snooze { preroll, note } => (preroll, Some(note)),
-        Opening::DropIn { from, .. } => (Vec::new(), Some(drop_in::offer_note(&from))),
-        Opening::IncomingCall { who, .. } => (Vec::new(), Some(incoming::offer_note(&who))),
-        Opening::Call => (Vec::new(), None),
+    let (preroll, mut report) = match &opening {
+        Opening::Wake(preroll) => (preroll.clone(), None),
+        Opening::Report(report) => (Vec::new(), Some(report.clone())),
+        Opening::Snooze { preroll, note } => (preroll.clone(), Some(note.clone())),
+        Opening::DropIn { .. } | Opening::IncomingCall { .. } | Opening::Call => (Vec::new(), None),
+    };
+    // An offer is spoken the moment the session is up: it rides in the instructions, not as a user turn
+    let offer_note = match &opening {
+        Opening::DropIn { from, .. } => Some(drop_in::offer_note(from)),
+        Opening::IncomingCall { who, .. } => Some(incoming::offer_note(who)),
+        _ => None,
     };
     // Said nothing about until the user speaks: a drop-in or a call is on, and who is on it
     let mut context = if runtime.call.drop_in() {
@@ -951,10 +955,15 @@ pub async fn converse(
     else {
         return Ok(Outcome::NotConnected);
     };
-    let session_body = alexsay_core::live::session_with_tools(
+    let mut session_body = alexsay_core::live::session_with_tools(
         alexsay_core::live::session_with_audio_format(device_session.session, LIVE_RATE),
         &own_tools,
     );
+    let mut speak_first = false;
+    if let Some(note) = &offer_note {
+        session_body = alexsay_core::live::session_with_opening(session_body, note);
+        speak_first = true;
+    }
     let fetched = Instant::now();
     tracing::debug!("session fetched");
     let mut live = Live::connect(
@@ -1052,6 +1061,8 @@ pub async fn converse(
                             if let Some(note) = report.take() {
                                 info!("handing the note to the assistant");
                                 live.send(ClientEvent::ResponseItemCreate { item: Item::note(&note) });
+                                live.send(ClientEvent::ResponseCreate);
+                            } else if std::mem::take(&mut speak_first) {
                                 live.send(ClientEvent::ResponseCreate);
                             }
                         }

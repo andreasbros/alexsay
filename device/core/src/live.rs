@@ -46,6 +46,26 @@ pub fn session_with_audio_format(mut session: Value, rate: u32) -> Value {
 
 /// The session with tools of the speaker's own added (ones it answers itself, never the server),
 /// next to the server's under the Responses delegation.
+/// An opening the assistant must speak at once (a drop-in or a call to accept) goes into the session's
+/// instructions, for the speech layer and the backend both. Handed over as a user message instead, the
+/// speech layer treated it as a question and answered it first ("let me check that", 16 Oct 2026).
+pub fn session_with_opening(mut session: Value, note: &str) -> Value {
+    fn join(instructions: &mut Value, note: &str) {
+        let existing = instructions.as_str().unwrap_or_default();
+        *instructions = Value::String(if existing.is_empty() {
+            note.to_owned()
+        } else {
+            format!("{existing}\n\n{note}")
+        });
+    }
+    join(&mut session["instructions"], note);
+    join(
+        &mut session["delegation"]["responses"]["instructions"],
+        note,
+    );
+    session
+}
+
 pub fn session_with_tools(mut session: Value, tools: &[Value]) -> Value {
     let responses = &mut session["delegation"]["responses"];
     match responses.get_mut("tools") {
@@ -290,6 +310,25 @@ mod tests {
                 "tools": [{"type": "function", "name": "set_light", "description": "Switch a light", "parameters": {"type": "object", "properties": {}}}],
                 "tool_choice": "auto"}}
         })
+    }
+
+    #[test]
+    fn an_opening_joins_both_sets_of_instructions() {
+        let session = session_with_opening(config(), "Say: Maria is dropping in. Accept?");
+        assert_eq!(
+            session["instructions"],
+            "Be concise.\n\nSay: Maria is dropping in. Accept?"
+        );
+        assert_eq!(
+            session["delegation"]["responses"]["instructions"],
+            "Use tools.\n\nSay: Maria is dropping in. Accept?"
+        );
+        let bare = session_with_opening(json!({"model": "gpt-live-1"}), "Say hello.");
+        assert_eq!(bare["instructions"], "Say hello.");
+        assert_eq!(
+            bare["delegation"]["responses"]["instructions"],
+            "Say hello."
+        );
     }
 
     #[test]

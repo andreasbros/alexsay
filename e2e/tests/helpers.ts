@@ -85,7 +85,8 @@ export async function addDevice(page: Page, id: string, name = "Test speaker"): 
   await dialog.getByLabel("Name").fill(name);
   await dialog.getByRole("button", { name: "Add", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByText(id)).toBeVisible();
+  // The list shows the name, or the UUID for a speaker without one
+  await expect(page.getByRole("row", { name: new RegExp(name) })).toBeVisible();
 }
 
 /** What the Rust daemon sends: the same call, so the deployed API is exercised exactly as a speaker would. */

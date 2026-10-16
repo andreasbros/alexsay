@@ -200,6 +200,35 @@ describe("music through Spotify", () => {
     ).toEqual({ n: 2 });
   });
 
+  it("shows the app what is playing and takes its pause, play and skip", async () => {
+    expect(await (await call(`${APP}/api/music`, {}, maria)).json()).toEqual({ connected: false, playing: null });
+    expect((await json(`${APP}/api/music`, "POST", { action: "pause" }, maria)).status).toBe(404);
+    await connectSpotify(maria);
+    const upstream = mockUpstream({
+      [`GET ${SPOTIFY}/me/player`]: () =>
+        reply(200, {
+          is_playing: true,
+          device: { id: "d-kitchen", name: "Kitchen" },
+          item: {
+            name: "Melatonin",
+            duration_ms: 200_000,
+            artists: [{ name: "Mocky" }],
+            album: { name: "Key Change" },
+          },
+        }),
+      [`PUT ${SPOTIFY}/me/player/pause`]: () => noContent(),
+      [`POST ${SPOTIFY}/me/player/next`]: () => noContent(),
+    });
+    expect(await (await call(`${APP}/api/music`, {}, maria)).json()).toEqual({
+      connected: true,
+      playing: { is_playing: true, track: "Melatonin", by: "Mocky", album: "Key Change", device: "Kitchen" },
+    });
+    expect(await (await json(`${APP}/api/music`, "POST", { action: "pause" }, maria)).json()).toEqual({ ok: true });
+    expect(await (await json(`${APP}/api/music`, "POST", { action: "next" }, maria)).json()).toEqual({ ok: true });
+    expect((await json(`${APP}/api/music`, "POST", { action: "louder" }, maria)).status).toBe(400);
+    upstream.done();
+  });
+
   it("is not connected until the account signed in", async () => {
     await json(
       `${APP}/api/connections/spotify`,

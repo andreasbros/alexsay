@@ -166,6 +166,17 @@ describe("assistant sessions", () => {
     );
   });
 
+  it("tells a music-capable assistant to play through the music tools, never to decline", () => {
+    const withMusic = sessionConfig(
+      openaiSettings.parse({}),
+      toolDefinitions(false, false, false, false, undefined, true),
+    );
+    expect(String(withMusic.instructions)).toMatch(/call play_music with X at once/);
+    expect(String(sessionConfig(openaiSettings.parse({}), toolDefinitions(false)).instructions)).not.toMatch(
+      /play_music/,
+    );
+  });
+
   it("builds a Responses delegation with the user's instructions appended", () => {
     const tools = toolDefinitions(true);
     const config = sessionConfig(

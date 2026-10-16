@@ -19,7 +19,7 @@ test("a speaker that calls home can be claimed, then receives its owner's settin
 test("a speaker can be added before it ever calls home and shows offline", async ({ page, deviceId }) => {
   await login(page, env.user());
   await addDevice(page, deviceId);
-  await expect(page.getByRole("row", { name: new RegExp(deviceId) }).getByText("offline")).toBeVisible();
+  await expect(page.getByRole("row", { name: /Test speaker/ }).getByText("offline")).toBeVisible();
 });
 
 test("nobody else can claim an owned speaker", async ({ deviceId }) => {
@@ -37,17 +37,17 @@ test("the admin sees every speaker with its owner", async ({ page, deviceId }) =
   await user.dispose();
   await login(page, env.admin());
   await openSection(page, "Devices");
-  const row = page.getByRole("row", { name: /Owned by user/ });
-  await expect(row.getByText(env.user().username)).toBeVisible();
+  await page.getByRole("row", { name: /Owned by user/ }).getByRole("link", { name: "Owned by user" }).click();
+  await expect(page.getByRole("heading", { name: "Owned by user" })).toBeVisible();
+  await expect(page.getByText(env.user().username)).toBeVisible();
 });
 
 test("the owner removes a speaker, which is then unclaimed", async ({ page, deviceId, account, request }) => {
   await login(page, account);
   await addDevice(page, deviceId, "Spare room");
-  await page
-    .getByRole("row", { name: /Spare room/ })
-    .getByRole("button", { name: "Remove" })
-    .click();
+  await page.getByRole("row", { name: /Spare room/ }).getByRole("link", { name: "Spare room" }).click();
+  await expect(page.getByRole("heading", { name: "Spare room" })).toBeVisible();
+  await page.getByRole("button", { name: "Remove" }).click();
   const removed = page.waitForResponse((r) => r.request().method() === "DELETE" && r.url().includes("/api/devices/"));
   await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
   expect((await removed).status()).toBe(204);

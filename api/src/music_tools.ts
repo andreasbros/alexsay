@@ -22,7 +22,7 @@ const NOT_CONNECTED = "Spotify is not connected: the home's admin signs in under
 /** Plays, pauses and browses Spotify through the Web API; the speaker is a Spotify Connect device like any other. */
 export const MUSIC_TOOLS: Tool[] = [
   {
-    needs: "spotify",
+    needs: "music",
     definition: {
       type: "function",
       name: "list_playlists",
@@ -35,7 +35,7 @@ export const MUSIC_TOOLS: Tool[] = [
       ),
   },
   {
-    needs: "spotify",
+    needs: "music",
     definition: {
       type: "function",
       name: "play_music",
@@ -78,7 +78,7 @@ export const MUSIC_TOOLS: Tool[] = [
       }),
   },
   {
-    needs: "spotify",
+    needs: "music",
     definition: {
       type: "function",
       name: "pause_music",
@@ -97,7 +97,7 @@ export const MUSIC_TOOLS: Tool[] = [
       }),
   },
   {
-    needs: "spotify",
+    needs: "music",
     definition: {
       type: "function",
       name: "skip_track",
@@ -118,7 +118,7 @@ export const MUSIC_TOOLS: Tool[] = [
       }),
   },
   {
-    needs: "spotify",
+    needs: "music",
     definition: {
       type: "function",
       name: "now_playing",
@@ -141,7 +141,7 @@ export const MUSIC_TOOLS: Tool[] = [
       }),
   },
   {
-    needs: "spotify",
+    needs: "music",
     definition: {
       type: "function",
       name: "set_music_volume",

@@ -147,6 +147,9 @@ export async function spotifyConnection(c: Scope, home: string): Promise<Spotify
 }
 
 /** Whether the music tools exist: a Spotify account has signed in. */
+/** A music service the assistant can play through: Spotify today, the first of several. */
+export const musicReady = spotifyReady;
+
 export async function spotifyReady(c: Scope, home: string): Promise<boolean> {
   const row = await connections.get(c.env.DB, home, "spotify");
   return row !== null && spotifySettings.parse(JSON.parse(row.settings)).authorized;

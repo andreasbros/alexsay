@@ -38,7 +38,7 @@ import { MEMORY_CATEGORIES } from "./types";
 export interface Tool {
   definition: FunctionTool;
   /** Provider tools only make sense once the user connected that provider; the log once the user allowed it. */
-  needs?: "lightwave" | "twilio" | "log" | "test" | "spotify";
+  needs?: "lightwave" | "twilio" | "log" | "test" | "music";
   /** Tools of a skill exist only while the user has that skill on. */
   skill?: SkillId;
   run: (c: ToolContext, args: Record<string, unknown>, conversationId: string | null) => Promise<unknown>;
@@ -998,9 +998,9 @@ export function toolDefinitions(
   logAccess = false,
   callTest = false,
   skillsOn: ReadonlySet<SkillId> = new Set(),
-  hasSpotify = false,
+  hasMusic = false,
 ): FunctionTool[] {
-  const available = { lightwave: hasLightwave, twilio: hasTwilio, log: logAccess, test: callTest, spotify: hasSpotify };
+  const available = { lightwave: hasLightwave, twilio: hasTwilio, log: logAccess, test: callTest, music: hasMusic };
   return TOOLS.filter(
     (t) =>
       (!t.needs || available[t.needs]) && (!t.skill || skillsOn.has(t.skill)) && !AGENT_TOOLS.has(t.definition.name),

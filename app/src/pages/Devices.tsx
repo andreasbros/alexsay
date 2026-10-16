@@ -14,10 +14,11 @@ import {
 } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
+import { Link } from "react-router";
 import { ApiError, api, type Device, type User } from "../api";
 import { Section, useSection } from "../components/Section";
 import { useDropIn } from "../drop_in";
-import { ago, atLeastVersion, DROP_IN_SINCE, isUuid } from "../format";
+import { atLeastVersion, DROP_IN_SINCE, isUuid } from "../format";
 import { dropInSupported } from "../lib/drop_in";
 
 /** A speaker the browser can drop in on: online, running software that takes drop-ins, from a browser that can carry one. */
@@ -30,16 +31,10 @@ const ERRORS: Record<string, string> = {
   bad_request: "That is not a UUID. It is printed by `alexsay id` on the speaker.",
 };
 
-/** The home's speakers, a section of the Home page. */
+/** The home's speakers, a section of the Home page: name, status and sound; everything else is on the speaker's page. */
 export function DevicesSection({ user }: { user: User }) {
-  const client = useQueryClient();
   const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices, refetchInterval: 30_000 });
-  const remove = useMutation({
-    mutationFn: api.removeDevice,
-    onSuccess: () => client.invalidateQueries({ queryKey: ["devices"] }),
-  });
-  const admin = user.role === "admin";
-  const canChange = admin || user.homeRole === "admin";
+  const canChange = user.role === "admin" || user.homeRole === "admin";
 
   return (
     <Section id="devices" title="Devices" actions={canChange && <AddDevice />}>
@@ -54,22 +49,23 @@ export function DevicesSection({ user }: { user: User }) {
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeaderCell>Name</Table.ColumnHeaderCell>
-              <Table.ColumnHeaderCell>UUID</Table.ColumnHeaderCell>
-              {admin && <Table.ColumnHeaderCell>Home</Table.ColumnHeaderCell>}
               <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
-              <Table.ColumnHeaderCell>Last seen</Table.ColumnHeaderCell>
               <Table.ColumnHeaderCell />
             </Table.Row>
           </Table.Header>
           <Table.Body>
-            {devices.data.map((d) => (
-              <DeviceRow
-                key={d.id}
-                device={d}
-                admin={admin}
-                canChange={canChange}
-                onRemove={() => remove.mutate(d.id)}
-              />
+            {devices.data.map((device) => (
+              <Table.Row key={device.id} align="center">
+                <Table.RowHeaderCell>
+                  <Link to={`/devices/${device.id}`} style={{ color: "inherit" }}>
+                    {device.name || <span className="mono">{device.id}</span>}
+                  </Link>
+                </Table.RowHeaderCell>
+                <Table.Cell>
+                  <StatusBadge device={device} />
+                </Table.Cell>
+                <Table.Cell justify="end">{device.sound && <SoundButton device={device} />}</Table.Cell>
+              </Table.Row>
             ))}
           </Table.Body>
         </Table.Root>
@@ -78,74 +74,14 @@ export function DevicesSection({ user }: { user: User }) {
   );
 }
 
-function DeviceRow({
-  device,
-  admin,
-  canChange,
-  onRemove,
-}: {
-  device: Device;
-  admin: boolean;
-  canChange: boolean;
-  onRemove: () => void;
-}) {
-  return (
-    <Table.Row align="center">
-      <Table.RowHeaderCell>
-        <Flex align="center" gap="2">
-          {canDropIn(device) && <DropInButton device={device} />}
-          {device.name || <Text color="gray">unnamed</Text>}
-        </Flex>
-      </Table.RowHeaderCell>
-      <Table.Cell>
-        <span className="mono">{device.id}</span>
-      </Table.Cell>
-      {admin && <Table.Cell>{device.owner ?? <Text color="gray">unclaimed</Text>}</Table.Cell>}
-      <Table.Cell>
-        <Badge color={device.online ? "grass" : "gray"}>{device.online ? "online" : "offline"}</Badge>
-      </Table.Cell>
-      <Table.Cell>{ago(device.last_seen_at)}</Table.Cell>
-      <Table.Cell justify="end">
-        {device.sound && <SoundButton device={device} />}
-        {canChange && (
-          <AlertDialog.Root>
-            <AlertDialog.Trigger>
-              <Button size="1" variant="ghost" color="red">
-                Remove
-              </Button>
-            </AlertDialog.Trigger>
-            <AlertDialog.Content maxWidth="420px">
-              <AlertDialog.Title>Remove {device.name || "this speaker"}?</AlertDialog.Title>
-              <AlertDialog.Description size="2">
-                {admin
-                  ? "The speaker is deleted; it reappears unclaimed the next time it calls home."
-                  : "The speaker leaves your account and can be added again with its UUID."}
-              </AlertDialog.Description>
-              <Flex gap="3" mt="4" justify="end">
-                <AlertDialog.Cancel>
-                  <Button variant="soft" color="gray">
-                    Keep
-                  </Button>
-                </AlertDialog.Cancel>
-                <AlertDialog.Action>
-                  <Button color="red" onClick={onRemove}>
-                    Remove
-                  </Button>
-                </AlertDialog.Action>
-              </Flex>
-            </AlertDialog.Content>
-          </AlertDialog.Root>
-        )}
-      </Table.Cell>
-    </Table.Row>
-  );
+export function StatusBadge({ device }: { device: Pick<Device, "online"> }) {
+  return <Badge color={device.online ? "grass" : "gray"}>{device.online ? "online" : "offline"}</Badge>;
 }
 
 /** Volume and microphone mute of one speaker: shown as last reported, sent when the slider is let go. */
-function SoundButton({ device }: { device: Device }) {
+export function SoundControls({ device }: { device: Device }) {
   const client = useQueryClient();
-  const name = device.name || "this speaker";
-  const reported = device.sound ?? { volume: 0, mic_muted: false };
+  const reported = device.sound ?? { volume: 100, mic_muted: false };
   const [volume, setVolume] = useState(reported.volume);
   useEffect(() => setVolume(reported.volume), [reported.volume]);
   const set = useMutation({
@@ -154,65 +90,71 @@ function SoundButton({ device }: { device: Device }) {
   });
   const offline = !device.online;
   return (
+    <Flex direction="column" gap="4">
+      <Text size="2" color="gray">
+        {offline ? "The speaker is offline; its last known settings are shown." : "Changes reach the speaker at once."}
+      </Text>
+      <Flex direction="column" gap="2">
+        <Flex justify="between">
+          <Text size="2" weight="medium">
+            Volume
+          </Text>
+          <Text size="2" color="gray">
+            {volume}%
+          </Text>
+        </Flex>
+        <Slider
+          aria-label="Volume"
+          value={[volume]}
+          min={0}
+          max={100}
+          step={5}
+          disabled={offline || set.isPending}
+          onValueChange={([v]) => setVolume(v ?? volume)}
+          onValueCommit={([v]) => v !== undefined && set.mutate({ volume: v })}
+        />
+      </Flex>
+      <Flex justify="between" align="center">
+        <Text size="2" weight="medium">
+          Microphone muted
+        </Text>
+        <Switch
+          aria-label="Microphone muted"
+          checked={reported.mic_muted}
+          disabled={offline || set.isPending}
+          onCheckedChange={(mic_muted) => set.mutate({ mic_muted })}
+        />
+      </Flex>
+      {set.error && (
+        <Text size="2" color="red">
+          {set.error instanceof ApiError && set.error.code === "offline"
+            ? "The speaker is not connected right now."
+            : "The speaker did not take the change."}
+        </Text>
+      )}
+    </Flex>
+  );
+}
+
+/** The list's shortcut to the sound controls. */
+function SoundButton({ device }: { device: Device }) {
+  const name = device.name || "this speaker";
+  return (
     <Dialog.Root>
       <Dialog.Trigger>
-        <IconButton size="1" variant="ghost" aria-label={`Sound of ${name}`} title="Sound" mr="3">
+        <IconButton size="1" variant="ghost" aria-label={`Sound of ${name}`} title="Sound">
           <SpeakerLoudIcon />
         </IconButton>
       </Dialog.Trigger>
       <Dialog.Content maxWidth="420px">
         <Dialog.Title>{name}</Dialog.Title>
-        <Dialog.Description size="2" color="gray">
-          {offline
-            ? "The speaker is offline; its last known settings are shown."
-            : "Changes reach the speaker at once."}
-        </Dialog.Description>
-        <Flex direction="column" gap="4" mt="4">
-          <Flex direction="column" gap="2">
-            <Flex justify="between">
-              <Text size="2" weight="medium">
-                Volume
-              </Text>
-              <Text size="2" color="gray">
-                {volume}%
-              </Text>
-            </Flex>
-            <Slider
-              aria-label="Volume"
-              value={[volume]}
-              min={0}
-              max={100}
-              step={5}
-              disabled={offline || set.isPending}
-              onValueChange={([v]) => setVolume(v ?? volume)}
-              onValueCommit={([v]) => v !== undefined && set.mutate({ volume: v })}
-            />
-          </Flex>
-          <Flex justify="between" align="center">
-            <Text size="2" weight="medium">
-              Microphone muted
-            </Text>
-            <Switch
-              aria-label="Microphone muted"
-              checked={reported.mic_muted}
-              disabled={offline || set.isPending}
-              onCheckedChange={(mic_muted) => set.mutate({ mic_muted })}
-            />
-          </Flex>
-          {set.error && (
-            <Text size="2" color="red">
-              {set.error instanceof ApiError && set.error.code === "offline"
-                ? "The speaker is not connected right now."
-                : "The speaker did not take the change."}
-            </Text>
-          )}
-          <Flex justify="end">
-            <Dialog.Close>
-              <Button variant="soft" color="gray">
-                Close
-              </Button>
-            </Dialog.Close>
-          </Flex>
+        <SoundControls device={device} />
+        <Flex justify="end" mt="4">
+          <Dialog.Close>
+            <Button variant="soft" color="gray">
+              Close
+            </Button>
+          </Dialog.Close>
         </Flex>
       </Dialog.Content>
     </Dialog.Root>
@@ -220,15 +162,15 @@ function SoundButton({ device }: { device: Device }) {
 }
 
 /** Asks before dropping in: the speaker will announce the caller to whoever is in the room. */
-function DropInButton({ device }: { device: Device }) {
+export function DropInButton({ device }: { device: Device }) {
   const dropIn = useDropIn();
   const name = device.name || "this speaker";
   return (
     <AlertDialog.Root>
       <AlertDialog.Trigger>
-        <IconButton size="1" variant="soft" aria-label={`Drop in on ${name}`} title="Drop in">
-          <EnterIcon />
-        </IconButton>
+        <Button variant="soft" aria-label={`Drop in on ${name}`}>
+          <EnterIcon /> Drop in
+        </Button>
       </AlertDialog.Trigger>
       <AlertDialog.Content maxWidth="420px">
         <AlertDialog.Title>Drop in on {name}?</AlertDialog.Title>

@@ -33,6 +33,9 @@ export const heartbeat = z.object({
   mic_muted: z.boolean().optional(),
 });
 
+/** The app's music buttons; stop is a pause, which is all Spotify offers. */
+export const musicAction = z.object({ action: z.enum(["play", "pause", "next", "previous"]) });
+
 /** What the app's sound controls send a speaker: one or both. */
 export const deviceSound = z
   .object({

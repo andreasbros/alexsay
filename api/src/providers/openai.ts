@@ -51,6 +51,13 @@ const PHONE_INSTRUCTIONS =
   "When a call ends, the app hands you its report as a note (who answered, how long, who hung up, the transcript): " +
   "tell the user in two or three sentences how it went and what was agreed; call_report has it again later.";
 
+const MUSIC_INSTRUCTIONS =
+  "You play music through the home's connected music service (Spotify) with the music tools: play_music for a " +
+  "playlist, song, album or artist by name (or to resume), pause_music to pause or stop, skip_track for next or " +
+  "previous, now_playing for what is on, set_music_volume, list_playlists for the user's playlists. " +
+  '"Play X" means call play_music with X at once; never say you cannot play music or control Spotify. ' +
+  "Music plays on the speaker the user is talking from unless they name another device.";
+
 const ADDRESSED_INSTRUCTIONS =
   "You are in a room with background sound: a television, music, other people talking to each other. " +
   "Only respond when someone addresses you by name (Alexsay, Aleksey, Alexei) or clearly continues an exchange " +
@@ -68,11 +75,13 @@ export interface SessionInput {
 /** The session body GPT-Live expects: voice layer plus a Responses backend that owns the tools. */
 export function sessionConfig(settings: OpenAiSettings, functions: LiveTool[], context = ""): Record<string, unknown> {
   const hasPhone = functions.some((t) => t.type === "function" && t.name === "place_call");
+  const hasMusic = functions.some((t) => t.type === "function" && t.name === "play_music");
   const instructions = [
     SPEAKER_INSTRUCTIONS,
     settings.respond_when_addressed ? ADDRESSED_INSTRUCTIONS : "",
     settings.web_search ? WEB_SEARCH_INSTRUCTIONS : "",
     hasPhone ? PHONE_INSTRUCTIONS : "",
+    hasMusic ? MUSIC_INSTRUCTIONS : "",
     settings.instructions,
     context,
   ]

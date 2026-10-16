@@ -8,6 +8,7 @@ import { deviceApiRoutes } from "./routes/device_api";
 import { deviceRoutes } from "./routes/devices";
 import { homeRoutes, inviteRoutes } from "./routes/home";
 import { messageRoutes, notificationRoutes } from "./routes/messages";
+import { musicRoutes } from "./routes/music";
 import { openaiWebhookRoutes } from "./routes/openai_webhooks";
 import { serverRoutes } from "./routes/server";
 import { sessionRoutes } from "./routes/session";
@@ -54,6 +55,9 @@ export const app = new Hono<AppEnv>()
   .use("/api/messages/*", requireUser)
   .use("/api/messages", requireUser)
   .route("/api/messages", messageRoutes)
+  .use("/api/music/*", requireUser)
+  .use("/api/music", requireUser)
+  .route("/api/music", musicRoutes)
   .use("/api/notifications/*", requireUser)
   .use("/api/notifications", requireUser)
   .route("/api/notifications", notificationRoutes)

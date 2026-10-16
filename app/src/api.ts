@@ -44,6 +44,22 @@ export interface Device {
   sound: { volume: number; mic_muted: boolean } | null;
 }
 
+/** What the home's music service is playing, as `/api/music` reports it. */
+export interface NowPlaying {
+  is_playing: boolean;
+  track: string;
+  by: string;
+  album: string;
+  device: string | null;
+}
+
+export interface MusicState {
+  connected: boolean;
+  playing: NowPlaying | null;
+}
+
+export type MusicAction = "play" | "pause" | "next" | "previous";
+
 export interface OpenAiSettings {
   model: string;
   backend_model: string;
@@ -456,6 +472,8 @@ export const api = {
   updateDevice: (id: string, changes: { name?: string; owner?: string | null }) =>
     request<void>("PATCH", `/api/devices/${encodeURIComponent(id)}`, changes),
   removeDevice: (id: string) => request<void>("DELETE", `/api/devices/${encodeURIComponent(id)}`),
+  music: () => request<MusicState>("GET", "/api/music"),
+  controlMusic: (action: MusicAction) => request<{ ok: true }>("POST", "/api/music", { action }),
   /** Pushes volume or microphone mute to an online speaker; 409 offline. */
   setDeviceSound: (id: string, sound: { volume?: number; mic_muted?: boolean }) =>
     request<{ delivered: boolean; sound: Device["sound"] }>(

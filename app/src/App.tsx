@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { Layout } from "./components/Layout";
 import { DropInProvider } from "./drop_in";
 import { Assistant } from "./pages/Assistant";
+import { DevicePage } from "./pages/Device";
 import { EmailLink } from "./pages/EmailLink";
 import { HomePage } from "./pages/Home";
 import { Invite } from "./pages/Invite";
@@ -44,6 +45,7 @@ export function App() {
         <Route path="/invite" element={<Invite />} />
         <Route element={<Layout user={user} />}>
           <Route index element={<HomePage user={user} />} />
+          <Route path="devices/:id" element={<DevicePage user={user} />} />
           <Route path="assistant" element={<Assistant />} />
           <Route path="connections" element={<Navigate to="/#connections" replace />} />
           <Route path="messages" element={<MessagesPage />} />

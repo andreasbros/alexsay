@@ -148,6 +148,72 @@ describe("App", () => {
     await vi.waitFor(() => expect(sent).toEqual(['{"mic_muted":true}']));
   });
 
+  it("opens a speaker's page from the list, with rename, details, music and sound", async () => {
+    const sent: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        if (path === "/api/session/me") {
+          return new Response(JSON.stringify({ username: "maria", role: "user", home: "maria", homeRole: "admin" }));
+        }
+        if (path === "/api/devices") {
+          return new Response(JSON.stringify([{ ...device, sound: { volume: 60, mic_muted: false } }]));
+        }
+        if (path === `/api/devices/${device.id}` && init?.method === "PATCH") {
+          sent.push(`PATCH ${init.body}`);
+          return new Response(null, { status: 204 });
+        }
+        if (path === "/api/music" && init?.method === "POST") {
+          sent.push(`music ${init.body}`);
+          return new Response(JSON.stringify({ ok: true }));
+        }
+        if (path === "/api/music") {
+          return new Response(
+            JSON.stringify({
+              connected: true,
+              playing: { is_playing: true, track: "Melatonin", by: "Mocky", album: "Key Change", device: "Kitchen" },
+            }),
+          );
+        }
+        return new Response("{}", { status: 404 });
+      }),
+    );
+    renderApp();
+    await openSection("Devices");
+    await screen.findByRole("link", { name: "Kitchen" });
+    // The list is name, status and sound only
+    const row = screen.getByRole("row", { name: /Kitchen/ });
+    expect(within(row).getAllByRole("cell")).toHaveLength(2);
+    expect(within(row).getByRole("button", { name: "Sound of Kitchen" })).toBeDefined();
+    fireEvent.click(within(row).getByRole("link", { name: "Kitchen" }));
+    expect(await screen.findByRole("heading", { name: "Kitchen" })).toBeDefined();
+    expect(screen.getByText(device.id)).toBeDefined();
+    expect(await screen.findByText("Melatonin")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Next track" }));
+    await vi.waitFor(() => expect(sent).toContain('music {"action":"next"}'));
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await vi.waitFor(() => expect(sent).toContain('music {"action":"pause"}'));
+    expect(screen.getByText("60%")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Edit the name of Kitchen" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Alexsay" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(sent).toContain('PATCH {"name":"Alexsay"}'));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(await screen.findByRole("alertdialog")).toBeDefined();
+  });
+
+  it("tells a speaker's page when no music service is connected or nothing plays there", async () => {
+    mockApi({
+      "/api/session/me": json({ username: "maria", role: "user", home: "maria", homeRole: "user" }),
+      "/api/devices": json([device]),
+      "/api/music": json({ connected: false, playing: null }),
+    });
+    renderApp(`/devices/${device.id}`);
+    expect(await screen.findByText(/No music service is connected/)).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Edit the name of Kitchen" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+  });
+
   it("offers to drop in on an online speaker that takes it, after asking, from a browser that can", async () => {
     vi.stubGlobal("AudioContext", class {});
     vi.stubGlobal("WebSocket", class {});
@@ -162,16 +228,18 @@ describe("App", () => {
       "/api/devices": json([{ ...device, firmware: "0.1.4" }, older, offline]),
       "/api/connections": json([]),
     });
-    renderApp();
-    await openSection("Devices");
-    expect(await screen.findByText("Kitchen")).toBeDefined();
-    // The button sits before the name, and only where it would work
-    const row = screen.getByRole("row", { name: /Kitchen/ });
-    const button = within(row).getByRole("button", { name: "Drop in on Kitchen" });
-    expect(row.textContent?.indexOf("Kitchen")).toBeGreaterThan(-1);
-    expect(within(row).getAllByRole("button")[0]).toBe(button);
+    renderApp(`/devices/${older.id}`);
+    // Older software and offline speakers offer no drop-in
+    expect(await screen.findByRole("heading", { name: "Hall" })).toBeDefined();
     expect(screen.queryByRole("button", { name: "Drop in on Hall" })).toBeNull();
+    cleanup();
+    renderApp(`/devices/${offline.id}`);
+    expect(await screen.findByRole("heading", { name: "Shed" })).toBeDefined();
     expect(screen.queryByRole("button", { name: "Drop in on Shed" })).toBeNull();
+    cleanup();
+    renderApp(`/devices/${device.id}`);
+    expect(await screen.findByRole("heading", { name: "Kitchen" })).toBeDefined();
+    const button = screen.getByRole("button", { name: "Drop in on Kitchen" });
 
     fireEvent.click(button);
     const confirm = await screen.findByRole("alertdialog");

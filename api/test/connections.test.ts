@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import { accessToken } from "../src/providers/spotify";
 import { seal } from "../src/secrets";
 import {
   APP,
@@ -7,11 +8,16 @@ import {
   call,
   connectLightwave,
   connectOpenai,
+  connectSpotify,
+  formOf,
   json,
   mockUpstream,
   OPENAI_KEY,
   reply,
   resetDb,
+  SPOTIFY,
+  SPOTIFY_ACCOUNTS,
+  SPOTIFY_CLIENT_ID,
   signIn,
 } from "./helpers";
 
@@ -135,6 +141,115 @@ describe("connections", () => {
     upstream.done();
     expect(refreshes).toBe(2);
     expect(await res.json()).toEqual({ ok: true, structures: 1 });
+  });
+
+  it("saves a Spotify app, signs the account in through OAuth and lists it without secrets", async () => {
+    const saved = await json(
+      `${APP}/api/connections/spotify`,
+      "PUT",
+      { client_id: SPOTIFY_CLIENT_ID, client_secret: "fedcba9876543210fedcba9876543210" },
+      maria,
+    );
+    expect(await saved.json()).toMatchObject({
+      provider: "spotify",
+      settings: { authorized: false },
+      redirect_uri: `${APP}/api/connections/spotify/callback`,
+    });
+    // Left unfollowed: a followed redirect would come back into this Worker as a page request
+    const sent = await call(`${APP}/api/connections/spotify/authorize`, { redirect: "manual" }, maria);
+    expect(sent.status).toBe(302);
+    const location = new URL(sent.headers.get("location") ?? "");
+    expect(location.origin + location.pathname).toBe(`${SPOTIFY_ACCOUNTS}/authorize`);
+    expect(location.searchParams.get("client_id")).toBe(SPOTIFY_CLIENT_ID);
+    expect(location.searchParams.get("redirect_uri")).toBe(`${APP}/api/connections/spotify/callback`);
+    expect(location.searchParams.get("scope")).toContain("user-modify-playback-state");
+    const state = location.searchParams.get("state") ?? "";
+    // A state this home did not make is refused before any code is exchanged
+    const forged = await call(
+      `${APP}/api/connections/spotify/callback?code=code-1&state=${state}x`,
+      { redirect: "manual" },
+      maria,
+    );
+    expect(forged.status).toBe(400);
+    const upstream = mockUpstream({
+      [`POST ${SPOTIFY_ACCOUNTS}/api/token`]: (_req, body) => {
+        expect(formOf(body)).toMatchObject({
+          grant_type: "authorization_code",
+          code: "code-1",
+          redirect_uri: `${APP}/api/connections/spotify/callback`,
+        });
+        return reply(200, { access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600 });
+      },
+      [`GET ${SPOTIFY}/me`]: () =>
+        reply(200, { id: "maria", display_name: "Maria", product: "premium", country: "GB" }),
+    });
+    const back = await call(
+      `${APP}/api/connections/spotify/callback?code=code-1&state=${state}`,
+      { redirect: "manual" },
+      maria,
+    );
+    expect(back.status).toBe(302);
+    expect(back.headers.get("location")).toBe(`${APP}/#spotify`);
+    upstream.done();
+    const listed = (await (await call(`${APP}/api/connections`, {}, maria)).json()) as {
+      provider: string;
+      settings: unknown;
+    }[];
+    expect(listed).toEqual([
+      {
+        provider: "spotify",
+        settings: { authorized: true, account: "Maria", premium: true, market: "GB" },
+        created_at: expect.any(Number),
+        updated_at: expect.any(Number),
+      },
+    ]);
+    const row = await env.DB.prepare("SELECT secret FROM connections WHERE provider = 'spotify'").first<{
+      secret: string;
+    }>();
+    expect(row?.secret).not.toContain("refresh-1");
+    expect(row?.secret).not.toContain(SPOTIFY_CLIENT_ID);
+  });
+
+  it("tests the Spotify account: who signed in and how many devices are open", async () => {
+    await connectSpotify(maria);
+    const upstream = mockUpstream({
+      [`GET ${SPOTIFY}/me`]: () =>
+        reply(200, { id: "maria", display_name: "Maria", product: "premium", country: "GB" }),
+      [`GET ${SPOTIFY}/me/player/devices`]: () =>
+        reply(200, { devices: [{ id: "d1", name: "Kitchen", type: "Speaker", is_active: false, volume_percent: 50 }] }),
+    });
+    const res = await call(`${APP}/api/connections/spotify/test`, { method: "POST" }, maria);
+    expect(await res.json()).toEqual({ ok: true, account: "Maria", premium: true, devices: 1 });
+    upstream.done();
+  });
+
+  it("refreshes an expired Spotify access token and keeps the refresh token unless a new one comes", async () => {
+    const urls = { accounts: SPOTIFY_ACCOUNTS, base: SPOTIFY };
+    const secret = {
+      client_id: "id",
+      client_secret: "secret",
+      refresh_token: "refresh-1",
+      access_token: "old",
+      access_expires_at: 1_000,
+    };
+    const upstream = mockUpstream({
+      [`POST ${SPOTIFY_ACCOUNTS}/api/token`]: (_req, body) => {
+        expect(formOf(body)).toEqual({ grant_type: "refresh_token", refresh_token: "refresh-1" });
+        return reply(200, { access_token: "access-2", expires_in: 3600 });
+      },
+    });
+    const fresh = await accessToken(urls, secret, 2_000_000);
+    expect(fresh).toMatchObject({
+      token: "access-2",
+      refreshed: true,
+      secret: { refresh_token: "refresh-1", access_token: "access-2" },
+    });
+    upstream.done();
+    // Still valid: nothing is fetched
+    expect(await accessToken(urls, fresh.secret, 2_000_000 + 60_000)).toMatchObject({
+      token: "access-2",
+      refreshed: false,
+    });
   });
 
   it("removes a connection", async () => {

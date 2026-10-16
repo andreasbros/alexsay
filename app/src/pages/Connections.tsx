@@ -15,7 +15,14 @@ import {
   type User,
 } from "../api";
 import { ComingSoon } from "../components/ComingSoon";
-import { HelpDialog, LIGHTWAVE_HELP, OPENAI_HELP, OPENAI_SIP_HELP, TWILIO_HELP } from "../components/HelpDialog";
+import {
+  HelpDialog,
+  LIGHTWAVE_HELP,
+  OPENAI_HELP,
+  OPENAI_SIP_HELP,
+  SPOTIFY_HELP,
+  TWILIO_HELP,
+} from "../components/HelpDialog";
 import { Section } from "../components/Section";
 import { ago } from "../format";
 import { toE164 } from "../lib/phone";
@@ -39,6 +46,7 @@ export function ConnectionsSection({ user }: { user: User }) {
           <OpenAiCard connection={byProvider.get("openai")} />
           <LightwaveCard connection={byProvider.get("lightwave")} />
           <TwilioCard connection={byProvider.get("twilio")} />
+          <SpotifyCard connection={byProvider.get("spotify")} />
         </Flex>
       </fieldset>
       <Section id="coming-soon" title="Coming soon">
@@ -100,6 +108,15 @@ function TestResult({ result, provider }: { result: ProviderTest; provider: Prov
     return (
       <Text size="2" color="grass">
         Account {result.account} works: {result.numbers} {result.numbers === 1 ? "number" : "numbers"}.
+      </Text>
+    );
+  }
+  if (provider === "spotify") {
+    return (
+      <Text size="2" color="grass">
+        Signed in as {result.account}
+        {result.premium ? " (Premium)" : " (not Premium: playback cannot be controlled)"}: {result.devices}{" "}
+        {result.devices === 1 ? "device" : "devices"} open.
       </Text>
     );
   }
@@ -365,6 +382,99 @@ function LightwaveCard({ connection }: { connection: Connection | undefined }) {
         </form>
       )}
       {connection && <Lights />}
+    </Section>
+  );
+}
+
+/** The home's own Spotify app (client id and secret), then the account's OAuth sign-in through the server. */
+function SpotifyCard({ connection }: { connection: Connection | undefined }) {
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [editing, setEditing] = useState(false);
+  const save = useSave(() => api.connectSpotify(clientId.trim(), clientSecret.trim()));
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    save.mutate(undefined, {
+      onSuccess: () => {
+        setClientId("");
+        setClientSecret("");
+        setEditing(false);
+      },
+    });
+  };
+  const redirectUri = `${window.location.origin}/api/connections/spotify/callback`;
+  const authorized = connection?.settings.authorized === true;
+  const open = editing || !connection;
+  return (
+    <Section id="spotify" title="Spotify" actions={<Status connection={connection} provider="spotify" />}>
+      <Text size="2" color="gray">
+        Playlists and music on your speakers, or wherever Spotify is open. Needs Spotify Premium and your own Spotify
+        app from developer.spotify.com (free): paste its client id and secret, then sign in with your account.
+      </Text>
+      {connection && !open && (
+        <Flex direction="column" gap="2">
+          {authorized ? (
+            <Text size="2">
+              Signed in as {connection.settings.account}
+              {connection.settings.premium ? " (Premium)." : " (not Premium: Spotify will refuse playback commands)."}
+            </Text>
+          ) : (
+            <Text size="2" color="orange">
+              App saved. Sign in with the Spotify account to finish.
+            </Text>
+          )}
+          <Flex gap="2" wrap="wrap">
+            <Button size="1" asChild>
+              <a href="/api/connections/spotify/authorize">{authorized ? "Sign in again" : "Sign in with Spotify"}</a>
+            </Button>
+            <Button size="1" variant="soft" onClick={() => setEditing(true)}>
+              Replace app credentials
+            </Button>
+          </Flex>
+        </Flex>
+      )}
+      {open && (
+        <form onSubmit={submit}>
+          <Flex direction="column" gap="3">
+            <TextField.Root
+              placeholder="Client ID"
+              aria-label="Spotify client ID"
+              autoComplete="off"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              required
+            />
+            <TextField.Root
+              placeholder="Client secret"
+              aria-label="Spotify client secret"
+              type="password"
+              autoComplete="off"
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value)}
+              required
+            />
+            <Text size="2" color="gray">
+              Redirect URI for the Spotify app: <code>{redirectUri}</code>
+            </Text>
+            {save.error && (
+              <Text size="2" color="red">
+                {errorText(save.error)}
+              </Text>
+            )}
+            <Flex gap="2" justify="end">
+              <HelpDialog {...SPOTIFY_HELP} />
+              {connection && (
+                <Button type="button" variant="soft" color="gray" onClick={() => setEditing(false)}>
+                  Cancel
+                </Button>
+              )}
+              <Button type="submit" loading={save.isPending}>
+                Save
+              </Button>
+            </Flex>
+          </Flex>
+        </form>
+      )}
     </Section>
   );
 }

@@ -1,8 +1,16 @@
 import { connections } from "./db";
 import { accessToken, type LightwaveSecret, type LightwaveUrls } from "./providers/lightwave";
 import { ProviderError } from "./providers/openai";
+import { type SpotifySecret, type SpotifyUrls, accessToken as spotifyAccessToken } from "./providers/spotify";
 import { createApiKey, type TwilioClient, type TwilioSecret } from "./providers/twilio";
-import { type OpenAiSettings, openaiSettings, type TwilioSettings, twilioSettings } from "./schemas";
+import {
+  type OpenAiSettings,
+  openaiSettings,
+  type SpotifySettings,
+  spotifySettings,
+  type TwilioSettings,
+  twilioSettings,
+} from "./schemas";
 import { open, seal } from "./secrets";
 import type { ConnectionRow, Scope } from "./types";
 
@@ -115,4 +123,63 @@ export async function twilioSigningKey(
   const next: TwilioSecret = { ...secret, api_key_sid: key.sid, api_key_secret: key.secret };
   await connections.setSecret(c.env.DB, home, "twilio", await seal(c.env.SECRETS_KEY, next));
   return { account_sid: secret.account_sid, api_key_sid: key.sid, api_key_secret: key.secret };
+}
+
+export function spotifyUrls(c: Scope): SpotifyUrls {
+  return { accounts: c.env.SPOTIFY_ACCOUNTS_URL, base: c.env.SPOTIFY_BASE_URL };
+}
+
+export interface SpotifyConnection {
+  secret: SpotifySecret;
+  settings: SpotifySettings;
+}
+
+/** The home's Spotify app and account state, or null when none was saved. */
+export async function spotifyConnection(c: Scope, home: string): Promise<SpotifyConnection | null> {
+  const row = await connections.get(c.env.DB, home, "spotify");
+  if (!row) {
+    return null;
+  }
+  return {
+    secret: await open<SpotifySecret>(c.env.SECRETS_KEY, row.secret),
+    settings: spotifySettings.parse(JSON.parse(row.settings)),
+  };
+}
+
+/** Whether the music tools exist: a Spotify account has signed in. */
+export async function spotifyReady(c: Scope, home: string): Promise<boolean> {
+  const row = await connections.get(c.env.DB, home, "spotify");
+  return row !== null && spotifySettings.parse(JSON.parse(row.settings)).authorized;
+}
+
+/**
+ * A valid Spotify access token, or null when no account is signed in. A refresh stores the new
+ * tokens first; when two requests race, the loser re-reads what the winner stored.
+ */
+export async function spotifyToken(c: Scope, home: string): Promise<string | null> {
+  const row = await connections.get(c.env.DB, home, "spotify");
+  if (!row) {
+    return null;
+  }
+  const secret = await open<SpotifySecret>(c.env.SECRETS_KEY, row.secret);
+  if (!secret.refresh_token) {
+    return null;
+  }
+  try {
+    return await refreshSpotify(c, home, secret);
+  } catch (err) {
+    const latest = await connections.get(c.env.DB, home, "spotify");
+    if (err instanceof ProviderError && latest && latest.secret !== row.secret) {
+      return refreshSpotify(c, home, await open<SpotifySecret>(c.env.SECRETS_KEY, latest.secret));
+    }
+    throw err;
+  }
+}
+
+async function refreshSpotify(c: Scope, home: string, secret: SpotifySecret): Promise<string> {
+  const result = await spotifyAccessToken(spotifyUrls(c), secret);
+  if (result.refreshed) {
+    await connections.setSecret(c.env.DB, home, "spotify", await seal(c.env.SECRETS_KEY, result.secret));
+  }
+  return result.token;
 }

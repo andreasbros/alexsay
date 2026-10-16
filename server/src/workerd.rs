@@ -76,6 +76,8 @@ const main :Workerd.Worker = (
     (name = "LIGHTWAVE_AUTH_URL", fromEnvironment = "ALEXSAY_LIGHTWAVE_AUTH_URL"),
     (name = "LIGHTWAVE_BASE_URL", fromEnvironment = "ALEXSAY_LIGHTWAVE_BASE_URL"),
     (name = "TWILIO_BASE_URL", fromEnvironment = "ALEXSAY_TWILIO_BASE_URL"),
+    (name = "SPOTIFY_ACCOUNTS_URL", fromEnvironment = "ALEXSAY_SPOTIFY_ACCOUNTS_URL"),
+    (name = "SPOTIFY_BASE_URL", fromEnvironment = "ALEXSAY_SPOTIFY_BASE_URL"),
     (name = "SMTP_HOST", fromEnvironment = "ALEXSAY_SMTP_HOST"),
     (name = "SMTP_PORT", fromEnvironment = "ALEXSAY_SMTP_PORT"),
     (name = "SMTP_USER", fromEnvironment = "ALEXSAY_SMTP_USER"),

@@ -205,3 +205,47 @@ export async function twilioWebhook(path: string, params: Record<string, string>
 }
 
 export const formOf = (body: string) => Object.fromEntries(new URLSearchParams(body));
+
+export const noContent = () => new Response(null, { status: 204 });
+
+export const SPOTIFY_ACCOUNTS = "https://accounts.spotify.com";
+export const SPOTIFY = "https://api.spotify.com/v1";
+export const SPOTIFY_CLIENT_ID = "0123456789abcdef0123456789abcdef";
+const SPOTIFY_CLIENT_SECRET = "fedcba9876543210fedcba9876543210";
+
+/** Saves a Spotify app and signs the account in: the authorize redirect's state comes back with a code. */
+export async function connectSpotify(cookie: string, product = "premium"): Promise<void> {
+  const saved = await json(
+    `${APP}/api/connections/spotify`,
+    "PUT",
+    { client_id: SPOTIFY_CLIENT_ID, client_secret: SPOTIFY_CLIENT_SECRET },
+    cookie,
+  );
+  if (saved.status !== 200) {
+    throw new Error(`saving the Spotify app failed: ${saved.status}`);
+  }
+  const sent = await call(`${APP}/api/connections/spotify/authorize`, { redirect: "manual" }, cookie);
+  const state = new URL(sent.headers.get("location") ?? "").searchParams.get("state") ?? "";
+  const upstream = mockUpstream({
+    [`POST ${SPOTIFY_ACCOUNTS}/api/token`]: (req, body) => {
+      if (req.headers.get("authorization") !== `Basic ${btoa(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`)}`) {
+        return reply(401, { error: "invalid_client" });
+      }
+      const form = formOf(body);
+      if (form.grant_type !== "authorization_code" || form.code !== "code-1") {
+        return reply(400, { error: "invalid_grant" });
+      }
+      return reply(200, { access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600 });
+    },
+    [`GET ${SPOTIFY}/me`]: () => reply(200, { id: "maria", display_name: "Maria", product, country: "GB" }),
+  });
+  const back = await call(
+    `${APP}/api/connections/spotify/callback?code=code-1&state=${state}`,
+    { redirect: "manual" },
+    cookie,
+  );
+  if (back.status !== 302) {
+    throw new Error(`the Spotify callback answered ${back.status}`);
+  }
+  upstream.done();
+}

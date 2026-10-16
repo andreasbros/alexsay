@@ -6,13 +6,18 @@ import {
   lightwaveUrls,
   type OpenAiSecret,
   openaiConnection,
+  spotifyConnection,
+  spotifyToken,
+  spotifyUrls,
   twilioConnection,
 } from "../connections";
 import { connections } from "../db";
+import { logFor } from "../log";
 import { isPublicOrigin, LOCAL_SERVER_NOTE, serverOrigin } from "../origin";
 import { providerFailure } from "../provider_errors";
 import { structureIds } from "../providers/lightwave";
 import { listModels, ProviderError } from "../providers/openai";
+import { authorizeUrl, type SpotifySecret, devices as spotifyDevices, me as spotifyMe } from "../providers/spotify";
 import {
   configureNumber,
   listNumbers,
@@ -25,6 +30,7 @@ import {
 import * as schemas from "../schemas";
 import { twilioSettings } from "../schemas";
 import { open, seal } from "../secrets";
+import { completeLogin, homeOfState, loginState, redirectUri } from "../spotify";
 import { webhooks } from "../telephony";
 import type { AppEnv } from "../types";
 
@@ -127,6 +133,71 @@ export const connectionRoutes = new Hono<AppEnv>()
     const sealed = pasted ? await seal(c.env.SECRETS_KEY, pasted) : (existing?.secret ?? "");
     await connections.put(c.env.DB, home, "twilio", sealed, JSON.stringify(settings));
     return c.json({ provider: "twilio", settings, ...(local ? { local: true, note: LOCAL_SERVER_NOTE } : {}) });
+  })
+  /** The home's own Spotify app: saving the credentials starts over, the account signs in afterwards. */
+  .put("/spotify", async (c) => {
+    const { client_id, client_secret } = await jsonBody(c, schemas.spotifyConnection);
+    const secret: SpotifySecret = { client_id, client_secret };
+    const settings = schemas.spotifySettings.parse({});
+    await connections.put(
+      c.env.DB,
+      c.get("user").home,
+      "spotify",
+      await seal(c.env.SECRETS_KEY, secret),
+      JSON.stringify(settings),
+    );
+    return c.json({ provider: "spotify", settings, redirect_uri: redirectUri(serverOrigin(c)) });
+  })
+  /** Sends the browser to Spotify's sign-in page; it comes back to the callback with a code. */
+  .get("/spotify/authorize", async (c) => {
+    const home = c.get("user").home;
+    const connection = await spotifyConnection(c, home);
+    if (!connection) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    const state = await loginState(c.env, home, Date.now());
+    return c.redirect(authorizeUrl(spotifyUrls(c), connection.secret.client_id, redirectUri(serverOrigin(c)), state));
+  })
+  .get("/spotify/callback", async (c) => {
+    const home = c.get("user").home;
+    const { code, state, error } = c.req.query();
+    const back = `${serverOrigin(c)}/#spotify`;
+    if (error || !code || !state) {
+      await logFor(c, home, "warn", `spotify sign-in did not complete: ${error || "no code"}`);
+      return c.redirect(back);
+    }
+    if ((await homeOfState(c.env, state, Date.now())) !== home) {
+      return c.json({ error: "bad_state" }, 400);
+    }
+    try {
+      const settings = await completeLogin({ env: c.env, origin: serverOrigin(c) }, home, code);
+      await logFor(c, home, "info", `spotify signed in as ${settings.account}${settings.premium ? " (Premium)" : ""}`);
+    } catch (err) {
+      if (err instanceof ProviderError) {
+        await logFor(c, home, "error", `spotify sign-in failed: ${err.status} ${err.detail}`);
+        return c.redirect(back);
+      }
+      throw err;
+    }
+    return c.redirect(back);
+  })
+  .post("/spotify/test", async (c) => {
+    try {
+      const token = await spotifyToken(c, c.get("user").home);
+      if (!token) {
+        return c.json({ error: "not_found" }, 404);
+      }
+      const urls = spotifyUrls(c);
+      const [account, all] = await Promise.all([spotifyMe(urls, token), spotifyDevices(urls, token)]);
+      return c.json({
+        ok: true,
+        account: account.display_name,
+        premium: account.product === "premium",
+        devices: all.length,
+      });
+    } catch (err) {
+      return providerFailure(c, "spotify", err);
+    }
   })
   .post("/openai/test", async (c) => {
     const connection = await openaiConnection(c, c.get("user").home);

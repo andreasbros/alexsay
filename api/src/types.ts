@@ -1,5 +1,5 @@
 export type Role = "admin" | "user";
-export type Provider = "openai" | "lightwave" | "twilio";
+export type Provider = "openai" | "lightwave" | "twilio" | "spotify";
 
 export type HomeRole = "admin" | "user";
 

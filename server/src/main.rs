@@ -139,17 +139,24 @@ fn set(config: &mut Config, key: &str, value: &str) -> anyhow::Result<()> {
         "smtp_port" => config.smtp_port = value.parse().context("smtp_port must be a number")?,
         "smtp_user" => value.trim().clone_into(&mut config.smtp_user),
         "email_from" => value.trim().clone_into(&mut config.email_from),
-        "openai_base_url" | "lightwave_auth_url" | "lightwave_base_url" | "twilio_base_url" => {
+        "openai_base_url"
+        | "lightwave_auth_url"
+        | "lightwave_base_url"
+        | "twilio_base_url"
+        | "spotify_accounts_url"
+        | "spotify_base_url" => {
             let url = value.trim_end_matches('/').to_owned();
             match key {
                 "openai_base_url" => config.openai_base_url = url,
                 "lightwave_auth_url" => config.lightwave_auth_url = url,
                 "lightwave_base_url" => config.lightwave_base_url = url,
+                "spotify_accounts_url" => config.spotify_accounts_url = url,
+                "spotify_base_url" => config.spotify_base_url = url,
                 _ => config.twilio_base_url = url,
             }
         }
         other => anyhow::bail!(
-            "unknown key {other}: host, port, admin_port, public_url, registration, smtp_host, smtp_port, smtp_user, smtp_password, email_from, openai_base_url, lightwave_auth_url, lightwave_base_url or twilio_base_url"
+            "unknown key {other}: host, port, admin_port, public_url, registration, smtp_host, smtp_port, smtp_user, smtp_password, email_from, openai_base_url, lightwave_auth_url, lightwave_base_url, twilio_base_url, spotify_accounts_url or spotify_base_url"
         ),
     }
     Ok(())

@@ -1,4 +1,4 @@
-import { openaiConnection } from "./connections";
+import { openaiConnection, spotifyReady } from "./connections";
 import { connections, conversations, homes, type NewTurn } from "./db";
 import { logFor } from "./log";
 import { contextInstructions, digestConversation, loadContext } from "./memory";
@@ -27,19 +27,20 @@ export async function sessionFor(caller: Caller): Promise<BuiltSession | null> {
   if (!connection) {
     return null;
   }
-  const [hasLights, hasPhone, logAccess, callTest, skillsOn] = await Promise.all([
+  const [hasLights, hasPhone, logAccess, callTest, skillsOn, hasSpotify] = await Promise.all([
     connections.get(env.DB, user.home, "lightwave").then((row) => row !== null),
     connections.get(env.DB, user.home, "twilio").then((row) => row !== null),
     homes.logAccess(env.DB, user.home),
     homes.callTest(env.DB, user.home),
     skills.enabled(env.DB, user.home),
+    spotifyReady({ env }, user.home),
   ]);
   const context = contextInstructions(await loadContext(env.DB, user.home));
   return {
     apiKey: connection.apiKey,
     session: sessionConfig(
       connection.settings,
-      toolDefinitions(hasLights, hasPhone, logAccess, callTest, skillsOn),
+      toolDefinitions(hasLights, hasPhone, logAccess, callTest, skillsOn, hasSpotify),
       context,
     ),
     hasLights,

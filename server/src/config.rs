@@ -27,6 +27,8 @@ pub struct Config {
     pub lightwave_auth_url: String,
     pub lightwave_base_url: String,
     pub twilio_base_url: String,
+    pub spotify_accounts_url: String,
+    pub spotify_base_url: String,
     /// The SMTP relay for sign-in codes and invitations; empty means no email. 465 is TLS from the
     /// start, any other port upgrades with STARTTLS. The password lives in the secrets file.
     pub smtp_host: String,
@@ -48,6 +50,8 @@ impl Default for Config {
             lightwave_auth_url: "https://auth.lightwaverf.com/token".to_owned(),
             lightwave_base_url: "https://publicapi.lightwaverf.com/v1".to_owned(),
             twilio_base_url: "https://api.twilio.com".to_owned(),
+            spotify_accounts_url: "https://accounts.spotify.com".to_owned(),
+            spotify_base_url: "https://api.spotify.com/v1".to_owned(),
             smtp_host: String::new(),
             smtp_port: 465,
             smtp_user: String::new(),
@@ -89,12 +93,14 @@ impl Config {
     }
 
     /// The providers the Worker calls, as (config key, URL).
-    pub fn upstreams(&self) -> [(&'static str, &str); 4] {
+    pub fn upstreams(&self) -> [(&'static str, &str); 6] {
         [
             ("openai_base_url", self.openai_base_url.as_str()),
             ("lightwave_auth_url", self.lightwave_auth_url.as_str()),
             ("lightwave_base_url", self.lightwave_base_url.as_str()),
             ("twilio_base_url", self.twilio_base_url.as_str()),
+            ("spotify_accounts_url", self.spotify_accounts_url.as_str()),
+            ("spotify_base_url", self.spotify_base_url.as_str()),
         ]
     }
 

@@ -4,6 +4,7 @@ import { calls, contacts, conversations, homes, memories, messages } from "./db"
 import { DROP_IN_TOOLS } from "./drop_in_tools";
 import { INCOMING_TOOLS } from "./incoming_tools";
 import { DEFAULT_LOG_LINES, formatLogLine, MAX_LOG_LINES, readLog } from "./log";
+import { MUSIC_TOOLS } from "./music_tools";
 import { normalisePhone } from "./phone";
 import { type Light, lights, writeFeatures } from "./providers/lightwave";
 import type { FunctionTool } from "./providers/openai";
@@ -37,7 +38,7 @@ import { MEMORY_CATEGORIES } from "./types";
 export interface Tool {
   definition: FunctionTool;
   /** Provider tools only make sense once the user connected that provider; the log once the user allowed it. */
-  needs?: "lightwave" | "twilio" | "log" | "test";
+  needs?: "lightwave" | "twilio" | "log" | "test" | "spotify";
   /** Tools of a skill exist only while the user has that skill on. */
   skill?: SkillId;
   run: (c: ToolContext, args: Record<string, unknown>, conversationId: string | null) => Promise<unknown>;
@@ -987,7 +988,7 @@ async function sendTool(c: ToolContext, args: Record<string, unknown>, channel: 
   }));
 }
 
-TOOLS.push(...ALARM_TOOLS, ...DROP_IN_TOOLS, ...INCOMING_TOOLS);
+TOOLS.push(...ALARM_TOOLS, ...DROP_IN_TOOLS, ...INCOMING_TOOLS, ...MUSIC_TOOLS);
 
 export const toolByName = (name: string) => TOOLS.find((t) => t.definition.name === name);
 
@@ -997,8 +998,9 @@ export function toolDefinitions(
   logAccess = false,
   callTest = false,
   skillsOn: ReadonlySet<SkillId> = new Set(),
+  hasSpotify = false,
 ): FunctionTool[] {
-  const available = { lightwave: hasLightwave, twilio: hasTwilio, log: logAccess, test: callTest };
+  const available = { lightwave: hasLightwave, twilio: hasTwilio, log: logAccess, test: callTest, spotify: hasSpotify };
   return TOOLS.filter(
     (t) =>
       (!t.needs || available[t.needs]) && (!t.skill || skillsOn.has(t.skill)) && !AGENT_TOOLS.has(t.definition.name),

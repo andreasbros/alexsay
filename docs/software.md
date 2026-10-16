@@ -148,6 +148,14 @@ Ending a session. GPT-Live has no idle timeout of its own and bills open voice t
 - Home Assistant at `http://127.0.0.1:8123` with a long-lived access token.
 - Tool arguments are validated in `core` before any HTTP call; the model never gets raw HA errors with tokens or URLs in them.
 
+## Music (Spotify, 16 Oct 2026)
+
+| Piece | Where |
+|---|---|
+| Connection | Each home registers its own Spotify app (Development Mode: the owner on Premium, 5 allow-listed users, 25 apps per developer account; Extended Quota needs a company with 250k monthly users). `PUT /api/connections/spotify {client_id, client_secret}` seals the pair and resets the sign-in; `GET /api/connections/spotify/authorize` redirects to `accounts.spotify.com/authorize` with an HMAC-signed `state` (home and 10 min expiry under `SECRETS_KEY`, nothing stored); `GET /api/connections/spotify/callback` checks the state against the session's home, exchanges the code (`api/src/providers/spotify.ts exchangeCode`), reads `/me` and stores `settings {authorized, account, premium, market}`, then sends the browser back to `/#spotify`. Redirect URI `{origin}/api/connections/spotify/callback`, registered word for word in the Spotify app; Spotify allows https or loopback only, so a self-hosted server needs https (a tunnel) for the sign-in. `spotifyToken()` refreshes like Lightwave's and re-seals a rotated refresh token. |
+| Tools (`api/src/music_tools.ts`, `needs: "spotify"`, present once the account signed in) | `list_playlists`; `play_music {query?, kind?, speaker?}`: the user's own playlists by name first, then Spotify search (the asked-for kind, else the first track, or the artist when the whole query is their name), `PUT /me/player/play?device_id=` with a `context_uri` or `uris`; no query resumes (a 404 "no active device" transfers playback to the target first); `pause_music`, `skip_track {direction}`, `now_playing`, `set_music_volume {percent}`. Spotify's PREMIUM_REQUIRED and NO_ACTIVE_DEVICE answers come back as plain sentences. |
+| Where it plays | `targetDevice()` in `api/src/spotify.ts`: the device the user named, else the speaker the tool call came from (a Spotify Connect device with the speaker's name), else Spotify's active device, else the only device; several and no hint: the model asks. The speaker as a Connect device is the daemon's librespot work (next). |
+
 ## Telephony (Twilio)
 
 | Flow | Path |

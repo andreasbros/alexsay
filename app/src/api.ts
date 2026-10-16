@@ -1,5 +1,5 @@
 export type Role = "admin" | "user";
-export type Provider = "openai" | "lightwave" | "twilio";
+export type Provider = "openai" | "lightwave" | "twilio" | "spotify";
 
 export type HomeRole = "admin" | "user";
 
@@ -107,9 +107,17 @@ export interface PhoneNumber {
   status_callback: string;
 }
 
+/** What the Spotify card shows once the account has signed in. */
+export interface SpotifySettings {
+  authorized: boolean;
+  account: string;
+  premium: boolean;
+  market: string;
+}
+
 export interface Connection {
   provider: Provider;
-  settings: Partial<OpenAiSettings> & Partial<TwilioSettings>;
+  settings: Partial<OpenAiSettings> & Partial<TwilioSettings> & Partial<SpotifySettings>;
   created_at: number;
   updated_at: number;
 }
@@ -132,6 +140,8 @@ export interface ProviderTest {
   structures?: number;
   account?: string;
   numbers?: number;
+  premium?: boolean;
+  devices?: number;
   status?: number;
   detail?: string;
 }
@@ -462,6 +472,9 @@ export const api = {
       auth_token: auth_token || undefined,
       settings,
     }),
+  /** The home's own Spotify app; the account signs in afterwards at /api/connections/spotify/authorize. */
+  connectSpotify: (client_id: string, client_secret: string) =>
+    request<Connection & { redirect_uri: string }>("PUT", "/api/connections/spotify", { client_id, client_secret }),
   twilioNumbers: () => request<PhoneNumber[]>("GET", "/api/twilio/numbers"),
   repairNumber: () => request<PhoneNumber>("POST", "/api/twilio/numbers/repair"),
   testConnection: (provider: Provider) => request<ProviderTest>("POST", `/api/connections/${provider}/test`),

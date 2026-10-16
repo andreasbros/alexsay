@@ -136,6 +136,35 @@ export const LIGHTWAVE_HELP = {
     "earlier save or another integration): press Get Token again and paste the new pair.",
 };
 
+export const SPOTIFY_HELP = {
+  title: "Connect Spotify",
+  steps: [
+    {
+      text: (
+        <>
+          You need Spotify Premium: Spotify only lets apps control playback on Premium accounts. Sign in at{" "}
+          {external("https://developer.spotify.com/dashboard", "developer.spotify.com/dashboard")} with that account.
+        </>
+      ),
+    },
+    {
+      text: 'Press "Create app". Give it any name and description, tick "Web API", and under Redirect URIs paste the address shown on the card, exactly as written. Save.',
+    },
+    {
+      text: 'Open the app\'s Settings: copy the Client ID, then "View client secret" and copy that too. Paste both on the card and press Save.',
+    },
+    {
+      text: 'Press "Sign in with Spotify" and allow the access it asks for. You come back here signed in; the card shows the account.',
+    },
+    {
+      text: "Spotify keeps new apps in Development Mode: only accounts you add under the app's User Management (up to five) can sign in. Add everyone in the home who should.",
+    },
+    {
+      text: "Then ask the assistant: play a playlist, a song or an artist, pause, skip, or ask what is playing. It plays on the speaker you are talking to unless you name another device.",
+    },
+  ],
+};
+
 export const TWILIO_HELP = {
   title: "Connect Twilio",
   steps: [

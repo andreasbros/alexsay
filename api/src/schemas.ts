@@ -9,7 +9,7 @@ export const username = z
   .regex(/^[a-z0-9_.-]{2,32}$/, "2 to 32 of a-z, 0-9, _ . -");
 const password = z.string().min(8).max(256);
 export const role = z.enum(["admin", "user"]);
-export const provider = z.enum(["openai", "lightwave", "twilio"]);
+export const provider = z.enum(["openai", "lightwave", "twilio", "spotify"]);
 
 export const deviceId = z.string().trim().toLowerCase().uuid();
 const deviceName = z.string().trim().max(64);
@@ -74,6 +74,27 @@ export const openaiConnection = z.object({
     .optional(),
   settings: openaiSettings.prefault({}),
 });
+
+/** The home's own Spotify app from developer.spotify.com; the account signs in afterwards through OAuth. */
+export const spotifyConnection = z.object({
+  client_id: z
+    .string()
+    .trim()
+    .regex(/^[0-9a-f]{20,40}$/i, "a Spotify client id is 32 hex characters"),
+  client_secret: z
+    .string()
+    .trim()
+    .regex(/^[0-9a-f]{20,40}$/i, "a Spotify client secret is 32 hex characters"),
+});
+
+/** What the card shows: who signed in and whether playback can be controlled (Premium). */
+export const spotifySettings = z.object({
+  authorized: z.boolean().default(false),
+  account: z.string().default(""),
+  premium: z.boolean().default(false),
+  market: z.string().default(""),
+});
+export type SpotifySettings = z.infer<typeof spotifySettings>;
 
 export const lightwaveConnection = z.object({
   basic_token: z.string().trim().min(16).max(512),

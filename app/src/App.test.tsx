@@ -352,14 +352,44 @@ describe("App", () => {
       "/api/connections": json([]),
     });
     renderApp("/");
-    for (const provider of ["OpenAI", "Lightwave", "Twilio"]) {
+    for (const provider of ["OpenAI", "Lightwave", "Twilio", "Spotify"]) {
       await openSection(provider);
     }
     const help = await screen.findAllByRole("button", { name: "Help" });
-    expect(help).toHaveLength(3);
+    expect(help).toHaveLength(4);
     fireEvent.click(help[0] as HTMLElement);
     expect(await screen.findByRole("heading", { name: "Get an OpenAI API key" })).toBeDefined();
     expect(screen.getByText(/Create new secret key/)).toBeDefined();
+  });
+
+  it("walks the Spotify card from saving the app to signing the account in", async () => {
+    const saved: string[] = [];
+    mockApi({
+      "/api/session/me": json({ username: "maria", role: "user", homeRole: "admin" }),
+      "/api/connections": () =>
+        json(
+          saved.length ? [{ provider: "spotify", settings: { authorized: false }, created_at: 1, updated_at: 1 }] : [],
+        )(),
+      "/api/connections/spotify": () => {
+        saved.push("spotify");
+        return json({ provider: "spotify", settings: { authorized: false }, redirect_uri: "x" })();
+      },
+    });
+    renderApp("/");
+    await openSection("Spotify");
+    expect(screen.getByText(/Redirect URI for the Spotify app/).textContent).toContain(
+      "/api/connections/spotify/callback",
+    );
+    fireEvent.change(screen.getByLabelText("Spotify client ID"), {
+      target: { value: "0123456789abcdef0123456789abcdef" },
+    });
+    fireEvent.change(screen.getByLabelText("Spotify client secret"), {
+      target: { value: "fedcba9876543210fedcba9876543210" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const signIn = await screen.findByRole("link", { name: "Sign in with Spotify" });
+    expect(signIn.getAttribute("href")).toBe("/api/connections/spotify/authorize");
+    expect(screen.getByText(/App saved/)).toBeDefined();
   });
 
   it("imports a vCard into the phone book under Memory", async () => {

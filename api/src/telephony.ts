@@ -7,6 +7,7 @@ import {
 } from "./connections";
 import { bridges, type CallRow, calls, contacts, devices, messages } from "./db";
 import { notifyHome } from "./device_channel";
+import { messageFromTranscript } from "./incoming";
 import { liveSeatName } from "./live_seat";
 import { type Locale, localeInstructions } from "./locale";
 import { logFor } from "./log";
@@ -914,7 +915,8 @@ async function incomingBrief(
     ? `${home} is not taking this call themselves. They asked you: ${task}. The caller has heard a greeting and hold ` +
       `music and you have just joined; they are waiting. Introduce yourself at once as Alexsay, ${home}'s assistant, ` +
       `and pass on what ${home} asked. Offer to take a message. When they give one, call take_message with their ` +
-      "words (or a faithful summary that names them and what they want), tell them it will be passed on, say goodbye " +
+      "words (or a faithful summary that names them and what they want) before you tell them it will be passed on: " +
+      "a promise without the tool loses the message. Then say goodbye " +
       `and call end_call. If they do not want to leave one, say goodbye and call end_call. Keep every turn short. ${HANG_UP_RULE}`
     : `${home} answered on their speaker and is talking to the caller. Do not introduce yourself and do not speak ` +
       `first. Stay silent unless ${home} addresses you by name (Alexsay, Aleksey) or asks you something directly ` +
@@ -1056,6 +1058,9 @@ export async function callEnded(c: Scope, home: string, conference: string, by: 
   const first = await calls.recordEnd(c.env.DB, { conference, home_id: home, ended_at: Date.now(), ended_by: by });
   if (first) {
     await logFor(c, home, "info", `call ${conference}: ended by ${by}`);
+    if (await messageFromTranscript(c, home, conference)) {
+      await logFor(c, home, "info", `call ${conference}: the caller's message was kept from the transcript`);
+    }
   }
 }
 

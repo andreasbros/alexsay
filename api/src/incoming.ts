@@ -233,6 +233,7 @@ export async function answerIncoming(
     ...(mode === "speaker" && (await carriesAssistant(place, place.device)) ? { assistant_on_speaker: true } : {}),
   };
   const connection = await ready(place, home);
+  await calls.setAnsweredBy(place.env.DB, caller.sid ?? "", mode);
   if (mode === "assistant") {
     await seatAssistant(place, home, conference, brief, true);
     await cancelOtherRinging(place, home, conference, null);
@@ -264,6 +265,53 @@ export async function answerIncoming(
     host: mode,
     caller: callerLabel(brief.incoming?.name ? { name: brief.incoming.name } : null, caller.phone),
   };
+}
+
+/** What a caller says that is no message of its own: greetings, agreement, goodbyes. */
+const SMALL_TALK =
+  /^[\s\p{P}]*(hello|hi|hey|yes|yeah|yep|no|ok|okay|sure|thanks|thank you|bye|goodbye|take care|see you|cheers)[\s\p{P}]*$/iu;
+
+/**
+ * A call the assistant took alone ended without `take_message`: GPT-Live's speech layer can say "I'll
+ * pass that on" without running the tool (16 Oct 2026), so whatever the caller said after the assistant
+ * first spoke becomes the message, and the home still hears it. Nothing is kept when a message was taken
+ * or the caller left none.
+ */
+export async function messageFromTranscript(scope: Scope, home: string, conference: string): Promise<boolean> {
+  const legs = await calls.legs(scope.env.DB, conference);
+  const caller = legs.find((l) => l.direction === "in" && l.role === "guest");
+  if (caller?.answered_by !== "assistant") {
+    return false;
+  }
+  if (await notifications.byRef(scope.env.DB, home, conference)) {
+    return false;
+  }
+  const turns = await calls.turns(scope.env.DB, conference, 400);
+  const opened = turns.findIndex((t) => t.speaker === "assistant");
+  const said = (opened < 0 ? [] : turns.slice(opened + 1))
+    .filter((t) => t.speaker === "line" && !SMALL_TALK.test(t.text))
+    .map((t) => t.text.trim())
+    .join(" ")
+    .slice(0, 1000);
+  if (!said) {
+    return false;
+  }
+  const who = parseCaller(caller);
+  const label = callerLabel(who.name ? { name: who.name } : null, who.phone);
+  await notify(
+    scope,
+    home,
+    {
+      kind: "note",
+      contact_id: who.contact_id,
+      phone: who.phone,
+      title: `Message from ${label}`,
+      body: said,
+      ref: conference,
+    },
+    `Message from ${label}: ${said}`,
+  );
+  return true;
 }
 
 /** The caller as the incoming leg's brief recorded them. */

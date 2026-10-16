@@ -184,10 +184,7 @@ impl Server {
     /// Takes a ringing call: on this speaker, or the assistant alone with the user's instruction.
     /// The server's refusal (answered elsewhere, over) comes back as `{"error", "detail"}` text.
     pub async fn answer_call(&self, conference: &str, instruction: Option<&str>) -> String {
-        let body = serde_json::json!({
-            "mode": if instruction.is_some() { "assistant" } else { "speaker" },
-            "instruction": instruction,
-        });
+        let body = answer_body(instruction);
         let url = format!("{}/v1/device/calls/{conference}/answer", self.base);
         let result: anyhow::Result<Value> = async {
             let res = self
@@ -283,5 +280,28 @@ impl Server {
             );
         }
         res.json().await.context("decoding the server's reply")
+    }
+}
+
+/// The answer request: the speaker takes the call, or the assistant does what the user said. No
+/// instruction means no key at all, not a null the server would refuse (16 Oct 2026).
+fn answer_body(instruction: Option<&str>) -> Value {
+    match instruction {
+        Some(text) => serde_json::json!({ "mode": "assistant", "instruction": text }),
+        None => serde_json::json!({ "mode": "speaker" }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::answer_body;
+
+    #[test]
+    fn an_answer_without_instruction_carries_no_instruction_key() {
+        assert_eq!(answer_body(None), serde_json::json!({ "mode": "speaker" }));
+        assert_eq!(
+            answer_body(Some("take a message")),
+            serde_json::json!({ "mode": "assistant", "instruction": "take a message" })
+        );
     }
 }

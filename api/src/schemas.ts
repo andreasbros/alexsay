@@ -197,7 +197,12 @@ export type TwilioSettings = z.infer<typeof twilioSettings>;
 /** A speaker answering an incoming call: itself, or the assistant alone with what to say and do. */
 export const answerCall = z.object({
   mode: z.enum(["speaker", "assistant"]).default("speaker"),
-  instruction: z.string().trim().max(500).optional(),
+  instruction: z
+    .string()
+    .trim()
+    .max(500)
+    .nullish()
+    .transform((text) => text || undefined),
 });
 
 /** Empty credentials keep the stored pair, so the number and settings can change on their own. */

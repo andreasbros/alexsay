@@ -252,7 +252,7 @@ describe("incoming calls and messages", () => {
     const answered = await call(`${APP}/v1/device/calls/${conference}/answer`, {
       method: "POST",
       headers: device,
-      body: JSON.stringify({ mode: "speaker" }),
+      body: JSON.stringify({ mode: "speaker", instruction: null }),
     });
     expect(answered.status).toBe(200);
     expect(await answered.json()).toEqual({ conference, host: "speaker", caller: "Mum" });
@@ -351,6 +351,61 @@ describe("incoming calls and messages", () => {
     // Hanging up ends the assistant's own seat, since it hosts this conference
     expect(await tool(maria, "end_call", {})).toMatchObject({ ok: true, conference });
     expect(completed.at(-1)).toBe("CA-p3");
+    // The message was taken on the call, so nothing more is made of the transcript
+    await expect(line.next(300)).rejects.toThrow("no message");
+    upstream.done();
+  });
+
+  it("keeps the caller's message from the transcript when the assistant hung up without taking it", async () => {
+    await connectTwilio(maria);
+    await connectOpenaiForCalls(maria);
+    const line = await openLine();
+    let seats = 0;
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: () => {
+        seats += 1;
+        return reply(201, { call_sid: `CA-s${seats}`, status: "ringing" });
+      },
+      [`POST ${TWILIO}/Calls/*`]: () => reply(200, {}),
+    });
+    const twiml = await (await ring()).text();
+    const conference = /<Conference[^>]*>(in-[a-z0-9]+)<\/Conference>/.exec(twiml)?.[1] ?? "";
+    await line.next();
+    const answered = await call(`${APP}/v1/device/calls/${conference}/answer`, {
+      method: "POST",
+      headers: device,
+      body: JSON.stringify({ mode: "assistant", instruction: "take a message" }),
+    });
+    expect(answered.status).toBe(200);
+    expect(await line.next()).toEqual({ type: "call.incoming.cancel", conference });
+    await env.DB.prepare("UPDATE calls SET status = 'in-progress' WHERE conference = ? AND role = 'assistant'")
+      .bind(conference)
+      .run();
+    // GPT-Live's speech layer promised to pass the message on without calling take_message (16 Oct 2026)
+    const said: [string, string][] = [
+      ["line", "Hello"],
+      ["assistant", "Hello, I'm Aleksey, Andreas's assistant. Would you like to leave a message?"],
+      ["line", "Ah yes, tell him to call me back"],
+      ["assistant", "Sure, I'll pass that on. Take care."],
+      ["line", "Bye"],
+    ];
+    for (const [i, [speaker, text]] of said.entries()) {
+      await env.DB.prepare("INSERT INTO call_turns (conference, at, speaker, text) VALUES (?, ?, ?, ?)")
+        .bind(conference, Date.now() + i, speaker, text)
+        .run();
+    }
+    expect(await tool(maria, "end_call", {})).toMatchObject({ ok: true, conference });
+    expect(await line.next()).toMatchObject({
+      type: "notify",
+      kind: "note",
+      say: "Message from Mum: Ah yes, tell him to call me back",
+    });
+    const listed = (await (await call(`${APP}/api/notifications`, {}, maria)).json()) as {
+      notifications: { kind: string; title: string; body: string }[];
+    };
+    expect(listed.notifications).toMatchObject([
+      { kind: "note", title: "Message from Mum", body: "Ah yes, tell him to call me back" },
+    ]);
     upstream.done();
   });
 

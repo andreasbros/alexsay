@@ -859,6 +859,12 @@ export const notifications = {
         .all<NotificationRow>()
     ).results,
 
+  byRef: (db: D1Database, home: string, ref: string) =>
+    db
+      .prepare("SELECT * FROM notifications WHERE home_id = ? AND ref = ? LIMIT 1")
+      .bind(home, ref)
+      .first<NotificationRow>(),
+
   unread: async (db: D1Database, home: string) =>
     (
       await db

@@ -34,7 +34,7 @@ test("bad Lightwave tokens are refused when saved", async ({ page, account }) =>
   await page.getByLabel("Lightwave refresh token").fill("e2e-refresh-token-0123456789");
   await page.locator("#section-lightwave").getByRole("button", { name: "Save" }).click();
   await expect(page.getByText(/Lightwave refused the tokens/)).toBeVisible();
-  await expect(page.getByText("not connected")).toHaveCount(3);
+  await expect(page.getByText("not connected")).toHaveCount(4);
 });
 
 test("bad Twilio credentials are refused when saved", async ({ page, account }) => {
@@ -45,7 +45,7 @@ test("bad Twilio credentials are refused when saved", async ({ page, account }) 
   await page.getByLabel("Twilio auth token").fill("00000000000000000000000000000000");
   await page.locator("#section-twilio").getByRole("button", { name: "Save" }).click();
   await expect(page.getByText(/Twilio refused the credentials/)).toBeVisible();
-  await expect(page.getByText("not connected")).toHaveCount(3);
+  await expect(page.getByText("not connected")).toHaveCount(4);
 });
 
 test("each connection has a Help dialog with the steps to get its keys", async ({ page, account }) => {

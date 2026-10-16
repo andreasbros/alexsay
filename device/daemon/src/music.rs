@@ -180,10 +180,17 @@ async fn session(
             }
             event = events.recv() => {
                 let Some(event) = event else { break };
+                // Logged on each change, so a sound card dropping off USB can be set against music load
                 match event {
-                    PlayerEvent::Playing { .. } => runtime.call.music_playing.store(true, Ordering::Relaxed),
+                    PlayerEvent::Playing { track_id, position_ms, .. } => {
+                        if !runtime.call.music_playing.swap(true, Ordering::Relaxed) {
+                            info!(%track_id, position_ms, "music: playing");
+                        }
+                    }
                     PlayerEvent::Paused { .. } | PlayerEvent::Stopped { .. } | PlayerEvent::EndOfTrack { .. } => {
-                        runtime.call.music_playing.store(false, Ordering::Relaxed);
+                        if runtime.call.music_playing.swap(false, Ordering::Relaxed) {
+                            info!("music: stopped");
+                        }
                     }
                     _ => {}
                 }

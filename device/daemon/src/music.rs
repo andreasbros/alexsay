@@ -180,20 +180,7 @@ async fn session(
             }
             event = events.recv() => {
                 let Some(event) = event else { break };
-                // Logged on each change, so a sound card dropping off USB can be set against music load
-                match event {
-                    PlayerEvent::Playing { track_id, position_ms, .. } => {
-                        if !runtime.call.music_playing.swap(true, Ordering::Relaxed) {
-                            info!(%track_id, position_ms, "music: playing");
-                        }
-                    }
-                    PlayerEvent::Paused { .. } | PlayerEvent::Stopped { .. } | PlayerEvent::EndOfTrack { .. } => {
-                        if runtime.call.music_playing.swap(false, Ordering::Relaxed) {
-                            info!("music: stopped");
-                        }
-                    }
-                    _ => {}
-                }
+                note_player_event(&runtime.call.music_playing, &event);
             }
             _ = follow.tick() => {
                 // A phone call pauses the music and resumes it afterwards; a drop-in only ducks it
@@ -249,6 +236,27 @@ async fn discover(device_id: &str, name: &str) -> anyhow::Result<Credentials> {
     discovery.shutdown().await;
     info!("music: Spotify handed over the account's credentials");
     Ok(credentials)
+}
+
+/// Keeps `music_playing` and logs each change, so a sound card dropping off USB can be set against music load.
+fn note_player_event(playing: &std::sync::atomic::AtomicBool, event: &PlayerEvent) {
+    match event {
+        PlayerEvent::Playing {
+            track_id,
+            position_ms,
+            ..
+        } if !playing.swap(true, Ordering::Relaxed) => {
+            info!(%track_id, position_ms, "music: playing");
+        }
+        PlayerEvent::Paused { .. }
+        | PlayerEvent::Stopped { .. }
+        | PlayerEvent::EndOfTrack { .. }
+            if playing.swap(false, Ordering::Relaxed) =>
+        {
+            info!("music: stopped");
+        }
+        _ => {}
+    }
 }
 
 /// Ducks the music under a conversation or an alarm and silences it during a phone call.

@@ -706,7 +706,7 @@ async fn listen_loop(runtime: Arc<Runtime>) -> anyhow::Result<()> {
                 let detection = engine.feed(&chunk);
                 listening.add(&chunk, engine.as_ref());
                 if listening.due() {
-                    listening.report();
+                    listening.report(&runtime);
                 }
                 let Some(detection) = detection else {
                     continue;
@@ -867,7 +867,13 @@ struct Listening {
     loudest: f32,
     best_score: f32,
     gain: f32,
+    /// The minute's loudest moment and when the minute began, for the health line at info.
+    minute_loudest: f32,
+    minute_started: Option<Instant>,
 }
+
+/// How often the listening loop writes its health line at info level.
+const HEALTH_EVERY: Duration = Duration::from_secs(60);
 
 impl Listening {
     fn add(&mut self, chunk: &[i16], engine: &dyn WakeEngine) {
@@ -881,15 +887,56 @@ impl Listening {
         self.samples >= LIVE_RATE as usize
     }
 
-    fn report(&mut self) {
+    fn report(&mut self, runtime: &Runtime) {
         tracing::debug!(
             mic = format!("{:.1}%", self.loudest * 100.0),
             gain = format!("{:.1}", self.gain),
             best_score = format!("{:.2}", self.best_score),
             "listening"
         );
+        self.minute_loudest = self.minute_loudest.max(self.loudest);
+        let started = *self.minute_started.get_or_insert_with(Instant::now);
+        if started.elapsed() >= HEALTH_EVERY {
+            // One line a minute that a sound card dropping off USB can be read against (16 Oct 2026)
+            let (temp_c, throttled) = board_health();
+            info!(
+                mic_peak = format!("{:.1}%", self.minute_loudest * 100.0),
+                queued_ms = runtime.player.queued_ms(),
+                music_playing = runtime.call.music_playing.load(Ordering::Relaxed),
+                on_call = runtime.call.on_call(),
+                volume = volume_percent(runtime.player.volume()),
+                temp_c = temp_c.map(|t| format!("{t:.1}")).unwrap_or_default(),
+                throttled = throttled.unwrap_or_default(),
+                "health"
+            );
+            self.minute_loudest = 0.0;
+            self.minute_started = Some(Instant::now());
+        }
+        let keep = (self.minute_loudest, self.minute_started);
         *self = Self::default();
+        (self.minute_loudest, self.minute_started) = keep;
     }
+}
+
+/// The board's temperature and the Pi firmware's throttle flags (`vcgencmd get_throttled`, where it
+/// exists); both empty elsewhere. Under-voltage or throttling on the USB host is one way a sound card
+/// drops off the bus.
+fn board_health() -> (Option<f32>, Option<String>) {
+    let temp_c = std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp")
+        .ok()
+        .and_then(|text| text.trim().parse::<f32>().ok())
+        .map(|milli| milli / 1000.0);
+    let throttled = std::process::Command::new("vcgencmd")
+        .arg("get_throttled")
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .replace("throttled=", "")
+        });
+    (temp_c, throttled)
 }
 
 /// A pause between reply audio deltas longer than this, with nothing queued, is heard as a break.

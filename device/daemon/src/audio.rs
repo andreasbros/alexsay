@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alexsay_core::config::Audio;
 use alexsay_core::pcm::{self, LIVE_RATE};
@@ -208,7 +208,33 @@ impl Capture {
         let (tx, rx) = tokio::sync::mpsc::channel::<Vec<i16>>(64);
         std::thread::spawn(move || {
             let capture = self;
-            while let Ok(chunk) = capture.chunks.recv() {
+            let mut stalled_since: Option<Instant> = None;
+            loop {
+                let chunk = match capture.chunks.recv_timeout(CAPTURE_STALL_WARN) {
+                    Ok(chunk) => chunk,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        let since = *stalled_since.get_or_insert_with(Instant::now);
+                        let stalled = since.elapsed() + CAPTURE_STALL_WARN;
+                        tracing::warn!(
+                            seconds = stalled.as_secs(),
+                            "capture: the sound card has delivered no audio (a stall came 40 s before it left USB, 16 Oct 2026)"
+                        );
+                        if stalled >= CAPTURE_STALL_EXIT {
+                            tracing::error!(
+                                "capture stalled too long: exiting so the service restarts"
+                            );
+                            std::process::exit(EXIT_SOUND_CARD_LOST);
+                        }
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                };
+                if let Some(since) = stalled_since.take() {
+                    tracing::info!(
+                        seconds = since.elapsed().as_secs(),
+                        "capture: audio resumed"
+                    );
+                }
                 let mut chunk = injection.replace(chunk);
                 if muted.load(Ordering::Relaxed) {
                     chunk.fill(0);
@@ -280,6 +306,11 @@ where
         }
     }
 }
+
+/// How long the capture may go without a single chunk before it is logged, and before the process
+/// gives up on the card (the Flex's capture froze about 40 s before it re-enumerated, 16 Oct 2026).
+const CAPTURE_STALL_WARN: Duration = Duration::from_secs(2);
+const CAPTURE_STALL_EXIT: Duration = Duration::from_secs(12);
 
 /// A stream's error callback. A sound card that left (the Flex re-enumerating on USB, 16 Oct 2026)
 /// takes both streams with it and nothing here can reopen them, so the process ends and the service

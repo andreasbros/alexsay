@@ -57,7 +57,7 @@ export async function completeLogin(
   const settings = spotifySettings.parse({
     authorized: true,
     account: account.display_name,
-    premium: account.product === "premium",
+    premium: account.product.startsWith("premium"),
     market: account.country,
   });
   await connections.put(

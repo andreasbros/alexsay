@@ -27,7 +27,8 @@ export const SCOPES = [
   "user-read-playback-state",
   "user-modify-playback-state",
   "user-read-currently-playing",
-  "streaming",
+  // `/me` only carries `product` (the plan) with this scope; without it every account looks free
+  "user-read-private",
 ];
 
 export interface SpotifyAccount {

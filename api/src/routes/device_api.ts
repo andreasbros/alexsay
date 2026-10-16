@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { alarmsForDevice, recordEvents } from "../alarms";
 import { addTurns, endConversation, runToolFor, sessionFor, startConversation } from "../assistant_api";
-import { openaiConnection, spotifyToken, twilioConnection } from "../connections";
+import { openaiConnection, twilioConnection } from "../connections";
 import { devices, homes } from "../db";
 import { answerIncoming } from "../incoming";
 import { serverOrigin } from "../origin";
@@ -84,15 +84,6 @@ export const deviceApiRoutes = new Hono<AppEnv>()
   .use("/alarms", requireClaimedDevice)
   .use("/alarms/*", requireClaimedDevice)
   .use("/calls/*", requireClaimedDevice)
-  .use("/spotify/*", requireClaimedDevice)
-  /** A Spotify access token for the speaker's own Spotify Connect client (librespot), while the home's account is signed in. */
-  .get("/spotify/token", async (c) => {
-    const token = await spotifyToken(c, c.get("user").home);
-    if (!token) {
-      return c.json({ error: "no_spotify" }, 404);
-    }
-    return c.json({ access_token: token });
-  })
   /** The speaker takes an incoming call: itself, or the assistant alone with the user's instruction. */
   .post("/calls/:conference/answer", async (c) => {
     const conference = parse(schemas.conferenceName, c.req.param("conference"));

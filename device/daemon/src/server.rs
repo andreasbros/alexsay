@@ -94,24 +94,6 @@ impl Server {
         Self::decode(res).await
     }
 
-    /// A Spotify access token for the speaker's own Spotify Connect client; None until the home's
-    /// account has signed in under Connections.
-    pub async fn spotify_token(&self) -> anyhow::Result<Option<String>> {
-        let url = format!("{}/v1/device/spotify/token", self.base);
-        let res = self
-            .http
-            .get(&url)
-            .header(DEVICE_ID_HEADER, self.id.to_string())
-            .send()
-            .await
-            .with_context(|| format!("GET {url}"))?;
-        if res.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        let token: SpotifyToken = Self::decode(res).await?;
-        Ok(Some(token.access_token))
-    }
-
     /// 412 means the owner has not connected `OpenAI` yet; that is reported as such, not as a failure.
     pub async fn session(&self) -> anyhow::Result<Option<DeviceSession>> {
         let url = format!("{}/v1/device/session", self.base);
@@ -306,12 +288,6 @@ impl Server {
         }
         res.json().await.context("decoding the server's reply")
     }
-}
-
-/// What the server hands the speaker's Spotify client to sign in with.
-#[derive(Deserialize)]
-struct SpotifyToken {
-    access_token: String,
 }
 
 /// The answer request: the speaker takes the call, or the assistant does what the user said. No

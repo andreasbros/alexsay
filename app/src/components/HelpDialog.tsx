@@ -162,6 +162,9 @@ export const SPOTIFY_HELP = {
       text: "Spotify keeps new apps in Development Mode: only accounts you add under the app's User Management (up to five) can sign in. Add everyone in the home who should.",
     },
     {
+      text: "Once, with your phone on the same Wi-Fi as the speaker: open Spotify, play anything, open the Devices list and pick the speaker by its name. Spotify signs the speaker in and it remembers; from then on it is in your Devices list wherever you are.",
+    },
+    {
       text: "Then ask the assistant: play a playlist, a song or an artist, pause, skip, or ask what is playing. It plays on the speaker you are talking to unless you name another device.",
     },
   ],

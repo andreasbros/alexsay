@@ -7,11 +7,13 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::Context;
+use futures_util::StreamExt;
 use librespot_connect::{ConnectConfig, Spirc};
 use librespot_core::authentication::Credentials;
 use librespot_core::cache::Cache;
 use librespot_core::config::DeviceType;
 use librespot_core::{Session, SessionConfig};
+use librespot_discovery::Discovery;
 use librespot_playback::audio_backend::{Sink, SinkError, SinkResult};
 use librespot_playback::config::PlayerConfig;
 use librespot_playback::convert::Converter;
@@ -85,9 +87,10 @@ impl Sink for LaneSink {
     }
 }
 
-/// Keeps the speaker on Spotify Connect for as long as the home's account is signed in; tries
-/// again a minute after any failure. Stored credentials carry over restarts, so the server's token
-/// is only needed the first time and whenever they stop working.
+/// Keeps the speaker on Spotify Connect. Until someone has picked it in the Spotify app once, it
+/// advertises itself on the local network (zeroconf, as every Connect speaker does) and signs in
+/// with the credentials the app hands over; those are stored, so later starts sign in on their own.
+/// Tries again a minute after any failure.
 pub async fn run(runtime: Arc<Runtime>) {
     let Some(lane) = runtime.player.take_music_lane() else {
         warn!("music: the player's music lane was already taken");
@@ -110,32 +113,21 @@ async fn session(
     lane: &Arc<std::sync::Mutex<Option<HeapProd<f32>>>>,
 ) -> anyhow::Result<()> {
     let cache_dir = runtime.paths.cache_dir().join("spotify");
-    std::fs::create_dir_all(&cache_dir)
-        .with_context(|| format!("creating {}", cache_dir.display()))?;
-    let cache = Cache::new(
-        Some(cache_dir.join("credentials.json")),
-        Some(cache_dir.join("volume")),
-        None,
-        None,
-    )
-    .context("opening the Spotify cache")?;
-    // Stored credentials outlive the hourly token; the token is for the first sign-in and after a reset
-    let credentials = if let Some(stored) = cache.credentials() {
-        stored
-    } else {
-        let Some(token) = runtime.server.spotify_token().await? else {
-            anyhow::bail!("Spotify is not connected for this home yet");
-        };
-        Credentials::with_access_token(token)
+    let cache = Cache::new(Some(&cache_dir), Some(&cache_dir), None, None)
+        .context("opening the Spotify cache")?;
+    let name = runtime
+        .speaker_name()
+        .unwrap_or_else(|| "Alexsay".to_owned());
+    let stored = cache.credentials().is_some();
+    let credentials = match cache.credentials() {
+        Some(credentials) => credentials,
+        None => discover(&runtime.id.to_string(), &name).await?,
     };
     let config = SessionConfig {
         device_id: runtime.id.to_string(),
         ..SessionConfig::default()
     };
     let session = Session::new(config, Some(cache));
-    let name = runtime
-        .speaker_name()
-        .unwrap_or_else(|| "Alexsay".to_owned());
     let connect = ConnectConfig {
         name: name.clone(),
         device_type: DeviceType::Speaker,
@@ -161,9 +153,17 @@ async fn session(
         },
     );
     let mut events = player.get_player_event_channel();
-    let (spirc, task) = Spirc::new(connect, session.clone(), credentials, player, mixer)
-        .await
-        .map_err(|err| anyhow::anyhow!("Spotify Connect refused the sign-in: {err}"))?;
+    let (spirc, task) = match Spirc::new(connect, session.clone(), credentials, player, mixer).await
+    {
+        Ok(started) => started,
+        Err(err) => {
+            if stored {
+                // Stale stored credentials (password changed, access revoked): ask the app again
+                let _ = std::fs::remove_file(cache_dir.join("credentials.json"));
+            }
+            anyhow::bail!("Spotify Connect refused the sign-in: {err}");
+        }
+    };
     info!(%name, "music: on Spotify Connect");
     let mut spirc_task = tokio::spawn(task);
     let mut on_call = runtime.call.on_call();
@@ -207,6 +207,24 @@ async fn session(
     }
     // The sink is gone with the player: the next session needs the lane back
     anyhow::bail!("the Spotify Connect session ended")
+}
+
+/// Advertises the speaker on the local network and waits for the Spotify app to pick it.
+async fn discover(device_id: &str, name: &str) -> anyhow::Result<Credentials> {
+    let mut discovery =
+        Discovery::builder(device_id.to_owned(), SessionConfig::default().client_id)
+            .name(name.to_owned())
+            .device_type(DeviceType::Speaker)
+            .launch()
+            .context("advertising the speaker to Spotify on the local network")?;
+    info!(%name, "music: waiting for someone to pick the speaker in Spotify's device list");
+    let credentials = discovery
+        .next()
+        .await
+        .context("the Spotify discovery service stopped")?;
+    discovery.shutdown().await;
+    info!("music: Spotify handed over the account's credentials");
+    Ok(credentials)
 }
 
 /// Ducks the music under a conversation or an alarm and silences it during a phone call.

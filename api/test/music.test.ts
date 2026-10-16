@@ -200,14 +200,6 @@ describe("music through Spotify", () => {
     ).toEqual({ n: 2 });
   });
 
-  it("hands a claimed speaker an access token for its own Spotify client", async () => {
-    expect((await call(`${APP}/v1/device/spotify/token`, { headers: device })).status).toBe(404);
-    await connectSpotify(maria);
-    const res = await call(`${APP}/v1/device/spotify/token`, { headers: device });
-    expect(await res.json()).toEqual({ access_token: "access-1" });
-    expect((await call(`${APP}/v1/device/spotify/token`, { headers: { "x-device-id": "nope" } })).status).toBe(400);
-  });
-
   it("is not connected until the account signed in", async () => {
     await json(
       `${APP}/api/connections/spotify`,

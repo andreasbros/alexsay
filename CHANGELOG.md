@@ -4,8 +4,23 @@ All notable changes to alexsay. The format follows
 [Keep a Changelog](https://keepachangelog.com), versions follow
 [SemVer](https://semver.org).
 
+## [0.1.9] - 2026-10-16
+
+
+### Changes
+
+- Record the Flex 48 kHz test: playback full-band, capture mirrored, master at -20 dB (f469f915)
+- The home's own app, OAuth sign-in and the assistant's music tools (98ffa456)
+- Four connection cards now (f2db39aa)
+- Sound controls per speaker: volume slider and microphone mute from the app (e177bc21)
+- The speaker as a Spotify Connect device (66b0d772)
+
 ## [0.1.8] - 2026-10-16
 
+
+### Internal
+
+- V0.1.8 (7d337adf)
 
 ### Changes
 

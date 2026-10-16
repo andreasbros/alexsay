@@ -160,6 +160,7 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 
 ## Gotchas already discovered
 
+- The Flex runs **`c48k2ch` since 16 Oct 2026** (flashed over ssh from the running USB image, no Safe Mode): playback is full-band (10, 14, 17 kHz tones heard in the room), capture is a 16 kHz pipeline upsampled with mirror images, so the Flex's mics cannot measure the speaker above 8 kHz. Its mono master mixer control `PCM,1` was at -20 dB from the start (40/60); 60/60 was far too loud, it sits at 50/60 (-10 dB) now and nothing persists it yet: the daemon should set it at startup. Music is back on the roadmap (Spotify); the daemon's player still runs a 16 kHz ring upsampled to the card and needs a 48 kHz lane for music.
 - The Flex with XIAO ships with **I2S firmware**: it does not appear as a sound card. Safe Mode = hold **Boot** while powering on, then `sudo dfu-util -l` shows `2886:801c` "reSpeaker XVF3800 Safe Mode"; after `just flex-flash c16k6ch` it runs as `2886:001e` (USB card `C16K6Ch`; flashed 13 Oct 2026). I2S firmware only accepts I2C DFU, so Safe Mode is the only USB route.
 - Flash through the **XMOS USB-C port next to the RST button**, not the XIAO's USB-C.
 - Seeed's firmware comes from its GitHub release (`just flex-flash`); GitHub "save as" on a source-tree `.bin` corrupts it.
@@ -178,7 +179,7 @@ When results come in, update `docs/measurements.md` and add an entry to `docs/de
 - [ ] On arrival: `f3` the SD card; flash Raspberry Pi OS Lite 64-bit; check `vcgencmd get_throttled` is `0x0`.
 - [ ] Reflash the Flex (`just flex-flash c16k6ch <user>@<pi-host>`); capture all 6 channels.
 - [ ] Inspect the Flex speaker connector against the JST cables; otherwise solder to the pad.
-- [ ] Bench test: playback, AEC residual (ch1 vs raw), io48 vs io16 playback bandwidth (10 kHz tone).
+- [x] Bench test: io48 playback bandwidth (16 Oct 2026: full-band). Still to do: AEC residual on the 48 kHz image.
 - [ ] Measure: XVF3800 + amp current at 5 V, XIAO idle draw, Pi temperature under HA + daemon with the fan held off.
 - [ ] Record wake-word positives/negatives on the device (`alexsay wake record`) and retrain; evaluate openWakeWord via tract if rustpotter's false-accept rate on "Alexa" is too high.
 - [x] Scaffold the repo: Nix flake, justfile, Rust workspace (`core` host-tested, `daemon`), systemd unit. HA compose file still to do.

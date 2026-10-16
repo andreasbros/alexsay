@@ -66,6 +66,14 @@ Each row is an estimate or target from [device-design.md](device-design.md) or [
 
 - Shipped at 0.5. The models listen only in the 3 s after "Alexsay" while something rings, so a near-miss costs a wrong snooze at worst; a miss rings again.
 
+## Flex 48 kHz image: playback bandwidth and capture (16 Oct 2026)
+
+- Flashed `c48k2ch` over ssh from the running `c16k6ch` image (no Safe Mode needed); the Pi sees a 48 kHz, 2-channel card for playback and capture, and the daemon opened it unchanged (`audio open ... rate=48000 channels=2`).
+- Test file: six tones (1, 4, 7, 10, 14, 17 kHz, 2 s each, numbered by 1 kHz beeps) and a 20 s log sweep, played with `aplay` on the Pi while `arecord` took the Flex's own channels.
+- Heard in the room at full level: every tone, the 14 and 17 kHz ones as hiss (normal for adult ears). **The output path is full-band at 48 kHz**: music is possible on this image.
+- The Flex's capture is not: the recording mirrors everything below 8 kHz around 8 and 16 kHz at equal level (1 kHz also at 15 and 17 kHz, 4 kHz at 12 kHz, 7 kHz at 9 kHz, 10 kHz at 6 and 22 kHz). The chip runs its microphone pipeline at 16 kHz and upsamples without an image filter, so the Flex's mics cannot judge the speaker above 8 kHz and the 48 kHz capture carries no more than the 16 kHz one. Speech to GPT-Live stays 16 kHz; a measurement of the speaker needs a phone or an external mic.
+- The card's second playback control (`PCM,1`, the mono master) was at 40/60 = -20 dB since first use, with `PCM,0` at 0 dB: everything the speaker ever played was 20 dB down, which is why announcements sounded loud only in comparison and the live voice quiet. 60/60 was far too loud in the room; left at 50/60 = -10 dB. Not persisted yet (a replug or flash may reset it): the daemon should set it at startup.
+
 ## Latency
 
 | Test | How | Target | Result | Date |

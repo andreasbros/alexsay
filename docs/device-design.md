@@ -51,10 +51,10 @@ The Flex runs one of Seeed's geometry-specific USB images (`respeaker_flex_usb_<
 | Image | Rate | Channels in | Use |
 |---|---|---|---|
 | `c16k6ch` | 16 kHz | 6 (processed stereo, 4 raw) | **Bring-up**, wake-word data capture, AEC debugging |
-| `c48k2ch` | 48 kHz | 2 (processed stereo) | **Production candidate**: if playback is genuinely 48 kHz, run GPT-Live at 24 kHz and the speaker gets its full 24 kHz-sampled voice (up to ~11 kHz) and music becomes possible again |
+| `c48k2ch` | 48 kHz | 2 (processed stereo) | **In use since 16 Oct 2026**: playback measured full-band to 17 kHz in the room, so music is possible; capture stays a 16 kHz pipeline inside the chip (upsampled with images), so the microphone side gains nothing |
 | `c16k2ch` | 16 kHz | 2 | Fallback |
 
-The XVF3800's echo canceller works at 16 kHz internally either way, so the 48 kHz image changes playback fidelity, not AEC. Test: play a 10 kHz tone with each image; audible on io48 and silent on io16 means full-band.
+The XVF3800's echo canceller works at 16 kHz internally either way, so the 48 kHz image changes playback fidelity, not AEC. Tested 16 Oct 2026: 10, 14 and 17 kHz tones audible on `c48k2ch` (measurements.md). The card has two playback controls; the mono master `PCM,1` shipped at -20 dB.
 
 ## Acoustics
 

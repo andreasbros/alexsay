@@ -113,3 +113,9 @@ Newest last. Each entry: what was decided, why, what was rejected.
 - **Codes:** HMAC-SHA256 under the server's secret instead of the plain SHA-256 used in sxreels (6 digits are trivial to brute-force from a leaked hash); guesses are not reset by a new code.
 - **Rejected:** several homes per person with a switcher (asked: one home), per-person data inside a shared home (asked: everything shared), Cloudflare's `send_email` binding (a second code path next to SMTP for self-hosting).
 
+## 2026-10-16: Flex runs the 48 kHz image
+
+- **Decision:** the speaker runs Seeed's `c48k2ch` image from now on; music playback is back on the roadmap (Spotify first), with the daemon's playback path to move to 48 kHz.
+- **Why:** the room test showed the output full-band to 17 kHz (measurements.md), so the 16 kHz image was the only thing capping the speaker at 8 kHz. Capture is 16 kHz inside the chip on both images, so nothing is lost on the microphone side.
+- **Cost:** the 4 raw microphone channels of `c16k6ch` are gone (only the wake-word recordings used them, and they are done). The daemon still upsamples its 16 kHz speech to the card; music needs a native 48 kHz lane in the player.
+- **Also:** the Flex's mono master control sat at -20 dB since the first flash; the daemon should own that control.

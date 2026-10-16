@@ -37,7 +37,10 @@ test("the admin sees every speaker with its owner", async ({ page, deviceId }) =
   await user.dispose();
   await login(page, env.admin());
   await openSection(page, "Devices");
-  await page.getByRole("row", { name: /Owned by user/ }).getByRole("link", { name: "Owned by user" }).click();
+  await page
+    .getByRole("row", { name: /Owned by user/ })
+    .getByRole("link", { name: "Owned by user" })
+    .click();
   await expect(page.getByRole("heading", { name: "Owned by user" })).toBeVisible();
   await expect(page.getByText(env.user().username)).toBeVisible();
 });
@@ -45,7 +48,10 @@ test("the admin sees every speaker with its owner", async ({ page, deviceId }) =
 test("the owner removes a speaker, which is then unclaimed", async ({ page, deviceId, account, request }) => {
   await login(page, account);
   await addDevice(page, deviceId, "Spare room");
-  await page.getByRole("row", { name: /Spare room/ }).getByRole("link", { name: "Spare room" }).click();
+  await page
+    .getByRole("row", { name: /Spare room/ })
+    .getByRole("link", { name: "Spare room" })
+    .click();
   await expect(page.getByRole("heading", { name: "Spare room" })).toBeVisible();
   await page.getByRole("button", { name: "Remove" }).click();
   const removed = page.waitForResponse((r) => r.request().method() === "DELETE" && r.url().includes("/api/devices/"));

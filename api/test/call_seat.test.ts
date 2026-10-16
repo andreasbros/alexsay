@@ -221,6 +221,55 @@ describe.each<Engine>(["live", "realtime"])("the assistant on calls (%s engine)"
   });
 });
 
+describe("the GPT-Live seat taking an incoming call alone", () => {
+  let maria: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    await addUser("maria", "maria-pass", "user");
+    maria = await signIn("maria", "maria-pass");
+    await heartbeat(DEVICE_ID, { firmware: "0.2.0" });
+    await json(`${APP}/api/devices`, "POST", { id: DEVICE_ID, name: "Kitchen" }, maria);
+    await json(`${APP}/api/contacts`, "POST", { name: "Mum", phone: MUM, label: "mobile" }, maria);
+    await connectTwilio(maria);
+    await json(
+      `${APP}/api/connections/openai`,
+      "PUT",
+      { api_key: "sk-test-0123456789abcdefghijklmnop", settings: { call_engine: "live" } },
+      maria,
+    );
+  });
+
+  it("greets the waiting caller as soon as its session is up, without waiting for a hello", async () => {
+    const live = fakeLive();
+    const upstream = mockUpstream({
+      [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: "CA-app", status: "ringing" }),
+      [`POST ${TWILIO}/Calls.json`]: () => reply(201, { sid: "CA-self", status: "queued" }),
+      [`POST ${TWILIO}/Calls/*`]: () => reply(200, {}),
+      [LIVE_URL]: live.route,
+    });
+    const rang = await twilioWebhook("/v1/twilio/voice", { To: TWILIO_NUMBER, From: MUM, CallSid: "CA-in" });
+    const conference = /<Conference[^>]*>(in-[a-z0-9]+)<\/Conference>/.exec(await rang.text())?.[1] ?? "";
+    const answered = await call(`${APP}/v1/device/calls/${conference}/answer`, {
+      method: "POST",
+      headers: { "x-device-id": DEVICE_ID },
+      body: JSON.stringify({ mode: "assistant", instruction: "take a message" }),
+    });
+    expect(answered.status).toBe(200);
+    const bridge = await env.DB.prepare("SELECT token FROM bridges").first<{ token: string }>();
+    await twilioWebhook("/v1/twilio/voice", { To: TWILIO_NUMBER, From: TWILIO_NUMBER, CallSid: "CA-i" });
+    const twilio = await openStream(bridge?.token ?? "");
+    twilio.send({ event: "start", start: { streamSid: "MZ-seat" } });
+    const session = await live.session();
+    const started = await session.next();
+    expect(started.type).toBe("session.start");
+    expect((started.session as { instructions: string }).instructions).toContain("They asked you: take a message");
+    session.send({ type: "session.started" });
+    expect(await session.next()).toEqual({ type: "response.create" });
+    upstream.done();
+  });
+});
+
 describe("the GPT-Live seat's bridge", () => {
   let maria: string;
 
@@ -294,6 +343,8 @@ describe("the GPT-Live seat's bridge", () => {
     expect(tools).toContain("end_call");
     expect(tools).not.toContain("end_conversation");
 
+    // Someone else answered and is talking: the seat does not open the conversation itself
+    session.send({ type: "session.started" });
     // Five 20 ms frames from the line become one 100 ms append of the same G.711 bytes
     for (let i = 0; i < 5; i += 1) {
       twilio.send({ event: "media", media: { track: "inbound", payload: QUIET_FRAME } });

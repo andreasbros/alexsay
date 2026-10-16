@@ -837,6 +837,18 @@ export function agentBrief(agent: TestAgent, home: string, where: Locale): strin
   ].join("\n\n");
 }
 
+/**
+ * Whether the assistant's seat opens the conversation instead of waiting to be spoken to: a call it
+ * took alone has a caller waiting on hold for it, and a call to the user's own number has only them.
+ * On 16 Oct 2026 a delegated seat sat silent until the caller said "hello".
+ */
+export function seatSpeaksFirst(legs: CallRow[]): boolean {
+  if (legs.some((l) => l.direction === "in" && l.role === "guest" && l.answered_by === "assistant")) {
+    return true;
+  }
+  return legs.some((l) => l.role === "host" && parseBrief(l.brief)?.alone === true);
+}
+
 const parseBrief = (text: string | null): HostBrief | null => {
   if (!text) {
     return null;

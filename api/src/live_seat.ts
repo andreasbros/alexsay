@@ -7,7 +7,7 @@ import { logFor } from "./log";
 import { base64ToBytes, bytesToBase64 } from "./mulaw";
 import { liveCallSession, liveSocketUrl } from "./providers/openai";
 import { skills } from "./skills";
-import { agentBrief, endCall, notOnCalls, parseAgent } from "./telephony";
+import { agentBrief, endCall, notOnCalls, parseAgent, seatSpeaksFirst } from "./telephony";
 import { agentToolDefinitions, toolDefinitions } from "./tools";
 import { actingFor, type CallRow, type CallSpeaker, type ToolContext } from "./types";
 
@@ -67,6 +67,8 @@ export class LiveSeat extends DurableObject<Env> {
   private start: SeatStart | null = null;
   private leg: CallRow | null = null;
   private agent = false;
+  /** The seat greets as soon as the session is up: a test agent, or a caller waiting for it alone. */
+  private speaksFirst = false;
   private pending: Uint8Array[] = [];
   private heard = { line: "", assistant: "" };
   private closed = false;
@@ -186,6 +188,7 @@ export class LiveSeat extends DurableObject<Env> {
       this.leg = leg;
       const agent = leg.role === "guest" ? parseAgent(leg.brief) : null;
       this.agent = agent !== null;
+      this.speaksFirst = this.agent || seatSpeaksFirst(await calls.legs(this.env.DB, start.conference));
       let session: Record<string, unknown>;
       if (agent) {
         const where = await homes.locale(this.env.DB, leg.home_id);
@@ -255,6 +258,10 @@ export class LiveSeat extends DurableObject<Env> {
             "info",
             `call ${this.start?.conference}: GPT-Live session ready ${Date.now() - this.streamStartedAt} ms after the stream started`,
           );
+        }
+        // GPT-Live speaks when spoken to; whoever is waiting for the seat must not have to say hello first
+        if (this.speaksFirst) {
+          this.toLive({ type: "response.create" });
         }
         break;
       case "session.output_audio.delta":

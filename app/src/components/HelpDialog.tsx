@@ -142,13 +142,15 @@ export const SPOTIFY_HELP = {
     {
       text: (
         <>
-          You need Spotify Premium: Spotify only lets apps control playback on Premium accounts. Sign in at{" "}
-          {external("https://developer.spotify.com/dashboard", "developer.spotify.com/dashboard")} with that account.
+          You need Spotify Premium on your own account (since February 2026 Spotify opens its developer dashboard to
+          Premium subscribers only; a member account on a Family or Duo plan does not count, use the plan manager's).
+          Sign in at {external("https://developer.spotify.com/dashboard", "developer.spotify.com/dashboard")} with that
+          account and accept the Developer Terms when asked.
         </>
       ),
     },
     {
-      text: 'Press "Create app". Give it any name and description, tick "Web API", and under Redirect URIs paste the address shown on the card, exactly as written. Save.',
+      text: 'Press "Create app". Give it any name and description, tick "Web API", and under Redirect URIs paste the address shown on the card, exactly as written. Save. No "Create app" and an app already listed? Spotify allows one app per account now: open that app instead and add the redirect URI to it.',
     },
     {
       text: 'Open the app\'s Settings: copy the Client ID, then "View client secret" and copy that too. Paste both on the card and press Save.',

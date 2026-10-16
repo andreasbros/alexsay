@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { type TwilioConnection, twilioFromRow } from "../connections";
 import { bridges, calls, connections, contacts, devices, messages } from "../db";
-import { allowed, callerLabel, incomingCall, notify } from "../incoming";
+import { allowed, callerLabel, incomingCall, notify, stillRinging } from "../incoming";
 import { liveSeatName } from "../live_seat";
 import { logFor } from "../log";
 import { serverOrigin } from "../origin";
@@ -267,6 +267,15 @@ export const twilioConferenceRoute = new Hono<AppEnv>().post("/conference", asyn
     await calls.setLeft(c.env.DB, leg.sid, Date.now());
   }
   if (event === "conference-end") {
+    if (stillRinging(legs)) {
+      await logFor(
+        place,
+        first.home_id,
+        "info",
+        `call ${conference}: a ringing leg left before the caller joined; the home keeps ringing`,
+      );
+      return c.body(null, 204);
+    }
     await calls.endConference(c.env.DB, conference);
     const after = await calls.legs(c.env.DB, conference);
     // A caller who gave up while the home was still ringing: the mobile, the app and the speakers stop

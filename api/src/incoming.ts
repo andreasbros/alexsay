@@ -283,6 +283,20 @@ export function parseCaller(leg: CallRow): CallerInfo {
  * The scheduler's handler 40 s after a call came in: still nobody on it, the caller hears the
  * unanswered message and the home is told of the missed call.
  */
+/**
+ * Whether the home is still ringing for an incoming call: the caller has not left the greeting and
+ * joined the conference, and nobody has answered. A conference instance ending in that state is a
+ * ringing leg that failed at once (the app not open), not the end of the call: Twilio makes a new
+ * instance under the same name when the caller joins, so the speakers must keep ringing.
+ */
+export function stillRinging(legs: CallRow[], now = Date.now()): boolean {
+  const caller = legs.find((l) => l.direction === "in" && l.role === "guest");
+  if (!caller || caller.status === "in-progress" || !isLiveLeg(caller, now)) {
+    return false;
+  }
+  return !legs.some((l) => (l.role === "host" || l.role === "assistant") && l.status === "in-progress");
+}
+
 export async function unansweredCall(scope: Scope, job: JobRow): Promise<void> {
   const payload = JSON.parse(job.payload) as { conference?: string; sid?: string; home?: string };
   const { conference, sid } = payload;

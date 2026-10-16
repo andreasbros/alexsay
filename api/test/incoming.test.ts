@@ -49,7 +49,10 @@ class Line {
     }
     const nothing = new Error("no message");
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(nothing), timeoutMs);
+      const timer = setTimeout(() => {
+        this.waiting = null;
+        reject(nothing);
+      }, timeoutMs);
       this.waiting = (m) => {
         clearTimeout(timer);
         resolve(m);
@@ -356,7 +359,6 @@ describe("incoming calls and messages", () => {
     let redirected: string | null = null;
     const upstream = mockUpstream({
       [`POST ${TWILIO}/Conferences/*`]: () => reply(201, { call_sid: "CA-app", status: "ringing" }),
-      [`GET ${TWILIO}/Calls/CA-in.json`]: () => reply(200, { status: "in-progress", duration: null }),
       [`POST ${TWILIO}/Calls/*`]: (req, body) => {
         if (req.url.endsWith("CA-in.json")) {
           redirected = formOf(body).Twiml ?? null;
@@ -364,18 +366,32 @@ describe("incoming calls and messages", () => {
         return reply(200, {});
       },
     });
+    const line = await openLine();
     const twiml = await (await ring()).text();
     const conference = /<Conference[^>]*>(in-[a-z0-9]+)<\/Conference>/.exec(twiml)?.[1] ?? "";
-    // The app is not open: its leg drops at once and Twilio ends that conference instance before the caller joins
+    expect(await line.next()).toMatchObject({ type: "call.incoming", conference });
+    // The app is not open: its leg drops at once and Twilio ends that conference instance before the caller
+    // joins (seen 16 Oct 2026: the speaker's ring was withdrawn a second after it began)
+    await twilioWebhook("/v1/twilio/conference", {
+      FriendlyName: conference,
+      StatusCallbackEvent: "participant-leave",
+      CallSid: "CA-app",
+    });
     await twilioWebhook("/v1/twilio/conference", {
       FriendlyName: conference,
       StatusCallbackEvent: "conference-end",
     });
     expect(await env.DB.prepare("SELECT status FROM calls WHERE sid = 'CA-in'").first()).toEqual({
-      status: "completed",
+      status: "ringing",
     });
+    // The speaker keeps ringing: nothing is withdrawn and the call is not reported ended
+    await expect(line.next(300)).rejects.toThrow("no message");
+    expect(
+      await env.DB.prepare("SELECT count(*) AS n FROM call_reports WHERE conference = ?").bind(conference).first(),
+    ).toEqual({ n: 0 });
     expect(await runDue({ env }, "maria", Date.now() + RING_MS + 1_000)).toBe(1);
     expect(redirected).toContain("try again later");
+    expect(await line.next()).toMatchObject({ type: "call.incoming.cancel", conference });
     upstream.done();
   });
 

@@ -48,11 +48,11 @@ export const twilioWebhookRoutes = new Hono<AppEnv>()
     const place = { env: c.env, origin: serverOrigin(c) };
     // The number calling itself is a speaker's host leg: answer with the stream to that speaker
     if (bareNumber(from) === bareNumber(params.To ?? "")) {
-      const bridge = await bridges.pending(c.env.DB, owner.home, Date.now() - BRIDGE_WINDOW_MS);
+      const now = Date.now();
+      const bridge = await bridges.claim(c.env.DB, owner.home, now - BRIDGE_WINDOW_MS, now);
       if (!bridge) {
         return xml(c, rejectTwiml("No speaker is waiting for this call.", owner.connection.settings.voice));
       }
-      await bridges.use(c.env.DB, bridge.token, Date.now());
       if (bridge.device_id.startsWith(LIVE_BRIDGE_PREFIX)) {
         // A GPT-Live seat: the stream carries the conference to the seat object, nothing else to start
         await logFor(place, owner.home, "info", `call ${bridge.conference}: streaming to the GPT-Live seat`);

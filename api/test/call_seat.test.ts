@@ -120,7 +120,8 @@ describe.each<Engine>(["live", "realtime"])("the assistant on calls (%s engine)"
   });
 
   /** Where the seat went: a self-call for GPT-Live, a SIP participant for the Realtime API. */
-  function seatCapture() {
+  function seatCapture(answerSelfCalls = false) {
+    const streams: string[] = [];
     const participants: Record<string, string>[] = [];
     const selfCalls: Record<string, string>[] = [];
     const upstream = mockUpstream({
@@ -130,14 +131,24 @@ describe.each<Engine>(["live", "realtime"])("the assistant on calls (%s engine)"
       },
       ...(engine === "live"
         ? {
-            [`POST ${TWILIO}/Calls.json`]: (_req: Request, body: string) => {
-              selfCalls.push(formOf(body));
+            [`POST ${TWILIO}/Calls.json`]: async (_req: Request, body: string) => {
+              const form = formOf(body);
+              selfCalls.push(form);
+              if (answerSelfCalls && form.To === form.From) {
+                // Twilio delivers the self-call: its inbound side comes asking for the stream
+                const inbound = await twilioWebhook("/v1/twilio/voice", {
+                  To: TWILIO_NUMBER,
+                  From: TWILIO_NUMBER,
+                  CallSid: `CA-i${selfCalls.length}`,
+                });
+                streams.push(await inbound.text());
+              }
               return reply(201, { sid: `CA-self${selfCalls.length}`, status: "queued" });
             },
           }
         : {}),
     });
-    return { participants, selfCalls, upstream };
+    return { participants, selfCalls, streams, upstream };
   }
 
   it("seats the assistant once the host is on a call it placed, as a self-call or over SIP", async () => {
@@ -176,7 +187,7 @@ describe.each<Engine>(["live", "realtime"])("the assistant on calls (%s engine)"
 
   it("dials a scripted test agent the same way, with its own part", async () => {
     await json(`${APP}/api/session/settings`, "PATCH", { ai_call_test: true }, maria);
-    const { participants, selfCalls, upstream } = seatCapture();
+    const { participants, selfCalls, streams, upstream } = seatCapture(true);
     const placed = (await toolAs(maria, "call_test", {
       role: "a dentist's receptionist",
       scenario: "fully booked",
@@ -186,14 +197,27 @@ describe.each<Engine>(["live", "realtime"])("the assistant on calls (%s engine)"
     };
     expect(placed.pending).toEqual(["a test agent playing a dentist's receptionist"]);
     await twilioWebhook("/v1/twilio/status", { CallSid: "CA-p1", CallStatus: "in-progress" });
-    const agentLeg = await env.DB.prepare("SELECT brief, sid FROM calls WHERE conference = ? AND role = 'guest'")
+    const agentLeg = await env.DB.prepare("SELECT brief FROM calls WHERE conference = ? AND role = 'guest'")
       .bind(placed.conference)
-      .first<{ brief: string; sid: string }>();
+      .first<{ brief: string }>();
     expect(JSON.parse(agentLeg?.brief ?? "{}")).toMatchObject({ role: "a dentist's receptionist" });
     if (engine === "live") {
-      // The agent and the assistant are both self-calls into the conference
-      expect(selfCalls).toHaveLength(2);
-      expect(agentLeg?.sid).toMatch(/^CA-self/);
+      // The agent and the assistant are both self-calls into the conference, one in flight at a time
+      await vi.waitFor(() => expect(selfCalls).toHaveLength(2));
+      await vi.waitFor(async () => {
+        const leg = await env.DB.prepare("SELECT sid FROM calls WHERE conference = ? AND role = 'guest'")
+          .bind(placed.conference)
+          .first<{ sid: string }>();
+        expect(leg?.sid).toMatch(/^CA-self/);
+      });
+      // Each inbound side streams to its own seat: two bridges, claimed one each, none left waiting
+      await vi.waitFor(() => expect(streams).toHaveLength(2));
+      const tokens = streams.map((twiml) => /stream\/([^"]+)"/.exec(twiml)?.[1]);
+      expect(new Set(tokens).size).toBe(2);
+      const waiting = await env.DB.prepare("SELECT COUNT(*) AS n FROM bridges WHERE used_at IS NULL").first<{
+        n: number;
+      }>();
+      expect(waiting?.n).toBe(0);
     } else {
       expect(participants.find((p) => (p.To ?? "").includes("X-Alexsay-Agent"))).toBeDefined();
     }

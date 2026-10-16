@@ -188,6 +188,28 @@ export const streamUrl = (place: Place, token: string) =>
   `${place.origin.replace(/^http/, "ws")}/v1/twilio/stream/${token}`;
 /** A bridge Twilio has not called back for within this long is dead. */
 export const BRIDGE_WINDOW_MS = 90_000;
+/** How long a self-call waits for the previous one's inbound side to arrive before going anyway. */
+const BRIDGE_LANE_MS = 2_500;
+
+/**
+ * Registers a bridge for a self-call. Twilio's inbound side of the number calling itself carries
+ * nothing that names the bridge, so bridges are matched in arrival order and only one of a home's
+ * self-calls is in flight at a time; after the wait, it goes anyway rather than lose the call.
+ */
+async function openBridge(
+  db: D1Database,
+  row: { token: string; home_id: string; device_id: string; conference: string },
+): Promise<void> {
+  const deadline = Date.now() + BRIDGE_LANE_MS;
+  while (Date.now() < deadline) {
+    const now = Date.now();
+    if (await bridges.createIfLaneFree(db, { ...row, at: now }, now - BRIDGE_WINDOW_MS)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  await bridges.create(db, { ...row, at: Date.now() });
+}
 
 /** The URLs a Twilio number is pointed at, derived from the request so local and live differ naturally. */
 export function webhooks(origin: string): Webhooks {
@@ -395,7 +417,7 @@ export async function ringSpeaker(c: Place & { device?: string }, home: string, 
     throw new TelephonyError("speaker_offline", "the speaker's phone line is not up (is it running and claimed?)");
   }
   const token = crypto.randomUUID();
-  await bridges.create(c.env.DB, { token, home_id: home, device_id: device, conference, at: Date.now() });
+  await openBridge(c.env.DB, { token, home_id: home, device_id: device, conference });
   try {
     return await createCall(connection.client, {
       to: connection.from,
@@ -564,13 +586,7 @@ async function selfCallSeat(
   host: boolean,
 ): Promise<Sent> {
   const token = crypto.randomUUID();
-  await bridges.create(place.env.DB, {
-    token,
-    home_id: home,
-    device_id: `${LIVE_BRIDGE_PREFIX}${legId}`,
-    conference,
-    at: Date.now(),
-  });
+  await openBridge(place.env.DB, { token, home_id: home, device_id: `${LIVE_BRIDGE_PREFIX}${legId}`, conference });
   let leg: Sent;
   try {
     leg = await createCall(connection.client, {

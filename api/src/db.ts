@@ -819,17 +819,35 @@ export const bridges = {
   get: (db: D1Database, token: string) =>
     db.prepare("SELECT * FROM bridges WHERE token = ?").bind(token).first<BridgeRow>(),
 
-  /** The newest bridge of a user that Twilio has not called back for yet. */
-  pending: (db: D1Database, home: string, since: number) =>
+  /**
+   * Inserts the bridge only while no other bridge of the home is waiting for its self-call: the number
+   * calling itself is told apart from the next such call by arrival order alone, so one is in flight
+   * at a time (16 Oct 2026: a test agent and the assistant dialled together both streamed into one seat).
+   */
+  createIfLaneFree: async (
+    db: D1Database,
+    row: { token: string; home_id: string; device_id: string; conference: string; at: number },
+    since: number,
+  ): Promise<boolean> => {
+    const result = await db
+      .prepare(
+        "INSERT INTO bridges (token, home_id, device_id, conference, created_at) SELECT ?, ?, ?, ?, ? " +
+          "WHERE NOT EXISTS (SELECT 1 FROM bridges WHERE home_id = ? AND used_at IS NULL AND created_at > ?)",
+      )
+      .bind(row.token, row.home_id, row.device_id, row.conference, row.at, row.home_id, since)
+      .run();
+    return result.meta.changes > 0;
+  },
+
+  /** Takes the oldest bridge of the home still waiting for Twilio's call back, marking it used in the same statement. */
+  claim: (db: D1Database, home: string, since: number, at: number) =>
     db
       .prepare(
-        "SELECT * FROM bridges WHERE home_id = ? AND used_at IS NULL AND created_at > ? ORDER BY created_at DESC LIMIT 1",
+        "UPDATE bridges SET used_at = ? WHERE token = (SELECT token FROM bridges WHERE home_id = ? AND used_at IS NULL " +
+          "AND created_at > ? ORDER BY created_at ASC LIMIT 1) RETURNING *",
       )
-      .bind(home, since)
+      .bind(at, home, since)
       .first<BridgeRow>(),
-
-  use: (db: D1Database, token: string, at: number) =>
-    db.prepare("UPDATE bridges SET used_at = ? WHERE token = ?").bind(at, token).run(),
 
   remove: (db: D1Database, token: string) => db.prepare("DELETE FROM bridges WHERE token = ?").bind(token).run(),
 

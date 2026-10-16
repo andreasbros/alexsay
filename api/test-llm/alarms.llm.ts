@@ -118,6 +118,15 @@ const localClock = (ms: number) => {
   return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
 };
 
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** A named day that is never today or tomorrow, so "on Friday" cannot mean a time already passed (16 Oct 2026). */
+const DAY_AFTER_TOMORROW = (() => {
+  const p = localParts(Date.now() + 2 * 86_400_000, TZ);
+  const index = new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay();
+  return { index, name: WEEKDAYS[index] ?? "Monday" };
+})();
+
 describe.skipIf(!KEY)("the model sets alarms through our tools", () => {
   let maria: string;
 
@@ -140,7 +149,11 @@ describe.skipIf(!KEY)("the model sets alarms through our tools", () => {
   const oneOff: [string, () => number, string][] = [
     ["Set an alarm for 9pm", () => nextLocal("21:00"), "alarm"],
     ["Wake me up at 6:45 in the morning", () => nextLocal("06:45"), "alarm"],
-    ["Set an alarm for ten past seven this Friday", () => nextLocal("07:10", [5]), "alarm"],
+    [
+      `Set an alarm for ten past seven in the morning on ${DAY_AFTER_TOMORROW.name}`,
+      () => nextLocal("07:10", [DAY_AFTER_TOMORROW.index]),
+      "alarm",
+    ],
     [
       "Alarm for half past eight tomorrow morning",
       () => nextLocal("08:30") + (localClock(Date.now()) < "08:30" ? 86_400_000 : 0),

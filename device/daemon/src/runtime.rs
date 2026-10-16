@@ -280,6 +280,7 @@ impl Runtime {
                 }
             }
         });
+        crate::audio::set_flex_master();
         if runtime.config.sounds.startup {
             runtime.play_clip(sounds::STARTUP);
         }

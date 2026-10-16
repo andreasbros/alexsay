@@ -63,6 +63,7 @@ name = "alexsay-daemon"
 version = "0.1.10"
 dependencies = [
  "alexsay-core",
+ "alsa",
  "anyhow",
  "base64 0.23.1",
  "clap",

@@ -104,6 +104,40 @@ fn matches(device: &cpal::Device, wanted: &str) -> bool {
         .contains(&wanted.to_lowercase())
 }
 
+/// The Flex's hardware master (`PCM,1`, steps 0 to 60 for -60 to 0 dB) comes up at -20 dB after every
+/// power-up and USB re-enumeration (16 Oct 2026); 0 dB was far too loud in the room, so startup sets
+/// -10 dB and the app's volume slider works below that.
+#[cfg(all(feature = "flex", target_os = "linux"))]
+pub fn set_flex_master() {
+    const STEP: i64 = 50;
+    let Some(card) = alsa::card::Iter::new()
+        .flatten()
+        .find(|card| card.get_name().is_ok_and(|name| name.contains("XVF3800")))
+    else {
+        tracing::warn!("Flex master: no XVF3800 sound card found");
+        return;
+    };
+    let hw = format!("hw:{}", card.get_index());
+    let mixer = match alsa::Mixer::new(&hw, false) {
+        Ok(mixer) => mixer,
+        Err(err) => {
+            tracing::warn!("Flex master: opening {hw}: {err}");
+            return;
+        }
+    };
+    let Some(master) = mixer.find_selem(&alsa::mixer::SelemId::new("PCM", 1)) else {
+        tracing::warn!("Flex master: {hw} has no PCM,1 control");
+        return;
+    };
+    match master.set_playback_volume_all(STEP) {
+        Ok(()) => tracing::info!(card = %hw, step = STEP, "Flex master set to -10 dB"),
+        Err(err) => tracing::warn!("Flex master: {err}"),
+    }
+}
+
+#[cfg(not(all(feature = "flex", target_os = "linux")))]
+pub fn set_flex_master() {}
+
 /// Names the Seeed `ReSpeaker` Flex carries on USB; preferred automatically when built for it.
 #[cfg(feature = "flex")]
 const PREFERRED_INPUT: &[&str] = &["XVF3800", "ReSpeaker", "respeaker", "Flex"];
@@ -247,6 +281,20 @@ where
     }
 }
 
+/// A stream's error callback. A sound card that left (the Flex re-enumerating on USB, 16 Oct 2026)
+/// takes both streams with it and nothing here can reopen them, so the process ends and the service
+/// manager starts it again with the card back; any other error is only logged.
+fn stream_failed(side: &str, err: &cpal::Error) {
+    tracing::warn!("{side} stream: {err}");
+    if matches!(err.kind(), cpal::ErrorKind::DeviceNotAvailable) {
+        tracing::error!("the sound card is gone: exiting so the service restarts with it");
+        std::process::exit(EXIT_SOUND_CARD_LOST);
+    }
+}
+
+/// The exit status when the sound card disappeared; the service unit restarts on any status.
+pub const EXIT_SOUND_CARD_LOST: i32 = 3;
+
 /// Opens the input in the device's own sample format, with a fresh ring for this attempt.
 fn open_input(
     device: &cpal::Device,
@@ -257,7 +305,7 @@ fn open_input(
     let capacity = config.sample_rate as usize * usize::from(config.channels) * CAPTURE_RING_S;
     let (ring, consumer) = HeapRb::<f32>::new(capacity).split();
     let dropped = Arc::clone(dropped);
-    let err = |err: cpal::Error| tracing::warn!("input stream: {err}");
+    let err = |err: cpal::Error| stream_failed("input", &err);
     let stream = match format {
         cpal::SampleFormat::F32 => {
             device.build_input_stream(config, capture_callback::<f32>(ring, dropped), err, None)
@@ -617,7 +665,7 @@ impl PlaybackSetup {
             music,
             music_level: f32::from_bits(self.shared.music_gain.load(Ordering::Relaxed)),
         };
-        let err = |err: cpal::Error| tracing::warn!("output stream: {err}");
+        let err = |err: cpal::Error| stream_failed("output", &err);
         let stream = match format {
             cpal::SampleFormat::F32 => device.build_output_stream(
                 config,

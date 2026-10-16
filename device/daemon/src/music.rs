@@ -113,6 +113,7 @@ async fn session(
     lane: &Arc<std::sync::Mutex<Option<HeapProd<f32>>>>,
 ) -> anyhow::Result<()> {
     let cache_dir = runtime.paths.cache_dir().join("spotify");
+    clear_stale_dirs(&cache_dir);
     let cache = Cache::new(Some(&cache_dir), Some(&cache_dir), None, None)
         .context("opening the Spotify cache")?;
     let name = runtime
@@ -209,6 +210,22 @@ async fn session(
     anyhow::bail!("the Spotify Connect session ended")
 }
 
+/// 0.1.9 handed librespot file paths where it expects directories, so it made directories named
+/// `credentials.json` and `volume`; those keep the files from ever being written (16 Oct 2026).
+fn clear_stale_dirs(cache_dir: &std::path::Path) {
+    for name in ["credentials.json", "volume"] {
+        let path = cache_dir.join(name);
+        if path.is_dir()
+            && let Err(err) = std::fs::remove_dir_all(&path)
+        {
+            warn!(
+                "music: removing the stale directory {}: {err}",
+                path.display()
+            );
+        }
+    }
+}
+
 /// Advertises the speaker on the local network and waits for the Spotify app to pick it.
 async fn discover(device_id: &str, name: &str) -> anyhow::Result<Credentials> {
     let mut discovery =
@@ -249,6 +266,16 @@ mod tests {
     use super::*;
     use ringbuf::HeapRb;
     use ringbuf::traits::{Consumer, Split};
+
+    #[test]
+    fn stale_cache_directories_make_way_for_the_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("credentials.json")).unwrap();
+        std::fs::write(dir.path().join("volume"), "50").unwrap();
+        clear_stale_dirs(dir.path());
+        assert!(!dir.path().join("credentials.json").exists());
+        assert!(dir.path().join("volume").is_file());
+    }
 
     #[test]
     fn stereo_at_spotifys_rate_becomes_mono_at_the_devices_rate() {

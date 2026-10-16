@@ -477,6 +477,8 @@ pub struct Player {
     shared: Arc<PlaybackShared>,
     /// What was played, for the echo canceller; taken once by the microphone.
     reference: Arc<Mutex<Option<crate::echo::ReferenceReader>>>,
+    /// The music lane's producer (device rate, mono), taken once by the Spotify client.
+    music: Arc<Mutex<Option<HeapProd<f32>>>>,
     _stop: Arc<mpsc::Sender<()>>,
 }
 
@@ -496,6 +498,8 @@ struct PlaybackShared {
     underruns: AtomicU64,
     /// Loudness, 0 to 1, as f32 bits: the app changes it while the stream runs.
     volume: AtomicU32,
+    /// Where the music lane is heading, 0 to 1 as f32 bits: full, ducked under a conversation, silent on a call.
+    music_gain: AtomicU32,
 }
 
 /// The real-time side of the speaker: pop, upsample, copy to the echo reference. No locks, no allocation.
@@ -506,7 +510,14 @@ struct PlaybackCallback {
     reference: Option<HeapProd<f32>>,
     upsampler: Upsampler,
     channels: usize,
+    /// Music at the device's own rate, mono, mixed under the speech lane.
+    music: HeapCons<f32>,
+    /// The gain the music is at now; it glides towards `music_gain` so ducking never clicks.
+    music_level: f32,
 }
+
+/// How fast the music gain follows its target, per output frame: about 20 ms at 48 kHz.
+const MUSIC_GLIDE: f32 = 0.001;
 
 impl PlaybackCallback {
     fn fill<T>(&mut self, data: &mut [T])
@@ -514,6 +525,7 @@ impl PlaybackCallback {
         T: cpal::SizedSample + cpal::FromSample<f32>,
     {
         let volume = f32::from_bits(self.shared.volume.load(Ordering::Relaxed));
+        let music_target = f32::from_bits(self.shared.music_gain.load(Ordering::Relaxed));
         let mark = self.shared.clear_mark.load(Ordering::Acquire);
         if self.popped < mark {
             let wanted = usize::try_from(mark - self.popped).unwrap_or(usize::MAX);
@@ -540,7 +552,9 @@ impl PlaybackCallback {
                     count = 0;
                 }
             }
-            let value = T::from_sample_(self.upsampler.output());
+            self.music_level += (music_target - self.music_level) * MUSIC_GLIDE;
+            let music = self.music.try_pop().unwrap_or(0.0) * self.music_level * volume;
+            let value = T::from_sample_((self.upsampler.output() + music).clamp(-1.0, 1.0));
             for slot in frame {
                 *slot = value;
             }
@@ -571,7 +585,11 @@ type Opened = (
     cpal::Stream,
     HeapProd<i16>,
     Option<crate::echo::ReferenceReader>,
+    HeapProd<f32>,
 );
+
+/// How much music may wait in the device-rate ring: enough to ride out a resampler burst.
+const MUSIC_RING_S: usize = 2;
 
 impl PlaybackSetup {
     fn open(
@@ -581,6 +599,8 @@ impl PlaybackSetup {
         format: cpal::SampleFormat,
     ) -> Result<Opened, cpal::Error> {
         let (producer, ring) = HeapRb::<i16>::new(PLAYBACK_RING).split();
+        let (music_producer, music) =
+            HeapRb::<f32>::new(self.sink_rate as usize * MUSIC_RING_S).split();
         let (reference, reader) = if self.echo {
             let (reference, reader) = crate::echo::link();
             (Some(reference), Some(reader))
@@ -594,6 +614,8 @@ impl PlaybackSetup {
             reference,
             upsampler: Upsampler::new(LIVE_RATE, self.sink_rate),
             channels: self.channels,
+            music,
+            music_level: f32::from_bits(self.shared.music_gain.load(Ordering::Relaxed)),
         };
         let err = |err: cpal::Error| tracing::warn!("output stream: {err}");
         let stream = match format {
@@ -623,7 +645,7 @@ impl PlaybackSetup {
             ),
             _ => Err(cpal::Error::new(cpal::ErrorKind::UnsupportedConfig)),
         }?;
-        Ok((stream, producer, reader))
+        Ok((stream, producer, reader, music_producer))
     }
 
     /// Tries the generous buffer first, then the device's default.
@@ -686,27 +708,33 @@ impl Player {
             sink_rate,
             echo,
         };
+        shared.music_gain.store(1.0f32.to_bits(), Ordering::Relaxed);
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::channel::<
-            anyhow::Result<(HeapProd<i16>, Option<crate::echo::ReferenceReader>)>,
+            anyhow::Result<(
+                HeapProd<i16>,
+                Option<crate::echo::ReferenceReader>,
+                HeapProd<f32>,
+            )>,
         >();
         std::thread::Builder::new()
             .name("alexsay-playback".into())
             .spawn(move || {
-                let (stream, producer, reader) = match setup.open_stream(&device, &config, format) {
-                    Ok(opened) => opened,
-                    Err(e) => {
-                        let _ = ready_tx.send(Err(anyhow!("opening the speaker: {e}")));
-                        return;
-                    }
-                };
+                let (stream, producer, reader, music) =
+                    match setup.open_stream(&device, &config, format) {
+                        Ok(opened) => opened,
+                        Err(e) => {
+                            let _ = ready_tx.send(Err(anyhow!("opening the speaker: {e}")));
+                            return;
+                        }
+                    };
                 tracing::debug!(%format, "speaker sample format");
-                let _ = ready_tx.send(Ok((producer, reader)));
+                let _ = ready_tx.send(Ok((producer, reader, music)));
                 let _ = stop_rx.recv();
                 drop(stream);
             })
             .context("starting the playback thread")?;
-        let (producer, reader) = ready_rx
+        let (producer, reader, music) = ready_rx
             .recv_timeout(Duration::from_secs(10))
             .context("the speaker did not open in time")??;
         Ok(Self {
@@ -718,6 +746,7 @@ impl Player {
             })),
             shared,
             reference: Arc::new(Mutex::new(reader)),
+            music: Arc::new(Mutex::new(Some(music))),
             _stop: Arc::new(stop_tx),
         })
     }
@@ -783,6 +812,21 @@ impl Player {
         }
         out.extend(pcm::to_i16(&converter.flush(), 1.0));
         self.play(&out);
+    }
+
+    /// The music lane: mono samples at `sink_rate`, mixed under speech by the output callback. Once.
+    pub fn take_music_lane(&self) -> Option<HeapProd<f32>> {
+        self.music
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    /// Where the music lane heads: 1 in the clear, less under a conversation, 0 on a call. Glides.
+    pub fn set_music_gain(&self, gain: f32) {
+        self.shared
+            .music_gain
+            .store(gain.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
 
     /// Loudness, 0 to 1; takes effect on the next output callback, so a running clip changes level too.
@@ -1035,6 +1079,33 @@ mod tests {
     }
 
     #[test]
+    fn music_is_mixed_under_speech_at_its_own_gain() {
+        let shared = Arc::new(PlaybackShared::default());
+        shared.volume.store(1.0f32.to_bits(), Ordering::Relaxed);
+        shared.music_gain.store(0.5f32.to_bits(), Ordering::Relaxed);
+        let (_producer, ring) = HeapRb::<i16>::new(8).split();
+        let (mut music_in, music) = HeapRb::<f32>::new(8).split();
+        let mut callback = PlaybackCallback {
+            ring,
+            shared: Arc::clone(&shared),
+            popped: 0,
+            reference: None,
+            upsampler: Upsampler::new(LIVE_RATE, LIVE_RATE),
+            channels: 1,
+            music,
+            music_level: 0.5,
+        };
+        assert_eq!(music_in.push_slice(&[0.8, 0.8, 0.8, 0.8]), 4);
+        let mut out = [0.0f32; 4];
+        callback.fill(&mut out);
+        // No speech queued: the output is the music at half gain, and silence once the music runs out
+        assert!(out.iter().all(|v| (v - 0.4).abs() < 0.01), "{out:?}");
+        let mut quiet = [1.0f32; 2];
+        callback.fill(&mut quiet);
+        assert_eq!(quiet, [0.0, 0.0]);
+    }
+
+    #[test]
     fn playback_callback_skips_what_was_cleared_and_copies_what_it_played() {
         let shared = Arc::new(PlaybackShared::default());
         shared.volume.store(1.0f32.to_bits(), Ordering::Relaxed);
@@ -1047,6 +1118,8 @@ mod tests {
             reference: Some(reference),
             upsampler: Upsampler::new(LIVE_RATE, LIVE_RATE),
             channels: 2,
+            music: HeapRb::<f32>::new(8).split().1,
+            music_level: 0.0,
         };
         // Four samples queued, then cleared, then two new ones: only the new ones play
         assert_eq!(producer.push_slice(&[100; 4]), 4);

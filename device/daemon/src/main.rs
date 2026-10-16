@@ -8,6 +8,7 @@ mod echo;
 mod line;
 mod live;
 mod logging;
+mod music;
 mod paths;
 mod runtime;
 mod server;

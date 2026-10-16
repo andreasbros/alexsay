@@ -137,6 +137,21 @@ impl Runtime {
         })
     }
 
+    /// The name the owner gave this speaker in the app, once the heartbeat has brought it.
+    pub fn speaker_name(&self) -> Option<String> {
+        self.latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .and_then(|reply| reply.name.clone())
+            .filter(|name| !name.trim().is_empty())
+    }
+
+    /// A conversation with the assistant is open.
+    pub fn in_conversation(&self) -> bool {
+        self.in_session.load(Ordering::Relaxed)
+    }
+
     pub fn play_clip(&self, clip: (&[sounds::Note], f32)) {
         if self.config.sounds.enabled {
             self.player.play(&sounds::render(clip, LIVE_RATE));
@@ -284,6 +299,7 @@ impl Runtime {
         let updates = tokio::spawn(update_loop(Arc::clone(&runtime)));
         let listening = tokio::spawn(listen_loop(Arc::clone(&runtime)));
         let monitor = tokio::spawn(playback_monitor(Arc::clone(&runtime)));
+        let music = tokio::spawn(crate::music::run(Arc::clone(&runtime)));
         tokio::select! {
             () = shutdown_signal() => info!("stopping"),
             result = listening => {
@@ -298,6 +314,7 @@ impl Runtime {
         alarm_sync.abort();
         updates.abort();
         monitor.abort();
+        music.abort();
         control.abort();
         runtime.player.clear();
         Ok(())

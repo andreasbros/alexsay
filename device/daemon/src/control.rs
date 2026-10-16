@@ -20,6 +20,8 @@ pub struct CallState {
     pub muted: Arc<AtomicBool>,
     /// The app's microphone mute: everything the microphone would hear is silence until it is lifted.
     pub mic_muted: Arc<AtomicBool>,
+    /// Spotify is playing through the music lane (for `alexsay call status`).
+    pub music_playing: Arc<AtomicBool>,
     pub conference: Arc<std::sync::Mutex<Option<String>>>,
     /// The call is a drop-in from the app, not a phone call: the wake word and the assistant stay on.
     pub drop_in: Arc<AtomicBool>,
@@ -169,6 +171,7 @@ pub fn reply(state: &CallState, line: Option<&LineSender>, command: &str) -> Str
             "on_call": state.on_call(),
             "muted": state.muted(),
             "mic_muted": state.mic_muted(),
+            "music_playing": state.music_playing.load(Ordering::Relaxed),
             "conference": state.conference.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone(),
             "kind": if state.on_call() { if state.drop_in() { "drop_in" } else { "phone" } } else { "" },
             "who": state.who(),
